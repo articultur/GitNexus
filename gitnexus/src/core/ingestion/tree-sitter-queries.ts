@@ -1148,91 +1148,45 @@ export const DART_QUERIES = `
 
 // Objective-C queries - works with tree-sitter-objc
 export const OBJECTIVEC_QUERIES = `
-; ── Class Interface (@interface) ────────────────────────────────────────────
-(class_interface_declaration
-  name: (type_identifier) @name) @definition.class
+; ── Class Interface (@interface Foo) ──────────────────────────────────────────
+(class_interface
+  (identifier) @name) @definition.class
 
-; ── Class Implementation (@implementation) ─────────────────────────────────
-(class_implementation_declaration
-  name: (type_identifier) @name) @definition.class
+; ── Class Implementation (@implementation Foo) ────────────────────────────────
+(class_implementation
+  (identifier) @name) @definition.class
 
-; ── Protocol (@protocol) ────────────────────────────────────────────────────
+; ── Protocol (@protocol Foo) ────────────────────────────────────────────────
 (protocol_declaration
-  name: (type_identifier) @name) @definition.interface
-
-; ── Category Interface (@interface Foo (CategoryName)) ──────────────────────
-(category_interface_declaration
-  name: (type_identifier) @name) @definition.class
-
-; ── Instance Variables inside @implementation ────────────────────────────────
-(instance_variable_declaration
-  declarator: (field_identifier) @name) @definition.property
-
-; Pointer ivars: NSString *name
-(instance_variable_declaration
-  declarator: (pointer_declarator
-    declarator: (field_identifier) @name)) @definition.property
-
-; ── Methods inside @interface / @implementation ────────────────────────────
-; Instance method: - (void)foo;
-(method_declaration
-  declarator: (method_d declarator: (identifier) @name)) @definition.method
-
-; Class method: + (void)foo;
-(method_declaration
-  declarator: (class_method_declarator declarator: (identifier) @name)) @definition.method
-
-; Method with return type pointer: - (NSString *)foo
-(method_declaration
-  declarator: (method_d
-    declarator: (pointer_declarator
-      declarator: (identifier) @name))) @definition.method
+  (identifier) @name) @definition.interface
 
 ; ── Property Declaration (@property) ────────────────────────────────────────
 (property_declaration
-  declarator: (property Declarator
-    name: (field_identifier) @name)) @definition.property
+  (struct_declaration
+    (struct_declarator
+      (pointer_declarator
+        (identifier) @name)))) @definition.property
 
-; ── Formal Protocol List (conforms to protocols) ────────────────────────────
-(class_interface_declaration
-  name: (type_identifier) @heritage.class
-  (formal_protocol_list
-    (protocol_identifier) @heritage.implements)) @heritage
+(property_declaration
+  (struct_declaration
+    (struct_declarator
+      (identifier) @name))) @definition.property
 
-; ── Superclass (extends BaseClass) ─────────────────────────────────────────
-(class_interface_declaration
-  name: (type_identifier) @heritage.class
-  (superclass
-    (type_identifier) @heritage.extends)) @heritage
+; ── Methods ────────────────────────────────────────────────────────────────
+(method_declaration
+  (identifier) @name) @definition.method
 
 ; ── #import ─────────────────────────────────────────────────────────────────
 (preproc_include path: (_) @import.source) @import
 
-; ── Calls ──────────────────────────────────────────────────────────────────
-(call_expression function: (identifier) @call.name) @call
-
-; Method calls via dot syntax: [obj methodName] → obj.methodName
-(call_expression
-  function: (message_expression
-    (identifier) @call.name)) @call
-
-; Method calls with receiver: [Foo bar] → Foo.bar
+; ── Calls via message expression: [Foo bar] ────────────────────────────────
 (message_expression
-  receiver: (identifier) @call.receiver
-  selector: (selector
-    (identifier) @call.name)) @call
+  receiver: (_) @call.receiver
+  method: (identifier) @call.name) @call
 
-; objc_msgSend calls: objc_msgSend(obj, sel)
+; ── Calls via objc_msgSend ─────────────────────────────────────────────────
 (call_expression
-  function: (identifier) @call.name
-  arguments: (argument_list) @call.args) @call
-
-; ── Write access: obj.field = value ────────────────────────────────────────
-(assignment_expression
-  left: (field_expression
-    argument: (_) @assignment.receiver
-    field: (field_identifier) @assignment.property)
-  right: (_)) @assignment
+  function: (identifier) @call.name) @call
 `;
 
 import { SupportedLanguages } from 'gitnexus-shared';

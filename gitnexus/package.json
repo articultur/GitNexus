@@ -50,7 +50,6 @@
     "prepack": "npm run build && chmod +x dist/cli/index.js"
   },
   "dependencies": {
-    "gitnexus-shared": "file:../gitnexus-shared",
     "@huggingface/transformers": "^3.0.0",
     "@ladybugdb/core": "^0.15.2",
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -58,6 +57,7 @@
     "commander": "^12.0.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "gitnexus-shared": "file:../gitnexus-shared",
     "glob": "^11.0.0",
     "graphology": "^0.25.4",
     "graphology-indices": "^0.17.0",
@@ -84,8 +84,8 @@
   "optionalDependencies": {
     "tree-sitter-dart": "github:UserNobody14/tree-sitter-dart#80e23c07b64494f7e21090bb3450223ef0b192f4",
     "tree-sitter-kotlin": "^0.3.8",
-    "tree-sitter-swift": "^0.6.0",
-    "tree-sitter-objc": "^3.0.2"
+    "tree-sitter-objc": "^3.0.2",
+    "tree-sitter-swift": "^0.6.0"
   },
   "devDependencies": {
     "@types/cli-progress": "^3.11.6",

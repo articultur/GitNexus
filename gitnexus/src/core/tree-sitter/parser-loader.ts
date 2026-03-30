@@ -30,6 +30,12 @@ try {
   Kotlin = _require('tree-sitter-kotlin');
 } catch {}
 
+// tree-sitter-objc is an optionalDependency — may not be installed
+let Objc: any = null;
+try {
+  Objc = _require('tree-sitter-objc');
+} catch {}
+
 let parser: Parser | null = null;
 
 const languageMap: Record<string, any> = {
@@ -48,6 +54,7 @@ const languageMap: Record<string, any> = {
   [SupportedLanguages.Ruby]: Ruby,
   ...(Dart ? { [SupportedLanguages.Dart]: Dart } : {}),
   ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
+  ...(Objc ? { [SupportedLanguages.ObjectiveC]: Objc } : {}),
 };
 
 export const isLanguageAvailable = (language: SupportedLanguages): boolean =>
