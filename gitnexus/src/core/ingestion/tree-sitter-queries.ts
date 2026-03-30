@@ -1160,18 +1160,20 @@ export const OBJECTIVEC_QUERIES = `
   (identifier) @name) @definition.class
 
 ; ── Heritage: class extends (e.g., @interface Foo : Bar) ─────────────────────
+; Note: uses @heritage.class (not @name) so heritage-processor.js creates EXTENDS edge
 (class_interface
-  (identifier) @name
+  (identifier) @heritage.class
   (":") @colon
   (identifier) @heritage.extends) @heritage
 
 ; ── Heritage: protocol conformance (e.g., @interface Foo : Bar <Baz>) ──────────
 ; Also matches @interface Foo <Baz> (no superclass, just protocol)
+; Uses @heritage.implements so heritage-processor.js creates IMPLEMENTS edges
 (class_interface
-  (identifier) @name
+  (identifier) @heritage.class
   (parameterized_arguments
     (type_name
-      (type_identifier) @heritage.protocol))) @heritage.proto
+      (type_identifier) @heritage.implements))) @heritage.proto
 
 ; ── Class Implementation (@implementation Foo) ────────────────────────────────
 (class_implementation
