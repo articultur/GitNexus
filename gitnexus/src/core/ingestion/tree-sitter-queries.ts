@@ -1149,8 +1149,29 @@ export const DART_QUERIES = `
 // Objective-C queries - works with tree-sitter-objc
 export const OBJECTIVEC_QUERIES = `
 ; ── Class Interface (@interface Foo) ──────────────────────────────────────────
+; Anchored on ':' token to distinguish from superclass identifier in @interface Foo : Bar
+(class_interface
+  (identifier) @name
+  (":") @colon) @definition.class
+
+; ── Class Interface without superclass (@interface Foo <Bar>) ──────────────────
+; No ':' → identifier is the class name
 (class_interface
   (identifier) @name) @definition.class
+
+; ── Heritage: class extends (e.g., @interface Foo : Bar) ─────────────────────
+(class_interface
+  (identifier) @name
+  (":") @colon
+  (identifier) @heritage.extends) @heritage
+
+; ── Heritage: protocol conformance (e.g., @interface Foo : Bar <Baz>) ──────────
+; Also matches @interface Foo <Baz> (no superclass, just protocol)
+(class_interface
+  (identifier) @name
+  (parameterized_arguments
+    (type_name
+      (type_identifier) @heritage.protocol))) @heritage.proto
 
 ; ── Class Implementation (@implementation Foo) ────────────────────────────────
 (class_implementation
@@ -1159,6 +1180,26 @@ export const OBJECTIVEC_QUERIES = `
 ; ── Protocol (@protocol Foo) ────────────────────────────────────────────────
 (protocol_declaration
   (identifier) @name) @definition.interface
+
+; ── Protocol Inheritance (e.g., @protocol Foo <Bar>) ──────────────────────────
+(protocol_declaration
+  (identifier) @name
+  (protocol_reference_list
+    (identifier) @heritage.extends)) @heritage
+
+; ── Instance Variables (inside @interface or @implementation body) ───────────
+; NSString *name;
+(instance_variable
+  (struct_declaration
+    (struct_declarator
+      (pointer_declarator
+        (identifier) @name)))) @definition.property
+
+; int age;
+(instance_variable
+  (struct_declaration
+    (struct_declarator
+      (identifier) @name))) @definition.property
 
 ; ── Property Declaration (@property) ────────────────────────────────────────
 (property_declaration
@@ -1172,8 +1213,12 @@ export const OBJECTIVEC_QUERIES = `
     (struct_declarator
       (identifier) @name))) @definition.property
 
-; ── Methods ────────────────────────────────────────────────────────────────
+; ── Methods in @interface (declarations) ─────────────────────────────────────
 (method_declaration
+  (identifier) @name) @definition.method
+
+; ── Methods in @implementation (definitions with body) ─────────────────────
+(method_definition
   (identifier) @name) @definition.method
 
 ; ── #import ─────────────────────────────────────────────────────────────────
