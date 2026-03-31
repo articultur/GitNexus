@@ -1,4 +1,5 @@
 import type { GraphNode, GraphRelationship, NodeLabel } from 'gitnexus-shared';
+import { SupportedLanguages } from 'gitnexus-shared';
 import { KnowledgeGraph } from '../graph/types.js';
 import Parser from 'tree-sitter';
 import { loadParser, loadLanguage, isLanguageAvailable } from '../tree-sitter/parser-loader.js';
@@ -6,7 +7,7 @@ import { getProvider } from './languages/index.js';
 import { generateId } from '../../lib/utils.js';
 import { SymbolTable } from './symbol-table.js';
 import { ASTCache } from './ast-cache.js';
-import { getLanguageFromFilename } from 'gitnexus-shared';
+import { getLanguageFromFilename, detectOCHeaderLanguage } from 'gitnexus-shared';
 import { yieldToEventLoop } from './utils/event-loop.js';
 import {
   getDefinitionNodeFromCaptures,
@@ -58,6 +59,23 @@ export interface WorkerExtractedData {
 // Worker-based parallel parsing
 // ============================================================================
 
+/** Detect language for a .h file by inspecting its content.
+ *  For non-.h files, falls back to extension-based detection.
+ *  This resolves the ambiguity between C++ headers and Objective-C headers,
+ *  both of which use the .h extension. */
+const getLanguageFromFilenameWithContent = (
+  filePath: string,
+  content: string,
+): SupportedLanguages | null => {
+  const lang = getLanguageFromFilename(filePath);
+  // .h is ambiguous: C++ and Objective-C both use it.
+  // If extension-based detection gives C++, check content for OC tokens.
+  if (lang === SupportedLanguages.CPlusPlus && filePath.toLowerCase().endsWith('.h')) {
+    return detectOCHeaderLanguage(content);
+  }
+  return lang;
+};
+
 const processParsingWithWorkers = async (
   graph: KnowledgeGraph,
   files: { path: string; content: string }[],
@@ -69,7 +87,7 @@ const processParsingWithWorkers = async (
   // Filter to parseable files only
   const parseableFiles: ParseWorkerInput[] = [];
   for (const file of files) {
-    const lang = getLanguageFromFilename(file.path);
+    const lang = getLanguageFromFilenameWithContent(file.path, file.content);
     if (lang) parseableFiles.push({ path: file.path, content: file.content });
   }
 
@@ -267,7 +285,7 @@ const processParsingSequential = async (
 
     if (i % 20 === 0) await yieldToEventLoop();
 
-    const language = getLanguageFromFilename(file.path);
+    const language = getLanguageFromFilenameWithContent(file.path, file.content);
 
     if (!language) continue;
 
@@ -286,10 +304,17 @@ const processParsingSequential = async (
       continue; // parser unavailable — safety net
     }
 
+    // OC headers contain NS_ASSUME_NONNULL_BEGIN / NS_ASSUME_NONNULL_END macros that
+    // tree-sitter-objc grammar cannot parse — strip them so heritage queries match.
+    const parseContent =
+      language === SupportedLanguages.ObjectiveC
+        ? file.content.replace(/\bNS_ASSUME_NONNULL_BEGIN\b/g, '').replace(/\bNS_ASSUME_NONNULL_END\b/g, '')
+        : file.content;
+
     let tree;
     try {
-      tree = parser.parse(file.content, undefined, {
-        bufferSize: getTreeSitterBufferSize(file.content.length),
+      tree = parser.parse(parseContent, undefined, {
+        bufferSize: getTreeSitterBufferSize(parseContent.length),
       });
     } catch (parseError) {
       console.warn(`Skipping unparseable file: ${file.path}`);

@@ -61,6 +61,7 @@
     "glob": "^11.0.0",
     "graphology": "^0.25.4",
     "graphology-indices": "^0.17.0",
+    "graphology-types": "^0.24.8",
     "graphology-utils": "^2.3.0",
     "ignore": "^7.0.5",
     "lru-cache": "^11.0.0",

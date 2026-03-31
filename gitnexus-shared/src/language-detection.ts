@@ -79,6 +79,34 @@ export const getLanguageFromFilename = (filename: string): SupportedLanguages | 
 };
 
 /**
+ * Regex patterns that unambiguously identify an Objective-C header file.
+ * These tokens cannot appear in valid C++ source, so a match indicates OC.
+ */
+const OC_HEADER_PATTERNS = [
+  /^@interface\b/m,
+  /^@protocol\b/m,
+  /^@end\b/m,
+  /^@property\b/m,
+  /^@implementation\b/m,
+  /@interface\b/m,
+  /@protocol\b/m,
+];
+
+/**
+ * Detect language for a .h file by inspecting its content.
+ * Falls back to CPlusPlus if no OC-specific content markers are found.
+ *
+ * This is needed because .h files are ambiguous: they can be either C++ headers
+ * (class/struct declarations) or Objective-C headers (@interface/@protocol declarations).
+ * We scan the content for unambiguous OC tokens rather than using tree-sitter,
+ * to avoid the overhead of an additional parse per .h file.
+ */
+export const detectOCHeaderLanguage = (content: string): SupportedLanguages => {
+  const hasOC = OC_HEADER_PATTERNS.some((re) => re.test(content));
+  return hasOC ? SupportedLanguages.ObjectiveC : SupportedLanguages.CPlusPlus;
+};
+
+/**
  * Exhaustive map: every SupportedLanguages member → Prism syntax identifier.
  *
  * If a new language is added to the enum without adding an entry here,

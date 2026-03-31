@@ -12,13 +12,38 @@ import Rust from 'tree-sitter-rust';
 import PHP from 'tree-sitter-php';
 import Ruby from 'tree-sitter-ruby';
 import { createRequire } from 'node:module';
-import { SupportedLanguages } from 'gitnexus-shared';
+import { SupportedLanguages, getLanguageFromFilename, detectOCHeaderLanguage } from 'gitnexus-shared';
 import { getProvider } from '../languages/index.js';
 import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from '../constants.js';
 import { SymbolTable } from '../symbol-table.js';
 
 /** Language grammar type accepted by Parser.setLanguage(). */
 type TreeSitterLanguage = Parameters<typeof Parser.prototype.setLanguage>[0];
+
+/** Detect language for a .h file by inspecting its content.
+ *  For non-.h files, falls back to extension-based detection.
+ *  This resolves the ambiguity between C++ headers and Objective-C headers. */
+const getLanguageFromFilenameWithContent = (
+  filePath: string,
+  content: string,
+): SupportedLanguages | null => {
+  const lang = getLanguageFromFilename(filePath);
+  if (lang === SupportedLanguages.CPlusPlus && filePath.toLowerCase().endsWith('.h')) {
+    return detectOCHeaderLanguage(content);
+  }
+  return lang;
+};
+
+/**
+ * Strip Apple nullability annotation macros that confuse tree-sitter-objc.
+ * These macros wrap OC headers but are not valid preprocessor directives in the grammar.
+ * We remove the tokens, not the content between them (unlike #if/#endif pairs).
+ */
+const stripNullabilityMacros = (content: string): string => {
+  return content
+    .replace(/\bNS_ASSUME_NONNULL_BEGIN\b/g, '')
+    .replace(/\bNS_ASSUME_NONNULL_END\b/g, '');
+};
 
 // tree-sitter-swift is an optionalDependency — may not be installed
 const _require = createRequire(import.meta.url);
@@ -44,7 +69,6 @@ let Objc: TreeSitterLanguage | null = null;
 try {
   Objc = _require('tree-sitter-objc');
 } catch {}
-import { getLanguageFromFilename } from 'gitnexus-shared';
 import {
   FUNCTION_NODE_TYPES,
   extractFunctionName,
@@ -546,7 +570,7 @@ const processBatch = (
   // Group by language to minimize setLanguage calls
   const byLanguage = new Map<SupportedLanguages, ParseWorkerInput[]>();
   for (const file of files) {
-    const lang = getLanguageFromFilename(file.path);
+    const lang = getLanguageFromFilenameWithContent(file.path, file.content);
     if (!lang) continue;
     let list = byLanguage.get(lang);
     if (!list) {
@@ -1152,10 +1176,17 @@ const processFileGroup = (
 
     clearCaches(); // Reset memoization before each new file
 
+    // OC headers contain NS_ASSUME_NONNULL_BEGIN / NS_ASSUME_NONNULL_END macros that
+    // tree-sitter-objc grammar cannot parse — strip them so heritage queries match.
+    const parseContent =
+      language === SupportedLanguages.ObjectiveC
+        ? stripNullabilityMacros(file.content)
+        : file.content;
+
     let tree;
     try {
-      tree = parser.parse(file.content, undefined, {
-        bufferSize: getTreeSitterBufferSize(file.content.length),
+      tree = parser.parse(parseContent, undefined, {
+        bufferSize: getTreeSitterBufferSize(parseContent.length),
       });
     } catch (err) {
       console.warn(

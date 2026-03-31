@@ -391,6 +391,19 @@ const escapeTableName = (table: string): string => {
   return BACKTICK_TABLES.has(table) ? `\`${table}\`` : table;
 };
 
+/**
+ * Escape a string value for safe embedding in Cypher query strings.
+ * Handles backslashes, single quotes, and control characters.
+ * Use for query-string interpolation only — prefer parameterized queries when possible.
+ */
+const escapeStringValue = (value: string): string => {
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "''")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
+};
+
 /** Fallback: insert relationships one-by-one if COPY fails */
 const fallbackRelationshipInserts = async (
   validRelLines: string[],
@@ -810,7 +823,7 @@ export const deleteNodesForFile = async (
 
   try {
     let deletedNodes = 0;
-    const escapedPath = filePath.replace(/'/g, "''");
+    const escapedPath = escapeStringValue(filePath);
 
     // Delete nodes from each table that has filePath
     // DETACH DELETE removes the node and all its relationships
