@@ -1215,13 +1215,29 @@ export const OBJECTIVEC_QUERIES = `
     (struct_declarator
       (identifier) @name))) @definition.property
 
-; ── Methods in @interface (declarations) ─────────────────────────────────────
+; ── OC Methods in @interface (declarations) ─────────────────────────────────
+; Multi-argument methods: - (CGSize)sizeOfView:(id)view css:(NSDictionary *)c
 (method_declaration
-  (identifier) @name) @definition.method
+  (keyword_selector
+    (keyword_declarator
+      selector: (identifier) @selector.part))) @definition.method
 
-; ── Methods in @implementation (definitions with body) ─────────────────────
+; Unary methods: - (void)alloc
+(method_declaration
+  (method_selector_no_list
+    (identifier) @selector.part)) @definition.method
+
+; ── OC Methods in @implementation (definitions with body) ─────────────────
+; Multi-argument methods
 (method_definition
-  (identifier) @name) @definition.method
+  (keyword_selector
+    (keyword_declarator
+      selector: (identifier) @selector.part))) @definition.method
+
+; Unary methods
+(method_definition
+  (method_selector_no_list
+    (identifier) @selector.part)) @definition.method
 
 ; ── #import ─────────────────────────────────────────────────────────────────
 (preproc_include path: (_) @import.source) @import
