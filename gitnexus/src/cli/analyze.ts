@@ -49,6 +49,8 @@ export interface AnalyzeOptions {
   skipAgentsMd?: boolean;
   /** Index the folder even when no .git directory is present. */
   skipGit?: boolean;
+  /** Dataflow analysis mode: off, basic, context, path, full */
+  dataflow?: string;
 }
 
 export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOptions) => {

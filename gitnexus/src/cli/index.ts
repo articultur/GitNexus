@@ -27,6 +27,7 @@ program
   .option('--skip-agents-md', 'Skip updating the gitnexus section in AGENTS.md and CLAUDE.md')
   .option('--skip-git', 'Index a folder without requiring a .git directory')
   .option('-v, --verbose', 'Enable verbose ingestion warnings (default: false)')
+  .option('--dataflow <mode>', 'Dataflow analysis mode: off, basic, context, path, full (default: basic)')
   .addHelpText(
     'after',
     '\nEnvironment variables:\n  GITNEXUS_NO_GITIGNORE=1  Skip .gitignore parsing (still reads .gitnexusignore)',

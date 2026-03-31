@@ -12,6 +12,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { runPipelineFromRepo } from './ingestion/pipeline.js';
+import { parseDataflowOptions } from './ingestion/dataflow/index.js';
 import {
   initLbug,
   loadGraphToLbug,
@@ -48,6 +49,8 @@ export interface AnalyzeOptions {
   skipGit?: boolean;
   /** Skip AGENTS.md and CLAUDE.md gitnexus block updates. */
   skipAgentsMd?: boolean;
+  /** Dataflow analysis mode: off, basic, context, path, full */
+  dataflow?: string;
 }
 
 export interface AnalyzeResult {
@@ -156,11 +159,18 @@ export async function runFullAnalysis(
   }
 
   // ── Phase 1: Full Pipeline (0–60%) ────────────────────────────────
-  const pipelineResult = await runPipelineFromRepo(repoPath, (p) => {
-    const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
-    const scaled = Math.round(p.percent * 0.6);
-    progress(p.phase, scaled, phaseLabel);
-  });
+  const dataflowOptions = options.dataflow
+    ? parseDataflowOptions({ dataflow: options.dataflow } as Record<string, unknown>)
+    : undefined;
+  const pipelineResult = await runPipelineFromRepo(
+    repoPath,
+    (p) => {
+      const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
+      const scaled = Math.round(p.percent * 0.6);
+      progress(p.phase, scaled, phaseLabel);
+    },
+    dataflowOptions ? { dataflow: dataflowOptions } : undefined,
+  );
 
   // ── Phase 2: LadybugDB (60–85%) ──────────────────────────────────
   progress('lbug', 60, 'Loading into LadybugDB...');
