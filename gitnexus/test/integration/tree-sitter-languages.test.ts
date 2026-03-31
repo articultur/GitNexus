@@ -704,7 +704,7 @@ describe('Tree-sitter multi-language parsing', () => {
       const provider = getProvider(SupportedLanguages.ObjectiveC);
       const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
       const defs = extractDefinitions(matches);
-      expect(defs.length).toBeGreaterThan(0);
+      expect(defs.some(d => d.name === 'alloc')).toBe(true);
     });
 
     it('parses multi-argument method definitions', async () => {
@@ -714,6 +714,7 @@ describe('Tree-sitter multi-language parsing', () => {
       const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
       const defs = extractDefinitions(matches);
       expect(defs.some(d => d.name.includes('sizeOfView'))).toBe(true);
+      expect(defs.some(d => d.name === 'css')).toBe(true);
     });
 
     it('parses class method declarations', async () => {
@@ -722,7 +723,7 @@ describe('Tree-sitter multi-language parsing', () => {
       const provider = getProvider(SupportedLanguages.ObjectiveC);
       const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
       const defs = extractDefinitions(matches);
-      expect(defs.length).toBeGreaterThan(0);
+      expect(defs.some(d => d.name === 'new')).toBe(true);
     });
   });
 });
