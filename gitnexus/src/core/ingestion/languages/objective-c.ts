@@ -104,6 +104,23 @@ const objcLabelOverride: NonNullable<LanguageProvider['labelOverride']> = (
   return isObjcInsideContainer(functionNode) ? null : defaultLabel;
 };
 
+/** Extract full OC method selector from captured selector part.
+ * For multi-argument methods like `sizeOfView:css:`, the query captures
+ * each selector keyword separately. This function returns the text of the
+ * captured selector part to be used as the method name. */
+const objcDescriptionExtractor: NonNullable<LanguageProvider['descriptionExtractor']> = (
+  nodeLabel,
+  _nodeName,
+  captureMap,
+) => {
+  if (nodeLabel !== 'Method') return undefined;
+  const selectorPart = captureMap['selector.part'];
+  if (selectorPart) {
+    return selectorPart.text;
+  }
+  return undefined;
+};
+
 export const objectiveCProvider = defineLanguage({
   id: SupportedLanguages.ObjectiveC,
   extensions: ['.m', '.mm'],
@@ -115,5 +132,6 @@ export const objectiveCProvider = defineLanguage({
   mroStrategy: 'leftmost-base',
   fieldExtractor: createFieldExtractor(objcConfig),
   labelOverride: objcLabelOverride,
+  descriptionExtractor: objcDescriptionExtractor,
   builtInNames: OBJC_BUILT_INS,
 });
