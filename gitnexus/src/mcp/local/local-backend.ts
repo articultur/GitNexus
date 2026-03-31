@@ -102,6 +102,7 @@ export const VALID_RELATION_TYPES = new Set([
   'HANDLES_TOOL',
   'ENTRY_POINT_OF',
   'WRAPS',
+  'DATA_FLOW',
 ]);
 
 /**
@@ -133,6 +134,7 @@ export const IMPACT_RELATION_CONFIDENCE: Readonly<Record<string, number>> = {
   HAS_PROPERTY: 0.95,
   ACCESSES: 0.8,
   CONTAINS: 0.95,
+  DATA_FLOW: 0.75,
 };
 
 /**

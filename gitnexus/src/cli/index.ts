@@ -132,6 +132,7 @@ program
   .option('-r, --repo <name>', 'Target repository')
   .option('--depth <n>', 'Max relationship depth (default: 3)')
   .option('--include-tests', 'Include test files in results')
+  .option('--data-flow', 'Include DATA_FLOW edges in analysis (requires --dataflow during indexing)')
   .action(createLazyAction(() => import('./tool.js'), 'impactCommand'));
 
 program

@@ -115,6 +115,7 @@ export async function impactCommand(
     repo?: string;
     depth?: string;
     includeTests?: boolean;
+    dataFlow?: boolean;
   },
 ): Promise<void> {
   if (!target?.trim()) {
@@ -124,12 +125,16 @@ export async function impactCommand(
 
   try {
     const backend = await getBackend();
+    const relationTypes = options?.dataFlow
+      ? ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'DATA_FLOW']
+      : undefined;
     const result = await backend.callTool('impact', {
       target,
       direction: options?.direction || 'upstream',
       maxDepth: options?.depth ? parseInt(options.depth, 10) : undefined,
       includeTests: options?.includeTests ?? false,
       repo: options?.repo,
+      ...(relationTypes ? { relationTypes } : {}),
     });
     output(result);
   } catch (err: unknown) {
