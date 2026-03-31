@@ -10,6 +10,7 @@ import type {
   PendingAssignmentExtractor,
   ForLoopExtractor,
 } from './types.js';
+import { phpTaintConfig } from './taint.js';
 import {
   extractSimpleTypeName,
   extractVarName,
@@ -608,4 +609,5 @@ export const typeConfig: LanguageTypeConfig = {
   extractReturnType,
   extractForLoopBinding,
   extractPendingAssignment,
+  taintConfig: phpTaintConfig,
 };

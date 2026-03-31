@@ -8,6 +8,7 @@ import type {
   PendingAssignmentExtractor,
   ForLoopExtractor,
 } from './types.js';
+import { rubyTaintConfig } from './taint.js';
 import {
   extractRubyConstructorAssignment,
   extractSimpleTypeName,
@@ -455,4 +456,5 @@ export const typeConfig: LanguageTypeConfig = {
   extractReturnType,
   extractForLoopBinding,
   extractPendingAssignment,
+  taintConfig: rubyTaintConfig,
 };

@@ -18,6 +18,7 @@ import {
   extractElementTypeFromString,
   type TypeArgPosition,
 } from './shared.js';
+import { csharpTaintConfig } from './taint.js';
 
 /** Known container property accessors that operate on the container itself (e.g., dict.Keys, dict.Values) */
 const KNOWN_CONTAINER_PROPS: ReadonlySet<string> = new Set(['Keys', 'Values']);
@@ -573,4 +574,5 @@ export const typeConfig: LanguageTypeConfig = {
   extractPendingAssignment,
   extractPatternBinding,
   inferLiteralType,
+  taintConfig: csharpTaintConfig,
 };

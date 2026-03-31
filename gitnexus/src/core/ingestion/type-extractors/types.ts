@@ -1,4 +1,5 @@
 import type { SyntaxNode } from '../utils/ast-helpers.js';
+import type { TaintConfig } from './taint.js';
 
 /** Extracts type bindings from a declaration node into the env map */
 export type TypeBindingExtractor = (node: SyntaxNode, env: Map<string, string>) => void;
@@ -181,4 +182,6 @@ export interface LanguageTypeConfig {
   inferLiteralType?: LiteralTypeInferrer;
   detectConstructorType?: ConstructorTypeDetector;
   unwrapDeclaredType?: DeclaredTypeUnwrapper;
+  /** Taint analysis configuration: source/sanitizer/sink patterns for this language */
+  taintConfig?: TaintConfig;
 }

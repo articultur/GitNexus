@@ -10,6 +10,7 @@ import type {
   PatternBindingExtractor,
   ForLoopExtractor,
 } from './types.js';
+import { pythonTaintConfig } from './taint.js';
 import {
   extractSimpleTypeName,
   extractVarName,
@@ -500,4 +501,5 @@ export const typeConfig: LanguageTypeConfig = {
   extractForLoopBinding,
   extractPendingAssignment,
   extractPatternBinding,
+  taintConfig: pythonTaintConfig,
 };
