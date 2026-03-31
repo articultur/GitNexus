@@ -690,4 +690,39 @@ describe('Tree-sitter multi-language parsing', () => {
       expect(tree.rootNode.hasError).toBe(true);
     });
   });
+
+  describe('Objective-C', () => {
+    let parser: Parser;
+
+    beforeAll(async () => {
+      parser = await loadParser();
+    });
+
+    it('parses unary method declarations', async () => {
+      await loadLanguage(SupportedLanguages.ObjectiveC);
+      const code = `@interface Foo\n- (void)alloc;\n@end`;
+      const provider = getProvider(SupportedLanguages.ObjectiveC);
+      const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+      expect(defs.length).toBeGreaterThan(0);
+    });
+
+    it('parses multi-argument method definitions', async () => {
+      await loadLanguage(SupportedLanguages.ObjectiveC);
+      const code = `@implementation Foo\n- (CGSize)sizeOfView:(id)viewData css:(NSDictionary *)css {\n  return CGSizeZero;\n}\n@end`;
+      const provider = getProvider(SupportedLanguages.ObjectiveC);
+      const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+      expect(defs.some(d => d.name.includes('sizeOfView'))).toBe(true);
+    });
+
+    it('parses class method declarations', async () => {
+      await loadLanguage(SupportedLanguages.ObjectiveC);
+      const code = `@interface Foo\n+ (instancetype)new;\n@end`;
+      const provider = getProvider(SupportedLanguages.ObjectiveC);
+      const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+      expect(defs.length).toBeGreaterThan(0);
+    });
+  });
 });
