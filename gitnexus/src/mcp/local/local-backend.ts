@@ -103,6 +103,12 @@ export const VALID_RELATION_TYPES = new Set([
   'ENTRY_POINT_OF',
   'WRAPS',
   'DATA_FLOW',
+  'TAINTED',
+  'SINK_REACHABLE',
+  'PROPAGATES',
+  'RETURNS',
+  'SANITIZES',
+  'ALIASES',
 ]);
 
 /**
@@ -135,6 +141,12 @@ export const IMPACT_RELATION_CONFIDENCE: Readonly<Record<string, number>> = {
   ACCESSES: 0.8,
   CONTAINS: 0.95,
   DATA_FLOW: 0.75,
+  TAINTED: 0.7,
+  SINK_REACHABLE: 0.7,
+  PROPAGATES: 0.75,
+  RETURNS: 0.85,
+  SANITIZES: 0.7,
+  ALIASES: 0.8,
 };
 
 /**

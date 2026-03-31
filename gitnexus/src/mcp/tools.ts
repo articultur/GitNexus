@@ -263,9 +263,9 @@ Depth groups:
 - d=2: LIKELY AFFECTED (indirect)
 - d=3: MAY NEED TESTING (transitive)
 
-TIP: Default traversal uses CALLS/IMPORTS/EXTENDS/IMPLEMENTS. For class members, include HAS_METHOD and HAS_PROPERTY in relationTypes. For field access analysis, include ACCESSES in relationTypes. For data-flow analysis (requires --dataflow during indexing), include DATA_FLOW in relationTypes to trace value propagation through variables.
+TIP: Default traversal uses CALLS/IMPORTS/EXTENDS/IMPLEMENTS. For class members, include HAS_METHOD and HAS_PROPERTY in relationTypes. For field access analysis, include ACCESSES in relationTypes. For data-flow analysis (requires --dataflow during indexing), include TAINTED, SINK_REACHABLE, or DATA_FLOW in relationTypes to trace value propagation through variables.
 
-EdgeType: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, OVERRIDES, ACCESSES, DATA_FLOW
+EdgeType: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, OVERRIDES, ACCESSES, DATA_FLOW, TAINTED, SINK_REACHABLE, PROPAGATES, RETURNS, SANITIZES, ALIASES
 Confidence: 1.0 = certain, <0.8 = fuzzy match`,
     inputSchema: {
       type: 'object',

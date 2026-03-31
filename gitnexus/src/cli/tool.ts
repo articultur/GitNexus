@@ -126,7 +126,7 @@ export async function impactCommand(
   try {
     const backend = await getBackend();
     const relationTypes = options?.dataFlow
-      ? ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'DATA_FLOW']
+      ? ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'DATA_FLOW', 'TAINTED', 'SINK_REACHABLE']
       : undefined;
     const result = await backend.callTool('impact', {
       target,
