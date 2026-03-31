@@ -684,3 +684,27 @@ export const rubyTaintConfig: TaintConfig = {
   sanitizerNodeTypes: new Set([]),
   extractSanitizerCall: rubyTaintSanitizer,
 };
+
+// ── Taint Config Registry ───────────────────────────────────────────────────
+
+/**
+ * Registry of taint configurations for all supported languages.
+ * Used by the dataflow analysis engine to perform taint tracking.
+ */
+export const TAINT_CONFIGS: Record<string, TaintConfig> = {
+  java: javaTaintConfig,
+  kotlin: kotlinTaintConfig,
+  go: goTaintConfig,
+  dart: dartTaintConfig,
+  csharp: csharpTaintConfig,
+  c: cTaintConfig,
+  cpp: cTaintConfig,
+  rust: rustTaintConfig,
+  swift: swiftTaintConfig,
+  typescript: typescriptTaintConfig,
+  javascript: typescriptTaintConfig,
+  php: phpTaintConfig,
+  python: pythonTaintConfig,
+  ruby: rubyTaintConfig,
+  objectivec: objcTaintConfig,
+};
