@@ -57,6 +57,7 @@ import {
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
 import { processProcesses } from './process-processor.js';
+import { processDataflow, parseDataflowOptions, type DataflowOptions } from './dataflow/index.js';
 import { createResolutionContext } from './resolution-context.js';
 import { createASTCache } from './ast-cache.js';
 import { type PipelineProgress, getLanguageFromFilename } from 'gitnexus-shared';
@@ -484,6 +485,8 @@ async function runCrossFileBindingPropagation(
 export interface PipelineOptions {
   /** Skip MRO, community detection, and process extraction for faster test runs. */
   skipGraphPhases?: boolean;
+  /** Dataflow analysis options (Phase 12) */
+  dataflow?: Partial<DataflowOptions>;
 }
 
 // ── Extracted pipeline phases ──────────────────────────────────────────────
@@ -1690,6 +1693,24 @@ export const runPipelineFromRepo = async (
       );
       communityResult = graphResults.communityResult;
       processResult = graphResults.processResult;
+    }
+
+    // ── Phase 12: Dataflow Analysis ─────────────────────────────────────
+    if (options?.dataflow && options.dataflow.mode !== 'off') {
+      await processDataflow(
+        graph,
+        ctx,
+        communityResult?.memberships ?? [],
+        options.dataflow,
+        (message, progress) => {
+          onProgress({
+            phase: 'dataflow',
+            percent: Math.round(progress),
+            message,
+            stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
+          });
+        },
+      );
     }
 
     onProgress({

@@ -6,17 +6,18 @@
  * existing CALLS edges.
  */
 
-import type { DataFlowEdgeType, TaintPath } from './types.js';
-import type { KnowledgeGraph } from '../graph/types.js';
+import type { TaintPath } from './types.js';
+import type { DataFlowEdgeType } from './types.js';
+import type { KnowledgeGraph } from '../../graph/types.js';
 import { generateId } from '../../../lib/utils.js';
-import type { GraphRelationship } from 'gitnexus-shared';
+import type { GraphRelationship, RelationshipType } from 'gitnexus-shared';
 
 // ── Data Flow Edge ─────────────────────────────────────────────────────────
 
 export interface DataFlowEdge {
   sourceId: string;
   targetId: string;
-  type: DataFlowEdgeType;
+  type: RelationshipType;
   properties: {
     sourceVariable?: string;
     targetVariable?: string;
