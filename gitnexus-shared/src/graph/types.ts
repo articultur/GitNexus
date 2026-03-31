@@ -114,7 +114,15 @@ export type RelationshipType =
   | 'HANDLES_TOOL'
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
-  | 'QUERIES';
+  | 'QUERIES'
+  // Dataflow edge types (layered, not mixed with CALLS)
+  | 'DATA_FLOW'
+  | 'PROPAGATES'
+  | 'RETURNS'
+  | 'TAINTED'
+  | 'SANITIZES'
+  | 'SINK_REACHABLE'
+  | 'ALIASES';
 
 export interface GraphNode {
   id: string;
