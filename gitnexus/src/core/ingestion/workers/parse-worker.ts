@@ -12,7 +12,7 @@ import Rust from 'tree-sitter-rust';
 import PHP from 'tree-sitter-php';
 import Ruby from 'tree-sitter-ruby';
 import { createRequire } from 'node:module';
-import { SupportedLanguages, getLanguageFromFilename, detectOCHeaderLanguage } from 'gitnexus-shared';
+import { SupportedLanguages, getLanguageFromFilename } from 'gitnexus-shared';
 import { getProvider } from '../languages/index.js';
 import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from '../constants.js';
 import { SymbolTable } from '../symbol-table.js';
@@ -29,10 +29,25 @@ const getLanguageFromFilenameWithContent = (
 ): SupportedLanguages | null => {
   const lang = getLanguageFromFilename(filePath);
   if (lang === SupportedLanguages.CPlusPlus && filePath.toLowerCase().endsWith('.h')) {
-    return detectOCHeaderLanguage(content);
+    return detectOCHeaderLanguageFallback(content);
   }
   return lang;
 };
+
+const OC_HEADER_PATTERNS: RegExp[] = [
+  /^@interface\b/m,
+  /^@protocol\b/m,
+  /^@end\b/m,
+  /^@property\b/m,
+  /^@implementation\b/m,
+  /@interface\b/m,
+  /@protocol\b/m,
+];
+
+function detectOCHeaderLanguageFallback(content: string): SupportedLanguages {
+  const hasOC = OC_HEADER_PATTERNS.some((re) => re.test(content));
+  return hasOC ? SupportedLanguages.ObjectiveC : SupportedLanguages.CPlusPlus;
+}
 
 /**
  * Strip Apple nullability annotation macros that confuse tree-sitter-objc.

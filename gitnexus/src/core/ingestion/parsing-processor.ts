@@ -7,7 +7,7 @@ import { getProvider } from './languages/index.js';
 import { generateId } from '../../lib/utils.js';
 import { SymbolTable } from './symbol-table.js';
 import { ASTCache } from './ast-cache.js';
-import { getLanguageFromFilename, detectOCHeaderLanguage } from 'gitnexus-shared';
+import { getLanguageFromFilename } from 'gitnexus-shared';
 import { yieldToEventLoop } from './utils/event-loop.js';
 import {
   getDefinitionNodeFromCaptures,
@@ -71,10 +71,26 @@ const getLanguageFromFilenameWithContent = (
   // .h is ambiguous: C++ and Objective-C both use it.
   // If extension-based detection gives C++, check content for OC tokens.
   if (lang === SupportedLanguages.CPlusPlus && filePath.toLowerCase().endsWith('.h')) {
-    return detectOCHeaderLanguage(content);
+    return detectOCHeaderLanguageFallback(content);
   }
   return lang;
 };
+
+// Keep a local fallback so runtime does not depend on a specific shared-package export shape.
+const OC_HEADER_PATTERNS: RegExp[] = [
+  /^@interface\b/m,
+  /^@protocol\b/m,
+  /^@end\b/m,
+  /^@property\b/m,
+  /^@implementation\b/m,
+  /@interface\b/m,
+  /@protocol\b/m,
+];
+
+function detectOCHeaderLanguageFallback(content: string): SupportedLanguages {
+  const hasOC = OC_HEADER_PATTERNS.some((re) => re.test(content));
+  return hasOC ? SupportedLanguages.ObjectiveC : SupportedLanguages.CPlusPlus;
+}
 
 const processParsingWithWorkers = async (
   graph: KnowledgeGraph,

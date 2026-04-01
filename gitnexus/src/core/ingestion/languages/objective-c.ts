@@ -13,7 +13,7 @@
 
 import { SupportedLanguages } from 'gitnexus-shared';
 import { defineLanguage } from '../language-provider.js';
-import { typeConfig as cCppConfig } from '../type-extractors/c-cpp.js';
+import { typeConfig as objcTypeConfig } from '../type-extractors/objective-c.js';
 import { cCppExportChecker } from '../export-detection.js';
 import { resolveCppImport } from '../import-resolvers/standard.js';
 import { OBJECTIVEC_QUERIES } from '../tree-sitter-queries.js';
@@ -124,7 +124,7 @@ export const objectiveCProvider = defineLanguage({
   id: SupportedLanguages.ObjectiveC,
   extensions: ['.m', '.mm'],
   treeSitterQueries: OBJECTIVEC_QUERIES,
-  typeConfig: cCppConfig,
+  typeConfig: objcTypeConfig,
   exportChecker: cCppExportChecker,
   importResolver: resolveCppImport,
   importSemantics: 'wildcard',
