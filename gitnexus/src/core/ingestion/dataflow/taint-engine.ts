@@ -69,23 +69,6 @@ export function analyzeTaint(
     'system', 'popen', 'spawn'
   ]);
 
-  /**
-   * Escape regex special characters in a string.
-   */
-  function escapeRegex(str: string): string {
-    return str.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
-  }
-
-  /**
-   * Check if a statement contains a function call pattern (more precise than simple includes).
-   */
-  function hasFunctionCall(stmt: string, pattern: string): boolean {
-    // Match word boundary before pattern, followed by any chars (except paren) and opening paren.
-    // This allows "execute" to match "executeQuery(" and "request.args.get" to match "request.args.get("
-    const regex = new RegExp('\\b' + escapeRegex(pattern) + '[^)]*\\(', 'g');
-    return regex.test(stmt);
-  }
-
   // Scan CFG for sources, sinks, and sanitizers using improved pattern matching
   // Uses function call patterns for better precision (reduces false positives from variable names)
   for (const [nodeId, node] of cfg.nodes) {
@@ -136,10 +119,18 @@ export function analyzeTaint(
     }
   }
 
-  // Build taint paths from sources to sinks
+  // Build taint paths from sources to sinks using variable-aware propagation.
   for (const source of sources) {
     for (const sink of sinks) {
-      const path = findTaintPath(source, sink, cfg, sanitizers);
+      const path = findVariableAwareTaintPath(
+        source,
+        sink,
+        cfg,
+        sanitizers,
+        sourcePatterns,
+        sanitizerPatterns,
+        sinkPatterns,
+      );
       if (path) {
         paths.push({
           source,
@@ -174,47 +165,161 @@ function findTaintPath(
   cfg: CFG,
   sanitizers: Sanitizer[]
 ): { steps: TaintStep[]; sanitizersInPath: Sanitizer[] } | undefined {
-  // BFS to find path from source node to sink node
-  const queue: Array<{ nodeId: string; path: TaintStep[]; sanitizersInPath: Sanitizer[] }> = [
-    { nodeId: source.nodeId, path: [], sanitizersInPath: [] }
+  return findVariableAwareTaintPath(
+    source,
+    sink,
+    cfg,
+    sanitizers,
+    new Set<string>(),
+    new Set<string>(),
+    new Set<string>(),
+  );
+}
+
+function findVariableAwareTaintPath(
+  source: TaintSource,
+  sink: TaintSink,
+  cfg: CFG,
+  sanitizers: Sanitizer[],
+  sourcePatterns: Set<string>,
+  sanitizerPatterns: Set<string>,
+  sinkPatterns: Set<string>,
+): { steps: TaintStep[]; sanitizersInPath: Sanitizer[] } | undefined {
+  type State = {
+    nodeId: string;
+    tainted: Set<string>;
+    path: TaintStep[];
+    sanitizersInPath: Sanitizer[];
+  };
+
+  const initialTaint = new Set<string>([source.variable]);
+  const queue: State[] = [
+    { nodeId: source.nodeId, tainted: initialTaint, path: [], sanitizersInPath: [] },
   ];
   const visited = new Set<string>();
 
   while (queue.length > 0) {
-    const { nodeId, path, sanitizersInPath } = queue.shift()!;
+    const current = queue.shift();
+    if (!current) break;
 
-    if (visited.has(nodeId)) continue;
-    visited.add(nodeId);
+    const stateKey = `${current.nodeId}|${[...current.tainted].sort().join(',')}`;
+    if (visited.has(stateKey)) continue;
+    visited.add(stateKey);
 
-    const node = cfg.nodes.get(nodeId);
+    const node = cfg.nodes.get(current.nodeId);
     if (!node) continue;
 
-    // Check if this node has a sanitizer
-    const nodeSanitizers = sanitizers.filter(s => s.nodeId === nodeId);
-    const updatedSanitizers = [...sanitizersInPath, ...nodeSanitizers];
+    const stmt = node.basicBlock.join(' ');
+    const updatedTaint = transferTaint(stmt, current.tainted, sourcePatterns, sanitizerPatterns);
 
-    // Check if this is the sink
-    if (nodeId === sink.nodeId && path.length > 0) {
-      return { steps: path, sanitizersInPath: updatedSanitizers };
+    const nodeSanitizers = sanitizers.filter((s) => s.nodeId === current.nodeId);
+    const updatedSanitizers = [...current.sanitizersInPath, ...nodeSanitizers];
+
+    if (current.nodeId === sink.nodeId && sinkUsesTaintedInput(stmt, sinkPatterns, updatedTaint)) {
+      return { steps: current.path, sanitizersInPath: updatedSanitizers };
     }
 
-    // Continue BFS along successors
     for (const succ of node.successors) {
       const step: TaintStep = {
-        from: nodeId,
+        from: current.nodeId,
         to: succ,
         operation: 'propagate',
       };
-      queue.push({ nodeId: succ, path: [...path, step], sanitizersInPath: updatedSanitizers });
+      queue.push({
+        nodeId: succ,
+        tainted: updatedTaint,
+        path: [...current.path, step],
+        sanitizersInPath: updatedSanitizers,
+      });
     }
   }
 
-  // If we found sink but path was empty, return direct connection
   if (source.nodeId === sink.nodeId) {
     return { steps: [], sanitizersInPath: [] };
   }
 
   return undefined;
+}
+
+function transferTaint(
+  stmt: string,
+  tainted: Set<string>,
+  sourcePatterns: Set<string>,
+  sanitizerPatterns: Set<string>,
+): Set<string> {
+  const next = new Set<string>(tainted);
+  const lhs = extractAssignedVariable(stmt);
+
+  // Source assignment: x = userInput()
+  if (lhs && hasAnyFunctionCall(stmt, sourcePatterns)) {
+    next.add(lhs);
+    return next;
+  }
+
+  // Sanitizer assignment: y = sanitize(x)
+  if (lhs && hasAnyFunctionCall(stmt, sanitizerPatterns)) {
+    if (usesAnyVariable(stmt, tainted, lhs)) {
+      next.add(lhs);
+    } else {
+      next.delete(lhs);
+    }
+    return next;
+  }
+
+  // Assignment propagation: y = x / y = foo(x)
+  if (lhs) {
+    if (usesAnyVariable(stmt, tainted, lhs)) {
+      next.add(lhs);
+    } else {
+      // Overwritten by a value we don't consider tainted in this state.
+      next.delete(lhs);
+    }
+    return next;
+  }
+
+  // Non-assignment calls can represent parameter passing but do not create locals.
+  return next;
+}
+
+function sinkUsesTaintedInput(stmt: string, sinkPatterns: Set<string>, tainted: Set<string>): boolean {
+  if (!hasAnyFunctionCall(stmt, sinkPatterns)) return false;
+  return usesAnyVariable(stmt, tainted);
+}
+
+function extractAssignedVariable(stmt: string): string | undefined {
+  const assignMatch = stmt.match(/^\s*(?:let|const|var)?\s*([A-Za-z_][\w$]*)\s*=/);
+  return assignMatch?.[1];
+}
+
+function usesAnyVariable(stmt: string, vars: Set<string>, exclude?: string): boolean {
+  for (const variable of vars) {
+    if (!variable || variable === exclude) continue;
+    const regex = new RegExp(`\\b${escapeRegex(variable)}\\b`);
+    if (regex.test(stmt)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasAnyFunctionCall(stmt: string, patterns: Set<string>): boolean {
+  for (const pattern of patterns) {
+    if (hasFunctionCall(stmt, pattern)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasFunctionCall(stmt: string, pattern: string): boolean {
+  // Match word boundary before pattern, followed by any chars (except paren) and opening paren.
+  // This allows "execute" to match "executeQuery(" and "request.args.get" to match "request.args.get(".
+  const regex = new RegExp('\\b' + escapeRegex(pattern) + '[^)]*\\(', 'g');
+  return regex.test(stmt);
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
 }
 
 /**

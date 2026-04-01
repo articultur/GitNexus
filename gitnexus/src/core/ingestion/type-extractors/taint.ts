@@ -5,7 +5,7 @@
  * This module provides:
  *  - TaintConfig: per-language source/sanitizer/sink patterns
  *  - TaintAnnotation: propagated taint metadata
- *  - extractTaintSource / extractTaintSink / extractTaintSanitizer
+ *  - TAINT_CONFIGS: language-to-pattern registry for dataflow analysis
  */
 
 // ── Taint annotation types ────────────────────────────────────────────────────

@@ -134,6 +134,46 @@ describe('Taint Engine', () => {
 
       expect(result.sources.length).toBeGreaterThan(0);
     });
+
+    it('should propagate taint through return-style assignment chains', () => {
+      const statements: ParsedStatement[] = [
+        { type: 'assignment', content: 'inputValue = userInput()', line: 1 },
+        { type: 'assignment', content: 'result = transform(inputValue)', line: 2 },
+        { type: 'call', content: 'executeQuery(result)', line: 3 },
+      ];
+
+      const cfg = buildCFG('returnChain', statements);
+
+      const context: DFAContext = {
+        cfg,
+        symbolTable: new Map(),
+        callsGraph: new Map(),
+        assignments: new Map(),
+      };
+
+      const result = analyzeTaint(cfg, context, 'typescript');
+      expect(result.paths.length).toBeGreaterThan(0);
+    });
+
+    it('should not report sink path when sink does not consume tainted variable', () => {
+      const statements: ParsedStatement[] = [
+        { type: 'assignment', content: 'x = userInput()', line: 1 },
+        { type: 'assignment', content: 'safe = "constant"', line: 2 },
+        { type: 'call', content: 'executeQuery(safe)', line: 3 },
+      ];
+
+      const cfg = buildCFG('nonTaintedSinkArg', statements);
+
+      const context: DFAContext = {
+        cfg,
+        symbolTable: new Map(),
+        callsGraph: new Map(),
+        assignments: new Map(),
+      };
+
+      const result = analyzeTaint(cfg, context, 'typescript');
+      expect(result.paths.length).toBe(0);
+    });
   });
 
   describe('getTaintPatterns', () => {
