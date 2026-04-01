@@ -75,6 +75,9 @@ withTestLbugDB(
         const calleeNames = result.outgoing.calls.map((c: any) => c.name);
         expect(calleeNames).toContain('validate');
         expect(calleeNames).toContain('hash');
+        expect(result.evidence).toBeDefined();
+        expect(result.evidence.relation_count).toBeGreaterThanOrEqual(2);
+        expect(Array.isArray(result.evidence.supporting_relations)).toBe(true);
       });
 
       it('impact tool returns upstream dependents', async () => {
@@ -90,6 +93,9 @@ withTestLbugDB(
         expect(directDeps.length).toBeGreaterThanOrEqual(1);
         const depNames = directDeps.map((d: any) => d.name);
         expect(depNames).toContain('login');
+        expect(result.evidence).toBeDefined();
+        expect(Array.isArray(result.evidence.traversal)).toBe(true);
+        expect(result.evidence.traversal.length).toBeGreaterThanOrEqual(1);
       });
 
       it('query tool returns results for keyword search', async () => {

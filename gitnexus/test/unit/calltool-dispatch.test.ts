@@ -27,6 +27,10 @@ vi.mock('../../src/storage/repo-manager.js', () => ({
   cleanupOldKuzuFiles: vi.fn().mockResolvedValue({ found: false, needsReindex: false }),
 }));
 
+vi.mock('child_process', () => ({
+  execFileSync: vi.fn(() => 'src/index.ts\n'),
+}));
+
 // Also mock the search modules to avoid loading onnxruntime
 vi.mock('../../src/core/search/bm25-index.js', () => ({
   searchFTSFromLbug: vi.fn().mockResolvedValue([]),
@@ -251,12 +255,23 @@ describe('LocalBackend.callTool', () => {
   });
 
   it('dispatches detect_changes tool', async () => {
-    // detect_changes calls execFileSync which we haven't mocked at module level,
-    // so it will throw a git error — that's fine, we test the error path
+    (executeParameterized as any).mockResolvedValue([
+      {
+        id: 'func:main',
+        name: 'main',
+        type: 'Function',
+        filePath: 'src/index.ts',
+      },
+    ]);
+
     const result = await backend.callTool('detect_changes', { scope: 'unstaged' });
-    // Should either return changes or a git error
     expect(result).toBeDefined();
-    expect(result.error || result.summary).toBeDefined();
+    expect(result.summary).toBeDefined();
+    expect(result.changed_symbols).toHaveLength(1);
+    expect(result.evidence).toBeDefined();
+    expect(result.evidence.changed_files).toEqual(['src/index.ts']);
+    expect(result.evidence.file_matches[0].filePath).toBe('src/index.ts');
+    expect(result.evidence.file_matches[0].symbols[0].match_reason).toContain('src/index.ts');
   });
 
   it('dispatches rename tool', async () => {

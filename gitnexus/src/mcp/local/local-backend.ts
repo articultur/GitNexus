@@ -26,6 +26,8 @@ import {
   cleanupOldKuzuFiles,
   type RegistryEntry,
 } from '../../storage/repo-manager.js';
+import { SupportedLanguages } from 'gitnexus-shared';
+import { isLanguageAvailable } from '../../core/tree-sitter/parser-loader.js';
 // AI context generation is CLI-only (gitnexus analyze)
 // import { generateAIContextFiles } from '../../cli/ai-context.js';
 
@@ -169,6 +171,34 @@ export interface CodebaseContext {
     functionCount: number;
     communityCount: number;
     processCount: number;
+  };
+}
+
+export interface RepoOverview {
+  context: CodebaseContext;
+  maintainability: {
+    fileImportCycles: number;
+    oversizedSymbols: number;
+    crossModuleEdges: number;
+    hotspots: {
+      incoming: Array<{ name: string; filePath: string; count: number }>;
+      outgoing: Array<{ name: string; filePath: string; count: number }>;
+    };
+  };
+  coverage: {
+    parserCoverage: {
+      available: number;
+      total: number;
+    };
+    languages: Array<{
+      language: string;
+      parserMode: 'tree-sitter' | 'standalone';
+      parserAvailable: boolean;
+      status: 'available' | 'unavailable' | 'standalone';
+      note?: string;
+    }>;
+    blindSpots: string[];
+    analysisConfidence: 'high' | 'medium' | 'low';
   };
 }
 
@@ -417,6 +447,150 @@ export class LocalBackend {
       return this.contextCache.values().next().value ?? null;
     }
     return null;
+  }
+
+  async queryRepoOverview(repoName?: string): Promise<RepoOverview> {
+    const repo = await this.resolveRepo(repoName);
+    await this.ensureInitialized(repo.id);
+
+    const context =
+      this.getContext(repo.id) ||
+      this.getContext() || {
+        projectName: repo.name,
+        stats: {
+          fileCount: repo.stats?.files || 0,
+          functionCount: repo.stats?.nodes || 0,
+          communityCount: repo.stats?.communities || 0,
+          processCount: repo.stats?.processes || 0,
+        },
+      };
+
+    const [fileImportCycles, oversizedSymbols, crossModuleEdges, topIncoming, topOutgoing] =
+      await Promise.all([
+        executeQuery(
+          repo.id,
+          `
+          MATCH (a:File)-[:CodeRelation {type: 'IMPORTS'}]->(b:File)
+          MATCH (b)-[:CodeRelation {type: 'IMPORTS'}]->(a)
+          WHERE a.id < b.id
+          RETURN COUNT(*) AS count
+        `,
+        ).catch(() => []),
+        executeQuery(
+          repo.id,
+          `
+          MATCH (n)
+          WHERE labels(n)[0] IN ['Function', 'Method', 'Class']
+            AND n.startLine IS NOT NULL AND n.endLine IS NOT NULL
+            AND (
+              (labels(n)[0] IN ['Function', 'Method'] AND (n.endLine - n.startLine + 1) >= 80)
+              OR (labels(n)[0] = 'Class' AND (n.endLine - n.startLine + 1) >= 200)
+            )
+          RETURN COUNT(*) AS count
+        `,
+        ).catch(() => []),
+        executeQuery(
+          repo.id,
+          `
+          MATCH (a)-[:CodeRelation {type: 'MEMBER_OF'}]->(c1:Community)
+          MATCH (a)-[r:CodeRelation]->(b)
+          MATCH (b)-[:CodeRelation {type: 'MEMBER_OF'}]->(c2:Community)
+          WHERE r.type IN ['CALLS', 'IMPORTS'] AND c1.id <> c2.id
+          RETURN COUNT(DISTINCT r) AS count
+        `,
+        ).catch(() => []),
+        executeQuery(
+          repo.id,
+          `
+          MATCH (src)-[r:CodeRelation]->(n)
+          WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS']
+          RETURN n.name AS name, n.filePath AS filePath, COUNT(*) AS count
+          ORDER BY count DESC
+          LIMIT 5
+        `,
+        ).catch(() => []),
+        executeQuery(
+          repo.id,
+          `
+          MATCH (n)-[r:CodeRelation]->(dst)
+          WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS']
+          RETURN n.name AS name, n.filePath AS filePath, COUNT(*) AS count
+          ORDER BY count DESC
+          LIMIT 5
+        `,
+        ).catch(() => []),
+      ]);
+
+    const optionalParsers = new Set<string>([
+      SupportedLanguages.Kotlin,
+      SupportedLanguages.Swift,
+      SupportedLanguages.Dart,
+      SupportedLanguages.ObjectiveC,
+    ]);
+
+    const languages = Object.values(SupportedLanguages).map((language) => {
+      const parserMode = language === SupportedLanguages.Cobol ? 'standalone' : 'tree-sitter';
+      const parserAvailable =
+        parserMode === 'standalone' ? true : isLanguageAvailable(language as SupportedLanguages);
+      let note: string | undefined;
+      if (language === SupportedLanguages.Cobol) {
+        note = 'Regex-based standalone processor';
+      } else if (!parserAvailable && optionalParsers.has(language)) {
+        note = 'Optional native parser not installed';
+      }
+      return {
+        language,
+        parserMode,
+        parserAvailable,
+        status: (parserMode === 'standalone'
+          ? 'standalone'
+          : parserAvailable
+            ? 'available'
+            : 'unavailable') as 'available' | 'unavailable' | 'standalone',
+        ...(note ? { note } : {}),
+      };
+    });
+
+    const availableParserCount = languages.filter(
+      (lang) => lang.status === 'available' || lang.status === 'standalone',
+    ).length;
+    const parserCoverageRatio = availableParserCount / Math.max(languages.length, 1);
+
+    return {
+      context,
+      maintainability: {
+        fileImportCycles: fileImportCycles[0]?.count ?? fileImportCycles[0]?.[0] ?? 0,
+        oversizedSymbols: oversizedSymbols[0]?.count ?? oversizedSymbols[0]?.[0] ?? 0,
+        crossModuleEdges: crossModuleEdges[0]?.count ?? crossModuleEdges[0]?.[0] ?? 0,
+        hotspots: {
+          incoming: topIncoming.map((row: any) => ({
+            name: row.name ?? row[0] ?? 'unknown',
+            filePath: row.filePath ?? row[1] ?? '',
+            count: row.count ?? row[2] ?? 0,
+          })),
+          outgoing: topOutgoing.map((row: any) => ({
+            name: row.name ?? row[0] ?? 'unknown',
+            filePath: row.filePath ?? row[1] ?? '',
+            count: row.count ?? row[2] ?? 0,
+          })),
+        },
+      },
+      coverage: {
+        parserCoverage: {
+          available: availableParserCount,
+          total: languages.length,
+        },
+        languages,
+        blindSpots: [
+          'Variable-level data flow is not yet modeled end-to-end.',
+          'Path-sensitive control-flow reasoning is partial.',
+          'Security rule execution and taint propagation are not productized in MCP outputs.',
+          'Parser availability can reduce language coverage on optional native grammars.',
+        ],
+        analysisConfidence:
+          parserCoverageRatio >= 0.85 ? 'high' : parserCoverageRatio >= 0.65 ? 'medium' : 'low',
+      },
+    };
   }
 
   /**
@@ -1064,11 +1238,13 @@ export class LocalBackend {
       uid?: string;
       file_path?: string;
       include_content?: boolean;
+      /** When false, omit the `evidence` block from the response. Default: true */
+      include_evidence?: boolean;
     },
   ): Promise<any> {
     await this.ensureInitialized(repo.id);
 
-    const { name, uid, file_path, include_content } = params;
+    const { name, uid, file_path, include_content, include_evidence = true } = params;
 
     if (!name && !uid) {
       return { error: 'Either "name" or "uid" parameter is required.' };
@@ -1188,7 +1364,8 @@ export class LocalBackend {
       `
       MATCH (caller)-[r:CodeRelation]->(n {id: $symId})
       WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES']
-      RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
+      RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind,
+             r.confidence AS confidence, r.reason AS reason, caller.startLine AS startLine, caller.endLine AS endLine
       LIMIT 30
     `,
       { symId },
@@ -1235,7 +1412,8 @@ export class LocalBackend {
             WHERE n.id = $symId AND hm.type = 'HAS_METHOD'
             MATCH (caller)-[r:CodeRelation]->(ctor)
             WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'ACCESSES']
-            RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
+            RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind,
+                   r.confidence AS confidence, r.reason AS reason, caller.startLine AS startLine, caller.endLine AS endLine
             LIMIT 30
           `,
             { symId },
@@ -1247,7 +1425,8 @@ export class LocalBackend {
             WHERE n.id = $symId AND rel.type = 'DEFINES'
             MATCH (caller)-[r:CodeRelation]->(f)
             WHERE r.type IN ['CALLS', 'IMPORTS']
-            RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind
+            RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind,
+                   r.confidence AS confidence, r.reason AS reason, caller.startLine AS startLine, caller.endLine AS endLine
             LIMIT 30
           `,
             { symId },
@@ -1278,7 +1457,8 @@ export class LocalBackend {
       `
       MATCH (n {id: $symId})-[r:CodeRelation]->(target)
       WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES']
-      RETURN r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind
+      RETURN r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind,
+             r.confidence AS confidence, r.reason AS reason, target.startLine AS startLine, target.endLine AS endLine
       LIMIT 30
     `,
       { symId },
@@ -1309,12 +1489,33 @@ export class LocalBackend {
           name: row.name || row[2],
           filePath: row.filePath || row[3],
           kind: row.kind || row[4],
+          confidence: row.confidence ?? row[5] ?? null,
+          reason: row.reason ?? row[6] ?? '',
+          startLine: row.startLine ?? row[7] ?? null,
+          endLine: row.endLine ?? row[8] ?? null,
         };
         if (!cats[relType]) cats[relType] = [];
         cats[relType].push(entry);
       }
       return cats;
     };
+
+    const incoming = categorize(incomingRows);
+    const outgoing = categorize(outgoingRows);
+    const relationEvidence = [...incomingRows, ...outgoingRows].map((row: any) => ({
+      relationType: row.relType || row[0],
+      uid: row.uid || row[1],
+      name: row.name || row[2],
+      filePath: row.filePath || row[3],
+      kind: row.kind || row[4],
+      confidence: row.confidence ?? row[5] ?? null,
+      reason: row.reason ?? row[6] ?? '',
+      startLine: row.startLine ?? row[7] ?? null,
+      endLine: row.endLine ?? row[8] ?? null,
+    }));
+    const relationConfidences = relationEvidence
+      .map((row) => row.confidence)
+      .filter((value): value is number => typeof value === 'number');
 
     return {
       status: 'found',
@@ -1327,14 +1528,42 @@ export class LocalBackend {
         endLine: sym.endLine || sym[5],
         ...(include_content && (sym.content || sym[6]) ? { content: sym.content || sym[6] } : {}),
       },
-      incoming: categorize(incomingRows),
-      outgoing: categorize(outgoingRows),
+      incoming,
+      outgoing,
       processes: processRows.map((r: any) => ({
         id: r.pid || r[0],
         name: r.label || r[1],
         step_index: r.step || r[2],
         step_count: r.stepCount || r[3],
       })),
+      ...(include_evidence && {
+        evidence: {
+          explanation:
+            'Incoming and outgoing references are backed by direct CodeRelation edges; process entries are backed by STEP_IN_PROCESS edges.',
+          relation_count: relationEvidence.length,
+          process_count: processRows.length,
+          confidence:
+            relationConfidences.length > 0
+              ? {
+                  min: Math.min(...relationConfidences),
+                  max: Math.max(...relationConfidences),
+                  average:
+                    Math.round(
+                      (relationConfidences.reduce((sum, value) => sum + value, 0) /
+                        relationConfidences.length) *
+                        100,
+                    ) / 100,
+                }
+              : null,
+          supporting_relations: relationEvidence,
+          processes: processRows.map((r: any) => ({
+            id: r.pid || r[0],
+            name: r.label || r[1],
+            step_index: r.step || r[2],
+            step_count: r.stepCount || r[3],
+          })),
+        },
+      }),
     };
   }
 
@@ -1463,11 +1692,14 @@ export class LocalBackend {
     params: {
       scope?: string;
       base_ref?: string;
+      /** When false, omit the `evidence` block from the response. Default: true */
+      include_evidence?: boolean;
     },
   ): Promise<any> {
     await this.ensureInitialized(repo.id);
 
     const scope = params.scope || 'unstaged';
+    const include_evidence = params.include_evidence ?? true;
     const { execFileSync } = await import('child_process');
 
     // Build git diff args based on scope (using execFileSync to avoid shell injection)
@@ -1515,6 +1747,7 @@ export class LocalBackend {
 
     // Map changed files to indexed symbols
     const changedSymbols: any[] = [];
+    const fileMatches: Array<{ filePath: string; symbols: any[] }> = [];
     for (const file of changedFiles) {
       const normalizedFile = file.replace(/\\/g, '/');
       try {
@@ -1527,6 +1760,14 @@ export class LocalBackend {
         `,
           { filePath: normalizedFile },
         );
+        const fileSymbols = symbols.map((sym: any) => ({
+          id: sym.id || sym[0],
+          name: sym.name || sym[1],
+          type: sym.type || sym[2],
+          filePath: sym.filePath || sym[3],
+          match_reason: `filePath contains ${normalizedFile}`,
+        }));
+        fileMatches.push({ filePath: normalizedFile, symbols: fileSymbols });
         for (const sym of symbols) {
           changedSymbols.push({
             id: sym.id || sym[0],
@@ -1534,6 +1775,7 @@ export class LocalBackend {
             type: sym.type || sym[2],
             filePath: sym.filePath || sym[3],
             change_type: 'Modified',
+            match_reason: `filePath contains ${normalizedFile}`,
           });
         }
       } catch (e) {
@@ -1593,6 +1835,15 @@ export class LocalBackend {
       },
       changed_symbols: changedSymbols,
       affected_processes: Array.from(affectedProcesses.values()),
+      ...(include_evidence && {
+        evidence: {
+          explanation:
+            'Changed files are matched to indexed symbols by file path, then expanded to processes through STEP_IN_PROCESS links.',
+          changed_files: changedFiles,
+          file_matches: fileMatches,
+          process_matches: Array.from(affectedProcesses.values()),
+        },
+      }),
     };
   }
 
@@ -1827,6 +2078,8 @@ export class LocalBackend {
       relationTypes?: string[];
       includeTests?: boolean;
       minConfidence?: number;
+      /** When false, omit the `evidence` block from the response. Default: true */
+      include_evidence?: boolean;
     },
   ): Promise<any> {
     try {
@@ -1853,11 +2106,13 @@ export class LocalBackend {
       relationTypes?: string[];
       includeTests?: boolean;
       minConfidence?: number;
+      include_evidence?: boolean;
     },
   ): Promise<any> {
     await this.ensureInitialized(repo.id);
 
     const { target, direction } = params;
+    const include_evidence = params.include_evidence ?? true;
     const maxDepth = params.maxDepth || 3;
     const rawRelTypes =
       params.relationTypes && params.relationTypes.length > 0
@@ -1997,8 +2252,8 @@ export class LocalBackend {
       const idList = frontier.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
       const query =
         direction === 'upstream'
-          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN [${idList}] AND r.type IN [${relTypeFilter}]${confidenceFilter} RETURN n.id AS sourceId, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence`
-          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN [${idList}] AND r.type IN [${relTypeFilter}]${confidenceFilter} RETURN n.id AS sourceId, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence`;
+          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN [${idList}] AND r.type IN [${relTypeFilter}]${confidenceFilter} RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`
+          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN [${idList}] AND r.type IN [${relTypeFilter}]${confidenceFilter} RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`;
 
       try {
         const related = await executeQuery(repo.id, query);
@@ -2023,11 +2278,17 @@ export class LocalBackend {
             impacted.push({
               depth,
               id: relId,
-              name: rel.name || rel[2],
-              type: rel.type || rel[3],
+              name: rel.name || rel[4],
+              type: rel.type || rel[5],
               filePath,
               relationType,
               confidence: effectiveConfidence,
+              reason: rel.reason ?? rel[9] ?? '',
+              source: {
+                id: rel.sourceId || rel[0],
+                name: rel.sourceName || rel[1],
+                filePath: rel.sourceFilePath || rel[2],
+              },
             });
           }
         }
@@ -2334,6 +2595,26 @@ export class LocalBackend {
       affected_processes: affectedProcesses,
       affected_modules: affectedModules,
       byDepth: grouped,
+      ...(include_evidence && {
+        evidence: {
+          explanation:
+            'Impact is computed by breadth-first traversal over graph relations from the target symbol using the selected relation types.',
+          relation_types: relationTypes,
+          traversal: impacted.map((item) => ({
+            depth: item.depth,
+            relationType: item.relationType,
+            confidence: item.confidence,
+            reason: item.reason,
+            from: item.source,
+            to: {
+              id: item.id,
+              name: item.name,
+              filePath: item.filePath,
+              type: item.type,
+            },
+          })),
+        },
+      }),
     };
   }
 
