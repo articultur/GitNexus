@@ -54,13 +54,25 @@ import type { SyntaxNode } from '../utils/ast-helpers.js';
 // ── Java taint patterns ─────────────────────────────────────────────────────
 
 const JAVA_SINK_METHODS = new Set([
-  'execute', 'executeQuery', 'executeUpdate', 'executeLargeUpdate',
-  'exec', 'execSync', 'eval',
+  'execute',
+  'executeQuery',
+  'executeUpdate',
+  'executeLargeUpdate',
+  'exec',
+  'execSync',
+  'eval',
 ]);
 
 const JAVA_SANITIZER_METHODS = new Set([
-  'escape', 'sanitize', 'htmlEscape', 'encodeForHTML', 'encodeForURL',
-  'trim', 'strip', 'stripLeading', 'stripTrailing',
+  'escape',
+  'sanitize',
+  'htmlEscape',
+  'encodeForHTML',
+  'encodeForURL',
+  'trim',
+  'strip',
+  'stripLeading',
+  'stripTrailing',
 ]);
 
 /** Java: request.getParameter("x") — source node is method_invocation with named arg */
@@ -101,7 +113,10 @@ function javaTaintSanitizer(node: SyntaxNode): TaintPattern | undefined {
   if (!name) return undefined;
   const methodName = name.text;
   if (JAVA_SANITIZER_METHODS.has(methodName)) {
-    return { name: `java-sanitizer:${methodName}`, description: `Sanitizer method: ${methodName}()` };
+    return {
+      name: `java-sanitizer:${methodName}`,
+      description: `Sanitizer method: ${methodName}()`,
+    };
   }
   return undefined;
 }
@@ -117,9 +132,7 @@ export const javaTaintConfig: TaintConfig = {
 
 // ── Kotlin taint patterns ──────────────────────────────────────────────────
 
-const KOTLIN_SINK_METHODS = new Set([
-  'exec', 'eval', 'forName',
-]);
+const KOTLIN_SINK_METHODS = new Set(['exec', 'eval', 'forName']);
 
 function kotlinTaintSource(node: SyntaxNode): TaintPattern | undefined {
   const obj = node.childForFieldName('object');
@@ -164,9 +177,16 @@ export const kotlinTaintConfig: TaintConfig = {
 // ── Go taint patterns ──────────────────────────────────────────────────────
 
 const GO_SINK_FUNCTIONS = new Set([
-  'Exec', 'Query', 'QueryRow', 'ExecContext',
-  'Command', 'CommandContext', 'LookPath',
-  'Eval', 'Run', 'Output',
+  'Exec',
+  'Query',
+  'QueryRow',
+  'ExecContext',
+  'Command',
+  'CommandContext',
+  'LookPath',
+  'Eval',
+  'Run',
+  'Output',
 ]);
 
 function goTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -209,9 +229,7 @@ export const goTaintConfig: TaintConfig = {
 
 // ── Dart / Flutter taint patterns ───────────────────────────────────────────
 
-const DART_SINK_METHODS = new Set([
-  'execute', 'run', 'eval', 'forName',
-]);
+const DART_SINK_METHODS = new Set(['execute', 'run', 'eval', 'forName']);
 
 function dartTaintSource(node: SyntaxNode): TaintPattern | undefined {
   // Dart: request.body, request.queryParameters, stdin.readLineSync()
@@ -253,8 +271,12 @@ export const dartTaintConfig: TaintConfig = {
 // ── C# taint patterns ───────────────────────────────────────────────────────
 
 const CSHARP_SINK_METHODS = new Set([
-  'Execute', 'ExecuteQuery', 'ExecuteNonQuery', 'Eval',
-  'ProcessStart', 'Start',
+  'Execute',
+  'ExecuteQuery',
+  'ExecuteNonQuery',
+  'Eval',
+  'ProcessStart',
+  'Start',
 ]);
 
 function csharpTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -301,9 +323,23 @@ export const csharpTaintConfig: TaintConfig = {
 // ── C / C++ taint patterns ──────────────────────────────────────────────────
 
 const C_SINK_FUNCTIONS = new Set([
-  'system', 'popen', 'execv', 'execve', 'execvp', 'execl', 'execlp',
-  'scanf', 'sscanf', 'fscanf', 'gets', 'strcpy', 'strcat', 'sprintf',
-  'malloc', 'calloc', 'realloc', // memory alloc — not a sink per se but security relevant
+  'system',
+  'popen',
+  'execv',
+  'execve',
+  'execvp',
+  'execl',
+  'execlp',
+  'scanf',
+  'sscanf',
+  'fscanf',
+  'gets',
+  'strcpy',
+  'strcat',
+  'sprintf',
+  'malloc',
+  'calloc',
+  'realloc', // memory alloc — not a sink per se but security relevant
 ]);
 
 function cTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -342,9 +378,7 @@ export const cTaintConfig: TaintConfig = {
 
 // ── Rust taint patterns ─────────────────────────────────────────────────────
 
-const RUST_SINK_FUNCTIONS = new Set([
-  'exec', 'eval', 'for_name',
-]);
+const RUST_SINK_FUNCTIONS = new Set(['exec', 'eval', 'for_name']);
 
 function rustTaintSource(node: SyntaxNode): TaintPattern | undefined {
   // Rust: env!("..."), std::env::var("..."), std::io::stdin()
@@ -387,8 +421,12 @@ export const rustTaintConfig: TaintConfig = {
 // ── Swift taint patterns ───────────────────────────────────────────────────
 
 const SWIFT_SINK_METHODS = new Set([
-  'execute', 'run', 'eval', 'forName',
-  'withUnsafePointer', 'withUnsafeBytes',
+  'execute',
+  'run',
+  'eval',
+  'forName',
+  'withUnsafePointer',
+  'withUnsafeBytes',
 ]);
 
 function swiftTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -428,16 +466,31 @@ export const swiftTaintConfig: TaintConfig = {
 // ── TypeScript / JavaScript taint patterns ──────────────────────────────────
 
 const TS_SINK_FUNCTIONS = new Set([
-  'eval', 'Function', 'exec', 'spawn', 'spawnSync',
-  'execSync', 'execFile', 'execFileSync',
-  'query', 'execute', 'forName',
-  'innerHTML', 'outerHTML', 'insertAdjacentHTML',
-  'write', 'writeln',
+  'eval',
+  'Function',
+  'exec',
+  'spawn',
+  'spawnSync',
+  'execSync',
+  'execFile',
+  'execFileSync',
+  'query',
+  'execute',
+  'forName',
+  'innerHTML',
+  'outerHTML',
+  'insertAdjacentHTML',
+  'write',
+  'writeln',
 ]);
 
 const TS_SANITIZER_FUNCTIONS = new Set([
-  'escape', 'sanitize', 'encodeURI', 'encodeURIComponent',
-  'htmlEscape', 'templateEscape',
+  'escape',
+  'sanitize',
+  'encodeURI',
+  'encodeURIComponent',
+  'htmlEscape',
+  'templateEscape',
 ]);
 
 function tsTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -465,7 +518,10 @@ function tsTaintSource(node: SyntaxNode): TaintPattern | undefined {
   }
   if ((objName === 'req' || objName === 'request') && propName) {
     if (['body', 'params', 'query', 'headers', 'cookies'].includes(propName)) {
-      return { name: `ts-request-input:${propName}`, description: `HTTP request input: req.${propName}` };
+      return {
+        name: `ts-request-input:${propName}`,
+        description: `HTTP request input: req.${propName}`,
+      };
     }
   }
   if (objName === 'window' || objName === 'document') {
@@ -524,9 +580,13 @@ export const typescriptTaintConfig: TaintConfig = {
 // ── Objective-C taint patterns ─────────────────────────────────────────────
 
 const OBJC_SINK_SELECTORS = new Set([
-  'execCommand:', 'evaluateJavaScript:', 'performSelector:',
-  'executeFetchRequest:', 'executeStatement:',
-  'openURL:', 'canOpenURL:',
+  'execCommand:',
+  'evaluateJavaScript:',
+  'performSelector:',
+  'executeFetchRequest:',
+  'executeStatement:',
+  'openURL:',
+  'canOpenURL:',
 ]);
 
 function objcTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -566,10 +626,24 @@ export const objcTaintConfig: TaintConfig = {
 // ── PHP taint patterns ─────────────────────────────────────────────────────
 
 const PHP_SINK_FUNCTIONS = new Set([
-  'eval', 'exec', 'system', 'passthru', 'shell_exec', 'popen', 'proc_open',
-  'mysql_query', 'mysqli_query', 'pg_query', 'sqlite_query',
-  'unserialize', 'include', 'include_once', 'require', 'require_once',
-  'create_function', 'assert',
+  'eval',
+  'exec',
+  'system',
+  'passthru',
+  'shell_exec',
+  'popen',
+  'proc_open',
+  'mysql_query',
+  'mysqli_query',
+  'pg_query',
+  'sqlite_query',
+  'unserialize',
+  'include',
+  'include_once',
+  'require',
+  'require_once',
+  'create_function',
+  'assert',
 ]);
 
 function phpTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -608,9 +682,17 @@ export const phpTaintConfig: TaintConfig = {
 
 // Python dangerous functions that are taint sinks
 const PYTHON_SINK_FUNCTIONS = new Set([
-  'eval', 'exec', 'compile', 'getattr', 'setattr', 'delattr',
-  '__import__', 'open',
-  'subprocess.run', 'subprocess.Popen', 'subprocess.call',
+  'eval',
+  'exec',
+  'compile',
+  'getattr',
+  'setattr',
+  'delattr',
+  '__import__',
+  'open',
+  'subprocess.run',
+  'subprocess.Popen',
+  'subprocess.call',
 ]);
 
 function pythonTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -648,9 +730,17 @@ export const pythonTaintConfig: TaintConfig = {
 // ── Ruby taint patterns ───────────────────────────────────────────────────
 
 const RUBY_SINK_METHODS = new Set([
-  'eval', 'exec', 'system', 'spawn', 'popen',
-  'send', 'public_send', '__send__',
-  'instance_eval', 'class_eval', 'module_eval',
+  'eval',
+  'exec',
+  'system',
+  'spawn',
+  'popen',
+  'send',
+  'public_send',
+  '__send__',
+  'instance_eval',
+  'class_eval',
+  'module_eval',
 ]);
 
 function rubyTaintSource(node: SyntaxNode): TaintPattern | undefined {
@@ -685,6 +775,160 @@ export const rubyTaintConfig: TaintConfig = {
   extractSanitizerCall: rubyTaintSanitizer,
 };
 
+// ── ArkTS / HarmonyOS taint patterns ────────────────────────────────────────
+//
+// Sources (HarmonyOS inter-app / user input boundaries):
+//   router.getParams()          — URL route parameters passed between pages
+//   featureAbility.getWant()    — inter-app intent with arbitrary user-supplied data
+//   rpc.RemoteObject callbacks  — IPC from remote processes
+//
+// Sinks (HarmonyOS dangerous APIs):
+//   rdb.executeSql()            — SQL injection via raw query
+//   http.createHttp().request() — outbound HTTP with attacker-controlled URL
+//   fileIo.open() / write()     — file-path / content injection
+//   childProcess.spawn()        — OS command injection
+//   webview.loadUrl()           — open-redirect / XSS
+//
+// Sanitizers:
+//   encodeURI / encodeURIComponent (inherited from TS)
+//   JSON.parse — validates structural format (weaker sanitizer)
+
+const ARKTS_SINK_METHODS = new Set([
+  // Database (SQL injection)
+  'executeSql',
+  'querySql',
+  // File I/O (path injection)
+  'open',
+  'write',
+  'writeSync',
+  'read',
+  'readSync',
+  // Network (SSRF / open redirect)
+  'request',
+  'requestInStream',
+  // Process execution (OS command injection)
+  'spawn',
+  'spawnSync',
+  'exec',
+  'execSync',
+  // WebView (XSS / open-redirect)
+  'loadUrl',
+  'runJavaScript',
+  // Generic eval
+  'eval',
+  'Function',
+]);
+
+const ARKTS_SANITIZER_METHODS = new Set([
+  'encodeURI',
+  'encodeURIComponent',
+  'htmlEscape',
+  'sanitize',
+  'escape',
+]);
+
+function arktsTaintSource(node: SyntaxNode): TaintPattern | undefined {
+  // ArkTS taint sources operate on member expressions and call expressions.
+  // Pattern: router.getParams(), featureAbility.getWant(),
+  //          rpc.RemoteObject receive callbacks, AppStorage.get()
+  let objName: string | undefined;
+  let propName: string | undefined;
+
+  if (node.type === 'member_expression') {
+    const obj = node.childForFieldName('object');
+    const prop = node.childForFieldName('property');
+    objName = obj?.type === 'identifier' ? obj.text : undefined;
+    propName = prop?.type === 'identifier' ? prop.text : undefined;
+  } else if (node.type === 'call_expression') {
+    const callee = node.childForFieldName('callee') ?? node.childForFieldName('function');
+    if (callee?.type === 'member_expression') {
+      const obj = callee.childForFieldName('object');
+      const prop = callee.childForFieldName('property');
+      objName = obj?.type === 'identifier' ? obj.text : undefined;
+      propName = prop?.type === 'identifier' ? prop.text : undefined;
+    } else if (callee?.type === 'identifier') {
+      propName = callee.text;
+    }
+  }
+
+  // router.getParams() — page routing parameters (user-controlled)
+  if (objName === 'router' && propName === 'getParams') {
+    return {
+      name: 'arkts-router-params',
+      description: 'HarmonyOS router.getParams() — user-controlled route parameters',
+    };
+  }
+  // featureAbility.getWant() — inter-app intent
+  if (objName === 'featureAbility' && propName === 'getWant') {
+    return {
+      name: 'arkts-want',
+      description: 'HarmonyOS featureAbility.getWant() — inter-app intent data',
+    };
+  }
+  // AppStorage.get() / LocalStorage.get() — persistent state that may originate externally
+  if ((objName === 'AppStorage' || objName === 'LocalStorage') && propName === 'get') {
+    return {
+      name: 'arkts-storage-get',
+      description: `HarmonyOS ${objName}.get() — externally-persisted value`,
+    };
+  }
+  // promptAction.showDialog result / TextInput event handlers treated as DOM-like sources
+  if (objName === 'promptAction' && propName === 'showDialog') {
+    return {
+      name: 'arkts-dialog-input',
+      description: 'HarmonyOS promptAction.showDialog() — user dialog input',
+    };
+  }
+  return undefined;
+}
+
+function arktsTaintSink(node: SyntaxNode): TaintPattern | undefined {
+  let fnName: string | undefined;
+
+  if (node.type === 'call_expression') {
+    const callee = node.childForFieldName('callee') ?? node.childForFieldName('function');
+    if (callee?.type === 'member_expression') {
+      const prop = callee.childForFieldName('property');
+      fnName = prop?.type === 'identifier' ? prop.text : undefined;
+    } else if (callee?.type === 'identifier') {
+      fnName = callee.text;
+    }
+  }
+
+  if (fnName && ARKTS_SINK_METHODS.has(fnName)) {
+    return { name: `arkts-sink:${fnName}`, description: `HarmonyOS dangerous API: ${fnName}()` };
+  }
+  return undefined;
+}
+
+function arktsTaintSanitizer(node: SyntaxNode): TaintPattern | undefined {
+  let fnName: string | undefined;
+
+  if (node.type === 'call_expression') {
+    const callee = node.childForFieldName('callee') ?? node.childForFieldName('function');
+    if (callee?.type === 'member_expression') {
+      const prop = callee.childForFieldName('property');
+      fnName = prop?.type === 'identifier' ? prop.text : undefined;
+    } else if (callee?.type === 'identifier') {
+      fnName = callee.text;
+    }
+  }
+
+  if (fnName && ARKTS_SANITIZER_METHODS.has(fnName)) {
+    return { name: `arkts-sanitizer:${fnName}`, description: `ArkTS sanitizer: ${fnName}()` };
+  }
+  return undefined;
+}
+
+export const arktsTaintConfig: TaintConfig = {
+  sourceNodeTypes: new Set(['member_expression', 'call_expression']),
+  extractSourceDeclaration: () => undefined,
+  sinkNodeTypes: new Set(['call_expression']),
+  extractSinkCall: arktsTaintSink,
+  sanitizerNodeTypes: new Set(['call_expression']),
+  extractSanitizerCall: arktsTaintSanitizer,
+};
+
 // ── Taint Config Registry ───────────────────────────────────────────────────
 
 /**
@@ -703,6 +947,7 @@ export const TAINT_CONFIGS: Record<string, TaintConfig> = {
   swift: swiftTaintConfig,
   typescript: typescriptTaintConfig,
   javascript: typescriptTaintConfig,
+  arkts: arktsTaintConfig,
   php: phpTaintConfig,
   python: pythonTaintConfig,
   ruby: rubyTaintConfig,

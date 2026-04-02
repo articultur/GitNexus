@@ -110,6 +110,7 @@ import type { ConstructorBinding } from '../type-env.js';
 import { detectFrameworkFromAST } from '../framework-detection.js';
 import { generateId } from '../../../lib/utils.js';
 import { preprocessImportPath } from '../import-processor.js';
+import { preprocessArktsContent } from '../languages/arkts-preprocess.js';
 import type { NamedBinding } from '../named-bindings/types.js';
 import type { NodeLabel } from 'gitnexus-shared';
 import type { FieldInfo, FieldExtractorContext } from '../field-types.js';
@@ -259,7 +260,7 @@ export interface ExtractedToolDef {
 
 export interface ExtractedORMQuery {
   filePath: string;
-  orm: 'prisma' | 'supabase';
+  orm: 'prisma' | 'supabase' | 'harmony-rdb' | 'harmony-preferences';
   model: string;
   method: string;
   lineNumber: number;
@@ -318,6 +319,7 @@ const languageMap: Record<string, TreeSitterLanguage> = {
   [SupportedLanguages.JavaScript]: JavaScript,
   [SupportedLanguages.TypeScript]: TypeScript.typescript,
   [`${SupportedLanguages.TypeScript}:tsx`]: TypeScript.tsx,
+  [SupportedLanguages.ArkTS]: TypeScript.typescript,
   [SupportedLanguages.Python]: Python,
   [SupportedLanguages.Java]: Java,
   [SupportedLanguages.C]: C,
@@ -1119,6 +1121,125 @@ const PRISMA_QUERY_RE =
   /\bprisma\.(\w+)\.(findMany|findFirst|findUnique|findUniqueOrThrow|findFirstOrThrow|create|createMany|update|updateMany|delete|deleteMany|upsert|count|aggregate|groupBy)\s*\(/g;
 const SUPABASE_QUERY_RE =
   /\bsupabase\.from\s*\(\s*['"](\w+)['"]\s*\)\s*\.(select|insert|update|delete|upsert)\s*\(/g;
+const HARMONY_RDB_PREDICATE_RE =
+  /\b(?:const|let|var)\s+(\w+)\s*=\s*new\s+(?:rdb|relationalStore)\.RdbPredicates\s*\(\s*['"]([\w$-]+)['"]\s*\)/g;
+const HARMONY_RDB_QUERY_RE = /\b\w+\.(query|querySync)\s*\(\s*(\w+)/g;
+const HARMONY_RDB_INLINE_QUERY_RE =
+  /\b\w+\.(query|querySync)\s*\(\s*new\s+(?:rdb|relationalStore)\.RdbPredicates\s*\(\s*['"]([\w$-]+)['"]\s*\)/g;
+const HARMONY_RDB_SQL_RE = /\b\w+\.(querySql|executeSql)\s*\(\s*(['"`])([\s\S]*?)\2/g;
+const HARMONY_PREFERENCES_STORE_RE =
+  /\b(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?preferences\.getPreferences(?:Sync)?\s*\(/g;
+const HARMONY_PREFERENCES_GET_RE = /\b(\w+)\.(get|getSync)\s*\(\s*['"]([^'"]+)['"]/g;
+
+function getLineNumber(content: string, index: number): number {
+  return content.substring(0, index).split('\n').length - 1;
+}
+
+function extractSqlTargetName(sql: string): string | null {
+  const normalized = sql.replace(/\s+/g, ' ').trim();
+  const match = /\b(?:from|into|update|table)\s+([A-Za-z_][\w$]*)/i.exec(normalized);
+  return match?.[1] ?? null;
+}
+
+function extractHarmonyQueries(filePath: string, content: string, out: ExtractedORMQuery[]): void {
+  const hasRdb =
+    content.includes('RdbPredicates') ||
+    content.includes('.query(') ||
+    content.includes('.querySync(') ||
+    content.includes('.querySql(') ||
+    content.includes('.executeSql(');
+  const hasPreferences = content.includes('preferences.getPreferences');
+  if (!hasRdb && !hasPreferences) return;
+
+  if (hasRdb) {
+    const predicates = new Map<string, string>();
+
+    HARMONY_RDB_PREDICATE_RE.lastIndex = 0;
+    let predicateMatch;
+    while ((predicateMatch = HARMONY_RDB_PREDICATE_RE.exec(content)) !== null) {
+      predicates.set(predicateMatch[1], predicateMatch[2]);
+    }
+
+    HARMONY_RDB_QUERY_RE.lastIndex = 0;
+    let queryMatch;
+    while ((queryMatch = HARMONY_RDB_QUERY_RE.exec(content)) !== null) {
+      const model = predicates.get(queryMatch[2]);
+      if (!model) continue;
+      out.push({
+        filePath,
+        orm: 'harmony-rdb',
+        model,
+        method: queryMatch[1],
+        lineNumber: getLineNumber(content, queryMatch.index),
+      });
+    }
+
+    HARMONY_RDB_INLINE_QUERY_RE.lastIndex = 0;
+    let inlineQueryMatch;
+    while ((inlineQueryMatch = HARMONY_RDB_INLINE_QUERY_RE.exec(content)) !== null) {
+      out.push({
+        filePath,
+        orm: 'harmony-rdb',
+        model: inlineQueryMatch[2],
+        method: inlineQueryMatch[1],
+        lineNumber: getLineNumber(content, inlineQueryMatch.index),
+      });
+    }
+
+    HARMONY_RDB_SQL_RE.lastIndex = 0;
+    let sqlMatch;
+    while ((sqlMatch = HARMONY_RDB_SQL_RE.exec(content)) !== null) {
+      const model = extractSqlTargetName(sqlMatch[3]);
+      if (!model) continue;
+      out.push({
+        filePath,
+        orm: 'harmony-rdb',
+        model,
+        method: sqlMatch[1],
+        lineNumber: getLineNumber(content, sqlMatch.index),
+      });
+    }
+  }
+
+  if (hasPreferences) {
+    const storeVars = new Set<string>();
+
+    HARMONY_PREFERENCES_STORE_RE.lastIndex = 0;
+    let storeMatch;
+    while ((storeMatch = HARMONY_PREFERENCES_STORE_RE.exec(content)) !== null) {
+      storeVars.add(storeMatch[1]);
+    }
+
+    HARMONY_PREFERENCES_GET_RE.lastIndex = 0;
+    let prefMatch;
+    while ((prefMatch = HARMONY_PREFERENCES_GET_RE.exec(content)) !== null) {
+      if (!storeVars.has(prefMatch[1])) continue;
+      out.push({
+        filePath,
+        orm: 'harmony-preferences',
+        model: prefMatch[3],
+        method: prefMatch[2],
+        lineNumber: getLineNumber(content, prefMatch.index),
+      });
+    }
+  }
+}
+
+function deriveHarmonyEntryRoutePath(filePath: string): string | null {
+  const normalized = filePath.replace(/\\/g, '/');
+  if (!normalized.endsWith('.ets')) return null;
+
+  if (normalized.startsWith('pages/')) {
+    return normalized.slice(0, -4);
+  }
+
+  const pagesIndex = normalized.lastIndexOf('/pages/');
+  if (pagesIndex >= 0) {
+    return normalized.slice(pagesIndex + 1, -4);
+  }
+
+  return null;
+}
 
 /**
  * Extract ORM query calls from file content via regex.
@@ -1131,7 +1252,12 @@ export function extractORMQueries(
 ): void {
   const hasPrisma = content.includes('prisma.');
   const hasSupabase = content.includes('supabase.from');
-  if (!hasPrisma && !hasSupabase) return;
+  const hasHarmony =
+    content.includes('RdbPredicates') ||
+    content.includes('preferences.getPreferences') ||
+    content.includes('.querySql(') ||
+    content.includes('.executeSql(');
+  if (!hasPrisma && !hasSupabase && !hasHarmony) return;
 
   if (hasPrisma) {
     PRISMA_QUERY_RE.lastIndex = 0;
@@ -1161,6 +1287,10 @@ export function extractORMQueries(
         lineNumber: content.substring(0, m.index).split('\n').length - 1,
       });
     }
+  }
+
+  if (hasHarmony) {
+    extractHarmonyQueries(filePath, content, out);
   }
 }
 
@@ -1196,7 +1326,9 @@ const processFileGroup = (
     const parseContent =
       language === SupportedLanguages.ObjectiveC
         ? stripNullabilityMacros(file.content)
-        : file.content;
+        : language === SupportedLanguages.ArkTS
+          ? preprocessArktsContent(file.content)
+          : file.content;
 
     let tree;
     try {
@@ -1356,6 +1488,18 @@ const processFileGroup = (
             decoratorName,
             lineNumber: decoratorNode.startPosition.row,
           });
+        }
+        if (decoratorName === 'Entry') {
+          const routePath = deriveHarmonyEntryRoutePath(file.path);
+          if (routePath) {
+            result.decoratorRoutes.push({
+              filePath: file.path,
+              routePath,
+              httpMethod: 'GET',
+              decoratorName,
+              lineNumber: decoratorNode.startPosition.row,
+            });
+          }
         }
         // MCP/RPC tool detection: @mcp.tool(), @app.tool(), @server.tool()
         if (decoratorName === 'tool') {
