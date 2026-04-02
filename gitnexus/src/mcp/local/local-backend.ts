@@ -453,8 +453,7 @@ export class LocalBackend {
     const repo = await this.resolveRepo(repoName);
     await this.ensureInitialized(repo.id);
 
-    const context =
-      this.getContext(repo.id) ||
+    const context = this.getContext(repo.id) ||
       this.getContext() || {
         projectName: repo.name,
         stats: {
@@ -528,28 +527,31 @@ export class LocalBackend {
       SupportedLanguages.ObjectiveC,
     ]);
 
-    const languages = Object.values(SupportedLanguages).map((language) => {
-      const parserMode: 'tree-sitter' | 'standalone' = language === SupportedLanguages.Cobol ? 'standalone' : 'tree-sitter';
-      const parserAvailable =
-        parserMode === 'standalone' ? true : isLanguageAvailable(language as SupportedLanguages);
-      let note: string | undefined;
-      if (language === SupportedLanguages.Cobol) {
-        note = 'Regex-based standalone processor';
-      } else if (!parserAvailable && optionalParsers.has(language)) {
-        note = 'Optional native parser not installed';
-      }
-      return {
-        language,
-        parserMode,
-        parserAvailable,
-        status: (parserMode === 'standalone'
-          ? 'standalone'
-          : parserAvailable
-            ? 'available'
-            : 'unavailable') as 'available' | 'unavailable' | 'standalone',
-        ...(note ? { note } : {}),
-      };
-    });
+    const languages: RepoOverview['coverage']['languages'] = Object.values(SupportedLanguages).map(
+      (language) => {
+        const parserMode: 'tree-sitter' | 'standalone' =
+          language === SupportedLanguages.Cobol ? 'standalone' : 'tree-sitter';
+        const parserAvailable =
+          parserMode === 'standalone' ? true : isLanguageAvailable(language as SupportedLanguages);
+        let note: string | undefined;
+        if (language === SupportedLanguages.Cobol) {
+          note = 'Regex-based standalone processor';
+        } else if (!parserAvailable && optionalParsers.has(language)) {
+          note = 'Optional native parser not installed';
+        }
+        return {
+          language,
+          parserMode,
+          parserAvailable,
+          status: (parserMode === 'standalone'
+            ? 'standalone'
+            : parserAvailable
+              ? 'available'
+              : 'unavailable') as 'available' | 'unavailable' | 'standalone',
+          ...(note ? { note } : {}),
+        };
+      },
+    );
 
     const availableParserCount = languages.filter(
       (lang) => lang.status === 'available' || lang.status === 'standalone',
