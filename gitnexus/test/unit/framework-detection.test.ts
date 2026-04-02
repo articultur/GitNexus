@@ -277,6 +277,22 @@ describe('detectFrameworkFromPath', () => {
       expect(result).not.toBeNull();
       expect(result!.framework).toBe('express');
     });
+
+    it('detects HarmonyOS ArkTS entryability files', () => {
+      const result = detectFrameworkFromPath(
+        'ohosProject/src/main/ets/entryability/EntryAbility.ets',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.framework).toBe('harmony-arkui');
+      expect(result!.reason).toBe('arkts-entry-file');
+    });
+
+    it('detects HarmonyOS ArkTS page files', () => {
+      const result = detectFrameworkFromPath('ohosProject/src/main/ets/pages/Index.ets');
+      expect(result).not.toBeNull();
+      expect(result!.framework).toBe('harmony-arkui');
+      expect(result!.reason).toBe('arkts-page-component');
+    });
   });
 });
 
@@ -358,6 +374,12 @@ describe('detectFrameworkFromAST', () => {
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('expo-router');
   });
+
+  it('detects ArkTS ArkUI decorators and lifecycle patterns', () => {
+    const result = detectFrameworkFromAST('arkts', '@Entry @Component struct Index { build() {} }');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('harmony-arkui');
+  });
 });
 
 describe('FRAMEWORK_AST_PATTERNS', () => {
@@ -387,6 +409,7 @@ describe('FRAMEWORK_AST_PATTERNS', () => {
       'vapor',
       'rails',
       'sinatra',
+      'harmonyArkui',
     ];
     for (const fw of expectedFrameworks) {
       expect(FRAMEWORK_AST_PATTERNS).toHaveProperty(fw);
