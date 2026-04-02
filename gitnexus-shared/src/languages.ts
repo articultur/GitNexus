@@ -19,6 +19,7 @@ export enum SupportedLanguages {
   Kotlin = 'kotlin',
   Swift = 'swift',
   Dart = 'dart',
+  ArkTS = 'arkts',
   /** Standalone regex processor — no tree-sitter, no LanguageProvider. */
   Cobol = 'cobol',
   ObjectiveC = 'objectivec',
