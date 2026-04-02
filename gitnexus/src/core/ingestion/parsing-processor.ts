@@ -18,6 +18,7 @@ import {
   type SyntaxNode,
 } from './utils/ast-helpers.js';
 import { detectFrameworkFromAST } from './framework-detection.js';
+import { preprocessArktsContent } from './languages/arkts-preprocess.js';
 import { buildTypeEnv } from './type-env.js';
 import type { FieldInfo, FieldExtractorContext } from './field-types.js';
 import type { LanguageProvider } from './language-provider.js';
@@ -324,8 +325,12 @@ const processParsingSequential = async (
     // tree-sitter-objc grammar cannot parse — strip them so heritage queries match.
     const parseContent =
       language === SupportedLanguages.ObjectiveC
-        ? file.content.replace(/\bNS_ASSUME_NONNULL_BEGIN\b/g, '').replace(/\bNS_ASSUME_NONNULL_END\b/g, '')
-        : file.content;
+        ? file.content
+            .replace(/\bNS_ASSUME_NONNULL_BEGIN\b/g, '')
+            .replace(/\bNS_ASSUME_NONNULL_END\b/g, '')
+        : language === SupportedLanguages.ArkTS
+          ? preprocessArktsContent(file.content)
+          : file.content;
 
     let tree;
     try {

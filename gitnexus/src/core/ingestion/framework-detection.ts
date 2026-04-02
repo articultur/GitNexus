@@ -496,6 +496,34 @@ export function detectFrameworkFromPath(filePath: string): FrameworkHint | null 
     return { framework: 'flutter', entryPointMultiplier: 1.5, reason: 'flutter-widget' };
   }
 
+  // ========== ARKTS / HARMONYOS ==========
+
+  // Harmony app/ability entry files
+  if (
+    p.endsWith('/entryability.ets') ||
+    p.endsWith('/mainability.ets') ||
+    p.endsWith('/main.ets')
+  ) {
+    return { framework: 'harmony-arkui', entryPointMultiplier: 3.0, reason: 'arkts-entry-file' };
+  }
+
+  // ArkUI pages/components folders
+  if (
+    (p.includes('/src/main/ets/pages/') || p.includes('/src/main/ets/components/')) &&
+    p.endsWith('.ets')
+  ) {
+    return {
+      framework: 'harmony-arkui',
+      entryPointMultiplier: 2.5,
+      reason: 'arkts-page-component',
+    };
+  }
+
+  // Generic Harmony ETS source
+  if (p.includes('/src/main/ets/') && p.endsWith('.ets')) {
+    return { framework: 'harmony-arkui', entryPointMultiplier: 2.0, reason: 'arkts-source' };
+  }
+
   // ========== GENERIC PATTERNS ==========
 
   // Any language: index files in API folders
@@ -668,6 +696,19 @@ export const FRAMEWORK_AST_PATTERNS = {
     'ConsumerWidget',
   ],
   riverpod: ['@riverpod', 'ref.watch', 'ref.read', 'AsyncNotifier', 'Notifier'],
+  harmonyArkui: [
+    '@Entry',
+    '@Component',
+    '@CustomDialog',
+    '@State',
+    '@Prop',
+    '@Link',
+    '@Builder',
+    'aboutToAppear',
+    'aboutToDisappear',
+    'build()',
+    'struct ',
+  ],
 };
 
 interface AstFrameworkPatternConfig {
@@ -907,6 +948,14 @@ export const AST_FRAMEWORK_PATTERNS_BY_LANGUAGE = {
       entryPointMultiplier: 2.8,
       reason: 'riverpod-pattern',
       patterns: FRAMEWORK_AST_PATTERNS.riverpod,
+    },
+  ],
+  [SupportedLanguages.ArkTS]: [
+    {
+      framework: 'harmony-arkui',
+      entryPointMultiplier: 2.5,
+      reason: 'arkui-pattern',
+      patterns: FRAMEWORK_AST_PATTERNS.harmonyArkui,
     },
   ],
   [SupportedLanguages.Cobol]: [], // Standalone regex processor — no AST framework patterns

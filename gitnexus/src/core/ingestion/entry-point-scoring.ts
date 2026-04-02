@@ -226,6 +226,16 @@ export const ENTRY_POINT_PATTERNS = {
     /^onEvent$/, // BLoC event handler
     /^mapEventToState$/, // Legacy BLoC pattern
   ],
+  [SupportedLanguages.ArkTS]: [
+    // Phase A: TS-compatible baseline for Harmony/ArkTS projects
+    /^main$/,
+    /^onCreate$/,
+    /^onWindowStageCreate$/,
+    /^onWindowStageDestroy$/,
+    /^build$/,
+    /^aboutToAppear$/,
+    /^aboutToDisappear$/,
+  ],
   [SupportedLanguages.Cobol]: [], // Standalone regex processor — no tree-sitter entry points
   [SupportedLanguages.ObjectiveC]: [
     // Cocoa/UIKit AppDelegate entry points
