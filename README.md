@@ -192,20 +192,26 @@ args = ["-y", "gitnexus@latest", "mcp"]
 gitnexus setup                   # Configure MCP for your editors (one-time)
 gitnexus analyze [path]          # Index a repository (or update stale index)
 gitnexus analyze --force         # Force full re-index
+gitnexus analyze --dataflow <mode>  # Dataflow mode: off, basic, context, path, full
+gitnexus analyze --skip-git      # Index folders without a .git directory
 gitnexus analyze --skills        # Generate repo-specific skill files from detected communities
-gitnexus analyze --skip-embeddings  # Skip embedding generation (faster)
 gitnexus analyze --skip-agents-md  # Preserve custom AGENTS.md/CLAUDE.md gitnexus section edits
 gitnexus analyze --embeddings    # Enable embedding generation (slower, better search)
 gitnexus analyze --verbose       # Log skipped files when parsers are unavailable
 gitnexus mcp                     # Start MCP server (stdio) — serves all indexed repos
 gitnexus serve                   # Start local HTTP server (multi-repo) for web UI connection
+gitnexus index [path]            # Register an existing .gitnexus/ folder (no re-analysis)
 gitnexus list                    # List all indexed repositories
 gitnexus status                  # Show index status for current repo
 gitnexus clean                   # Delete index for current repo
 gitnexus clean --all --force     # Delete all indexes
+gitnexus impact <target> --data-flow  # Include DATA_FLOW edges in blast radius analysis
 gitnexus wiki [path]             # Generate repository wiki from knowledge graph
-gitnexus wiki --model <model>    # Wiki with custom LLM model (default: gpt-4o-mini)
+gitnexus wiki --provider <provider>  # LLM provider: openai or cursor
+gitnexus wiki --model <model>    # Wiki with custom LLM model (default: minimax/minimax-m2.5)
 gitnexus wiki --base-url <url>   # Wiki with custom LLM API base URL
+gitnexus wiki --api-key <key>    # LLM API key (saved to ~/.gitnexus/config.json)
+gitnexus wiki --reasoning-model  # Enable reasoning-model mode for compatible deployments
 ```
 
 ### What Your AI Agent Gets
@@ -388,6 +394,7 @@ GitNexus builds a complete knowledge graph of your codebase through a multi-phas
 | Language | Imports | Named Bindings | Exports | Heritage | Type Annotations | Constructor Inference | Config | Frameworks | Entry Points |
 |----------|---------|----------------|---------|----------|-----------------|---------------------|--------|------------|-------------|
 | TypeScript | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ArkTS (ETS) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | △ | △ |
 | JavaScript | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ |
 | Python | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Java | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |
@@ -424,7 +431,9 @@ UPSTREAM (what depends on this):
     authRouter [IMPORTS] -> src/routes/auth.ts
 ```
 
-Options: `maxDepth`, `minConfidence`, `relationTypes` (`CALLS`, `IMPORTS`, `EXTENDS`, `IMPLEMENTS`), `includeTests`
+Options: `maxDepth`, `minConfidence`, `relationTypes` (`CALLS`, `IMPORTS`, `EXTENDS`, `IMPLEMENTS`, `DATA_FLOW`, `TAINTED`, `SINK_REACHABLE`), `includeTests`
+
+Note: `impact` traversal excludes `DATA_FLOW` by default. To include variable/data-flow edges, pass `relationTypes` with `DATA_FLOW` (and optionally `TAINTED` / `SINK_REACHABLE`) or use CLI `gitnexus impact <target> --data-flow`.
 
 ### Process-Grouped Search
 
