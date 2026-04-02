@@ -1243,8 +1243,27 @@ export const OBJECTIVEC_QUERIES = `
 
 import { SupportedLanguages } from 'gitnexus-shared';
 
+// ArkTS queries — superset of TypeScript queries with ArkUI-specific additions:
+//  1. Bare decorator capture: @Entry, @Component, @State, @Prop, @Link, @Builder, @Observed
+//     (TypeScript query only captures called-form decorators like @Component())
+//  2. @Watch decorator with a string argument (e.g. @Watch('count'))
+export const ARKTS_QUERIES =
+  TYPESCRIPT_QUERIES +
+  `
+; ArkTS bare decorators (without call parens): @Entry, @Component, @State, @Prop, etc.
+(decorator
+  (identifier) @decorator.name) @decorator
+
+; ArkTS @Watch('propName') — string-arg decorator with identifier
+(decorator
+  (call_expression
+    function: (identifier) @decorator.name
+    arguments: (arguments (string (string_fragment) @decorator.arg)?))) @decorator
+`;
+
 export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
   [SupportedLanguages.TypeScript]: TYPESCRIPT_QUERIES,
+  [SupportedLanguages.ArkTS]: ARKTS_QUERIES,
   [SupportedLanguages.JavaScript]: JAVASCRIPT_QUERIES,
   [SupportedLanguages.Python]: PYTHON_QUERIES,
   [SupportedLanguages.Java]: JAVA_QUERIES,

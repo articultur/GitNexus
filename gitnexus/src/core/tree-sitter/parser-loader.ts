@@ -41,6 +41,7 @@ let parser: Parser | null = null;
 const languageMap: Record<string, any> = {
   [SupportedLanguages.JavaScript]: JavaScript,
   [SupportedLanguages.TypeScript]: TypeScript.typescript,
+  [SupportedLanguages.ArkTS]: TypeScript.typescript,
   [`${SupportedLanguages.TypeScript}:tsx`]: TypeScript.tsx,
   [SupportedLanguages.Python]: Python,
   [SupportedLanguages.Java]: Java,
