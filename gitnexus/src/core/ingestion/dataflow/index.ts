@@ -13,15 +13,17 @@
 import type { KnowledgeGraph } from '../../graph/types.js';
 import type { ResolutionContext } from '../resolution-context.js';
 import type { CommunityMembership } from '../community-processor.js';
-import { buildCFG, parseStatements } from './cfg-builder.js';
+import { buildCFG, buildCFGFromStatements, cfgToResult, parseStatements } from './cfg-builder.js';
 import { analyzeForward, createDefaultContext } from './dfa-engine.js';
 import { analyzeTaint } from './taint-engine.js';
 import {
   writeDataFlowEdges,
   writeTaintPaths,
+  writeCFGEdges,
   clearDataFlowEdges,
   type DataFlowEdge,
 } from './storage-writer.js';
+import type { TaintPath } from './types.js';
 
 // ── Options ────────────────────────────────────────────────────────────────
 
@@ -100,7 +102,7 @@ export async function processDataflow(
     : functions;
 
   const allEdges: DataFlowEdge[] = [];
-  const allTaintPaths: any[] = [];
+  const allTaintPaths: TaintPath[] = [];
 
   // Process functions in batches to avoid memory issues
   const BATCH_SIZE = 100;
@@ -110,7 +112,7 @@ export async function processDataflow(
     for (const func of batch) {
       // Build CFG from function source
       const statements = parseStatements(func.id, func.content);
-      const cfg = buildCFG(func.id, statements);
+      const cfg = buildCFGFromStatements(func.id, statements);
 
       // Create analysis context
       const context = createDefaultContext(cfg);
@@ -206,4 +208,54 @@ export function parseDataflowOptions(flags: Record<string, unknown>): Partial<Da
   }
 
   return { mode: 'basic' };
+}
+
+// ── CFG Construction ────────────────────────────────────────────────────────
+
+/**
+ * Phase 12 (CFG): Build Control Flow Graphs for all functions and write CFG_EDGE edges.
+ *
+ * @param knowledgeGraph - The knowledge graph
+ * @param onProgress - Progress callback
+ */
+export async function processCFG(
+  knowledgeGraph: KnowledgeGraph,
+  onProgress?: (message: string, progress: number) => void,
+): Promise<void> {
+  onProgress?.('Building control flow graphs...', 0);
+
+  const functions: Array<{ id: string; filePath: string; content: string[] }> = [];
+
+  knowledgeGraph.forEachNode((node) => {
+    if (node.label === 'Function' || node.label === 'Method') {
+      functions.push({
+        id: node.id,
+        filePath: node.properties.filePath ?? '',
+        content: (node.properties.content as string | undefined)?.split('\n') ?? [],
+      });
+    }
+  });
+
+  onProgress?.(`Building CFGs for ${functions.length} functions...`, 10);
+
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < functions.length; i += BATCH_SIZE) {
+    const batch = functions.slice(i, i + BATCH_SIZE);
+
+    for (const func of batch) {
+      const statements = parseStatements(func.id, func.content);
+      const cfg = buildCFGFromStatements(func.id, statements);
+      writeCFGEdges(knowledgeGraph, cfgToResult(cfg));
+    }
+
+    const progress = 10 + (90 * Math.min(i + BATCH_SIZE, functions.length) / functions.length);
+    onProgress?.(
+      `CFG: ${Math.min(i + BATCH_SIZE, functions.length)}/${functions.length} functions...`,
+      progress,
+    );
+
+    await new Promise(resolve => setImmediate(resolve));
+  }
+
+  onProgress?.(`CFG construction complete. ${functions.length} functions processed.`, 100);
 }

@@ -7,7 +7,7 @@
  */
 
 import type { TaintPath } from './types.js';
-import type { DataFlowEdgeType } from './types.js';
+import type { DataFlowEdgeType, CFGResult } from './types.js';
 import type { KnowledgeGraph } from '../../graph/types.js';
 import { generateId } from '../../../lib/utils.js';
 import type { GraphRelationship, RelationshipType } from 'gitnexus-shared';
@@ -44,6 +44,8 @@ export function writeDataFlowEdges(
   graph: KnowledgeGraph,
   edges: DataFlowEdge[]
 ): void {
+  const errors: Error[] = [];
+
   for (const edge of edges) {
     const relationship: GraphRelationship = {
       id: generateId(edge.type, `${edge.sourceId}->${edge.targetId}`),
@@ -55,7 +57,18 @@ export function writeDataFlowEdges(
       step: edge.properties.pathLength,
     };
 
-    graph.addRelationship(relationship);
+    try {
+      graph.addRelationship(relationship);
+    } catch (err) {
+      errors.push(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  if (errors.length > 0) {
+    const msg = errors.length === 1
+      ? `writeDataFlowEdges: ${errors[0].message}`
+      : `writeDataFlowEdges: ${errors.length} errors (first: ${errors[0].message})`;
+    throw new Error(msg);
   }
 }
 
@@ -204,4 +217,25 @@ export function getSinkReachableEdges(graph: KnowledgeGraph): GraphRelationship[
   });
 
   return edges;
+}
+
+// ── CFG Edge ────────────────────────────────────────────────────────────────
+
+/**
+ * Write CFG edges to the knowledge graph.
+ *
+ * @param graph - Knowledge graph to write to
+ * @param cfg - CFG result containing nodes and edges
+ */
+export function writeCFGEdges(graph: KnowledgeGraph, cfg: CFGResult): void {
+  for (const edge of cfg.edges) {
+    graph.addRelationship({
+      id: generateId('CFG_EDGE', `${edge.sourceId}->${edge.targetId}`),
+      sourceId: edge.sourceId,
+      targetId: edge.targetId,
+      type: 'CFG_EDGE',
+      confidence: 1.0,
+      reason: `cfg-${edge.edgeType}`,
+    });
+  }
 }

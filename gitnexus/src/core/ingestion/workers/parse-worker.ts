@@ -1997,7 +1997,7 @@ const mergeResult = (target: ParseWorkerResult, src: ParseWorkerResult) => {
   target.fileCount += src.fileCount;
 };
 
-parentPort!.on('message', (msg: WorkerIncomingMessage) => {
+parentPort?.on('message', (msg: WorkerIncomingMessage) => {
   try {
     // Legacy single-message mode (backward compat): array of files
     if (Array.isArray(msg)) {
