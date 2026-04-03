@@ -755,7 +755,15 @@ export class LocalBackend {
     }
 
     const merged = Array.from(scoreMap.entries())
-      .sort((a, b) => b[1].score - a[1].score)
+      .sort((a, b) => {
+        // Primary: higher RRF score first
+        const scoreDiff = b[1].score - a[1].score;
+        if (scoreDiff !== 0) return scoreDiff;
+        // Tiebreaker: non-test files rank above test files
+        const aIsTest = isTestFilePath(a[1].data.filePath || '');
+        const bIsTest = isTestFilePath(b[1].data.filePath || '');
+        return aIsTest === bIsTest ? 0 : aIsTest ? 1 : -1;
+      })
       .slice(0, searchLimit);
 
     // Step 2: For each match with a nodeId, trace to process(es)
@@ -2160,7 +2168,27 @@ export class LocalBackend {
     let sym: any = null;
     let symType = '';
 
+    // Support dot-separated "Class.method" syntax for disambiguation
+    let targetName = target;
+    let parentClassName: string | undefined;
+    const dotIdx = target.lastIndexOf('.');
+    if (dotIdx > 0) {
+      parentClassName = target.substring(0, dotIdx);
+      targetName = target.substring(dotIdx + 1);
+    }
+
     try {
+      // Build the UNION ALL query; optionally add a HAS_METHOD arm for
+      // "Class.method" disambiguation when parentClassName is provided.
+      const methodArm =
+        parentClassName
+          ? `
+        UNION ALL
+        MATCH (parent:\`Class\`)-[:HAS_METHOD]->(n:\`Method\`)
+        WHERE parent.name = $parentClassName AND n.name = $targetName
+        RETURN n.id AS id, n.name AS name, n.filePath AS filePath, 0 AS priority LIMIT 1`
+          : '';
+
       const rows = await executeParameterized(
         repo.id,
         `
@@ -2178,8 +2206,9 @@ export class LocalBackend {
         UNION ALL
         MATCH (n:\`Constructor\`) WHERE n.name = $targetName
         RETURN n.id AS id, n.name AS name, n.filePath AS filePath, 4 AS priority LIMIT 1
+        ${methodArm}
       `,
-        { targetName: target },
+        { targetName, parentClassName },
       ).catch(() => []);
 
       if (rows.length > 0) {
@@ -2205,7 +2234,7 @@ export class LocalBackend {
         RETURN n.id AS id, n.name AS name, n.filePath AS filePath
         LIMIT 1
       `,
-        { targetName: target },
+        { targetName },
       );
       if (rows.length > 0) sym = rows[0];
     }
