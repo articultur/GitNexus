@@ -68,6 +68,8 @@ export const REL_TYPES = [
   'TAINTED',
   'SANITIZER',
   'SINK',
+  // Control flow edge type
+  'CFG_EDGE',
 ] as const;
 
 export type RelType = (typeof REL_TYPES)[number];

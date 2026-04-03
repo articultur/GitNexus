@@ -122,7 +122,9 @@ export type RelationshipType =
   | 'TAINTED'
   | 'SANITIZES'
   | 'SINK_REACHABLE'
-  | 'ALIASES';
+  | 'ALIASES'
+  // Control flow edge type
+  | 'CFG_EDGE';
 
 export interface GraphNode {
   id: string;

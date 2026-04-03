@@ -8,7 +8,7 @@ import {
   isLanguageSupported,
   getSupportedLanguages,
 } from '../../../src/core/ingestion/dataflow/taint-engine';
-import { buildCFG } from '../../../src/core/ingestion/dataflow/cfg-builder';
+import { buildCFGFromStatements } from '../../../src/core/ingestion/dataflow/cfg-builder';
 import type { ParsedStatement } from '../../../src/core/ingestion/dataflow/cfg-builder';
 import type { DFAContext } from '../../../src/core/ingestion/dataflow/dfa-engine';
 
@@ -19,7 +19,7 @@ describe('Taint Engine', () => {
         { type: 'call', content: 'userInput()', line: 1 },
       ];
 
-      const cfg = buildCFG('process', statements);
+      const cfg = buildCFGFromStatements('process', statements);
 
       const context: DFAContext = {
         cfg,
@@ -38,7 +38,7 @@ describe('Taint Engine', () => {
         { type: 'call', content: 'executeQuery(sql)', line: 1 },
       ];
 
-      const cfg = buildCFG('execute', statements);
+      const cfg = buildCFGFromStatements('execute', statements);
 
       const context: DFAContext = {
         cfg,
@@ -59,7 +59,7 @@ describe('Taint Engine', () => {
         { type: 'call', content: 'executeQuery(y)', line: 3 },
       ];
 
-      const cfg = buildCFG('unsafe', statements);
+      const cfg = buildCFGFromStatements('unsafe', statements);
 
       const context: DFAContext = {
         cfg,
@@ -82,7 +82,7 @@ describe('Taint Engine', () => {
         { type: 'call', content: 'executeQuery(y)', line: 3 },
       ];
 
-      const cfg = buildCFG('safe', statements);
+      const cfg = buildCFGFromStatements('safe', statements);
 
       const context: DFAContext = {
         cfg,
@@ -102,7 +102,7 @@ describe('Taint Engine', () => {
         { type: 'call', content: 'request.getParameter("name")', line: 1 },
       ];
 
-      const cfg = buildCFG('javaProcess', statements);
+      const cfg = buildCFGFromStatements('javaProcess', statements);
 
       const context: DFAContext = {
         cfg,
@@ -121,7 +121,7 @@ describe('Taint Engine', () => {
         { type: 'call', content: 'request.args.get("name")', line: 1 },
       ];
 
-      const cfg = buildCFG('pythonProcess', statements);
+      const cfg = buildCFGFromStatements('pythonProcess', statements);
 
       const context: DFAContext = {
         cfg,
@@ -142,7 +142,7 @@ describe('Taint Engine', () => {
         { type: 'call', content: 'executeQuery(result)', line: 3 },
       ];
 
-      const cfg = buildCFG('returnChain', statements);
+      const cfg = buildCFGFromStatements('returnChain', statements);
 
       const context: DFAContext = {
         cfg,
@@ -162,7 +162,7 @@ describe('Taint Engine', () => {
         { type: 'call', content: 'executeQuery(safe)', line: 3 },
       ];
 
-      const cfg = buildCFG('nonTaintedSinkArg', statements);
+      const cfg = buildCFGFromStatements('nonTaintedSinkArg', statements);
 
       const context: DFAContext = {
         cfg,

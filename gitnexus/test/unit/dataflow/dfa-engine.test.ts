@@ -9,7 +9,7 @@ import {
   createDefaultContext,
   type DFAContext,
 } from '../../../src/core/ingestion/dataflow/dfa-engine';
-import { buildCFG } from '../../../src/core/ingestion/dataflow/cfg-builder';
+import { buildCFGFromStatements } from '../../../src/core/ingestion/dataflow/cfg-builder';
 import type { ParsedStatement } from '../../../src/core/ingestion/dataflow/cfg-builder';
 
 describe('DFA Engine', () => {
@@ -21,7 +21,7 @@ describe('DFA Engine', () => {
         { type: 'assignment', content: 'z = y', line: 3 },
       ];
 
-      const cfg = buildCFG('processInput', statements);
+      const cfg = buildCFGFromStatements('processInput', statements);
 
       const context: DFAContext = {
         cfg,
@@ -57,7 +57,7 @@ describe('DFA Engine', () => {
         { type: 'assignment', content: 'y = sanitize(x)', line: 2 },
       ];
 
-      const cfg = buildCFG('safeInput', statements);
+      const cfg = buildCFGFromStatements('safeInput', statements);
 
       const context: DFAContext = {
         cfg,
@@ -86,7 +86,7 @@ describe('DFA Engine', () => {
         { type: 'assignment', content: 'y = x', line: 2 },
       ];
 
-      const cfg = buildCFG('constProp', statements);
+      const cfg = buildCFGFromStatements('constProp', statements);
 
       const context: DFAContext = {
         cfg,
@@ -109,7 +109,7 @@ describe('DFA Engine', () => {
         { type: 'assignment', content: 'z = y', line: 3 },
       ];
 
-      const cfg = buildCFG('multiVar', statements);
+      const cfg = buildCFGFromStatements('multiVar', statements);
 
       const context: DFAContext = {
         cfg,
@@ -131,7 +131,7 @@ describe('DFA Engine', () => {
     });
 
     it('should handle empty CFG', () => {
-      const cfg = buildCFG('empty', []);
+      const cfg = buildCFGFromStatements('empty', []);
 
       const context: DFAContext = {
         cfg,
@@ -152,7 +152,7 @@ describe('DFA Engine', () => {
         { type: 'assignment', content: 'x = userInput()', line: 1 },
       ];
 
-      const cfg = buildCFG('sourceTest', statements);
+      const cfg = buildCFGFromStatements('sourceTest', statements);
 
       const context: DFAContext = {
         cfg,
@@ -176,7 +176,7 @@ describe('DFA Engine', () => {
         { type: 'assignment', content: 'y = sanitize(x)', line: 2 },
       ];
 
-      const cfg = buildCFG('defaultCtx', statements);
+      const cfg = buildCFGFromStatements('defaultCtx', statements);
       const context = createDefaultContext(cfg);
 
       expect(context.taintSources).toBeDefined();

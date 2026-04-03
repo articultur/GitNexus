@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { analyzePathSensitive, satisfiesConstraints, mergePathFacts } from '../../../src/core/ingestion/dataflow/path-sensitive';
-import { buildCFG } from '../../../src/core/ingestion/dataflow/cfg-builder';
+import { buildCFGFromStatements } from '../../../src/core/ingestion/dataflow/cfg-builder';
 import type { ParsedStatement } from '../../../src/core/ingestion/dataflow/cfg-builder';
 
 describe('Path-Sensitive Analysis', () => {
@@ -15,7 +15,7 @@ describe('Path-Sensitive Analysis', () => {
         { type: 'return', content: 'return y', line: 3 },
       ];
 
-      const cfg = buildCFG('simple', statements);
+      const cfg = buildCFGFromStatements('simple', statements);
       const result = analyzePathSensitive(cfg, 10, 100);
 
       expect(result.pathCount).toBeGreaterThan(0);
@@ -30,7 +30,7 @@ describe('Path-Sensitive Analysis', () => {
         { type: 'assignment', content: 'z = x', line: 4 },
       ];
 
-      const cfg = buildCFG('branched', statements);
+      const cfg = buildCFGFromStatements('branched', statements);
       const result = analyzePathSensitive(cfg, 10, 100);
 
       // Should have explored multiple paths
@@ -45,7 +45,7 @@ describe('Path-Sensitive Analysis', () => {
         { type: 'assignment', content: 'w = z', line: 4 },
       ];
 
-      const cfg = buildCFG('deep', statements);
+      const cfg = buildCFGFromStatements('deep', statements);
       const result = analyzePathSensitive(cfg, 2, 100); // maxDepth = 2
 
       expect(result.pathCount).toBeLessThan(10);
@@ -60,14 +60,14 @@ describe('Path-Sensitive Analysis', () => {
         { type: 'if', content: 'if (d)', line: 4 },
       ];
 
-      const cfg = buildCFG('manyBranches', statements);
+      const cfg = buildCFGFromStatements('manyBranches', statements);
       const result = analyzePathSensitive(cfg, 10, 5); // maxPaths = 5
 
       expect(result.pathCount).toBeLessThanOrEqual(5);
     });
 
     it('should handle empty CFG', () => {
-      const cfg = buildCFG('empty', []);
+      const cfg = buildCFGFromStatements('empty', []);
       const result = analyzePathSensitive(cfg, 10, 100);
 
       expect(result.pathCount).toBe(1); // Just the root path

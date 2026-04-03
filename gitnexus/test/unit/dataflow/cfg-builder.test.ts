@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  buildCFG,
+  buildCFGFromStatements,
   splitIntoBasicBlocks,
   parseStatements,
   type ParsedStatement,
@@ -18,7 +18,7 @@ describe('CFG Builder', () => {
         { type: 'return', content: 'return y', line: 3 },
       ];
 
-      const cfg = buildCFG('func1', statements);
+      const cfg = buildCFGFromStatements('func1', statements);
 
       expect(cfg.functionId).toBe('func1');
       expect(cfg.nodes.size).toBe(3);
@@ -33,7 +33,7 @@ describe('CFG Builder', () => {
         { type: 'assignment', content: 'y = sanitize(x)', line: 3 },
       ];
 
-      const cfg = buildCFG('func2', statements);
+      const cfg = buildCFGFromStatements('func2', statements);
       const branchNode = cfg.nodes.get('func2:bb:0');
 
       expect(branchNode?.isBranch).toBe(true);
@@ -46,14 +46,14 @@ describe('CFG Builder', () => {
         { type: 'assignment', content: 'x = source()', line: 2 },
       ];
 
-      const cfg = buildCFG('func3', statements);
+      const cfg = buildCFGFromStatements('func3', statements);
       const loopNode = cfg.nodes.get('func3:bb:0');
 
       expect(loopNode?.isLoopHeader).toBe(true);
     });
 
     it('should handle empty function', () => {
-      const cfg = buildCFG('emptyFunc', []);
+      const cfg = buildCFGFromStatements('emptyFunc', []);
 
       expect(cfg.nodes.size).toBe(1);
       expect(cfg.entryNodeId).toBe(cfg.exitNodeId);
@@ -66,7 +66,7 @@ describe('CFG Builder', () => {
         { type: 'return', content: 'return x + y', line: 3 },
       ];
 
-      const cfg = buildCFG('seq', statements);
+      const cfg = buildCFGFromStatements('seq', statements);
 
       const firstNode = cfg.nodes.get('seq:bb:0');
       const secondNode = cfg.nodes.get('seq:bb:1');
@@ -83,7 +83,7 @@ describe('CFG Builder', () => {
         { type: 'return', content: 'return x', line: 2 },
       ];
 
-      const cfg = buildCFG('ret', statements);
+      const cfg = buildCFGFromStatements('ret', statements);
       const returnNode = cfg.nodes.get('ret:bb:1');
 
       expect(returnNode?.successors).toHaveLength(0);

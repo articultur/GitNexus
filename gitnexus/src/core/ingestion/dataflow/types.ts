@@ -29,14 +29,53 @@ export interface DataFlowProperties {
 
 // ── Control Flow Graph ────────────────────────────────────────────────────────
 
+/** Legacy CFG format used by dfa-engine and path-sensitive.
+ *  @deprecated Use CFGResult (array-based) for new code. */
+export interface CFG {
+  functionId: string;
+  nodes: Map<string, CFGNode>;
+  entryNodeId: string;
+  exitNodeId: string;
+}
+
+export type CFGEdgeType =
+  | 'NEXT'           // Sequential execution
+  | 'TRUE_BRANCH'    // If true branch
+  | 'FALSE_BRANCH'   // If false branch
+  | 'LOOP_HEADER'    // Loop header
+  | 'BREAK'          // Break statement
+  | 'CONTINUE'       // Continue statement
+  | 'SWITCH_CASE'    // Switch case
+  | 'SWITCH_DEFAULT' // Switch default
+  | 'TRY_BODY'       // Try block
+  | 'CATCH'          // Catch block
+  | 'THROW'          // Throw
+  | 'RETURN';        // Return
+
 export interface CFGNode {
   id: string;
   functionId: string;
-  basicBlock: string[];
+  basicBlock: string[];  // Statements in this basic block (for display)
   predecessors: string[];
   successors: string[];
   isLoopHeader?: boolean;
   isBranch?: boolean;
+  // New fields for enhanced CFG
+  blockNumber?: number;   // Basic block number
+  statementType?: string; // 'if' | 'while' | 'for' | etc.
+  label?: string;         // Display text
+}
+
+export interface CFGEdge {
+  sourceId: string;
+  targetId: string;
+  edgeType: CFGEdgeType;
+}
+
+export interface CFGResult {
+  nodes: CFGNode[];
+  edges: CFGEdge[];
+  functionId: string;
 }
 
 // ── Lattice Values ────────────────────────────────────────────────────────────
@@ -105,3 +144,92 @@ export interface Sanitizer {
   variable: string;
   description: string;
 }
+
+// ── Legacy text-based CFG types (for backwards compatibility) ────────────────────
+
+export interface BasicBlock {
+  id: string;
+  statements: string[];
+  startLine: number;
+  endLine: number;
+}
+
+export type StatementType =
+  | 'assignment'   // x = expr
+  | 'call'        // function call (no assignment)
+  | 'return'      // return statement
+  | 'if'          // conditional branch
+  | 'while'       // while loop
+  | 'for'         // for loop
+  | 'switch'      // switch statement
+  | 'throw'       // throw statement
+  | 'try'         // try-catch block
+  | 'label'       // labeled statement
+  | 'goto'        // goto statement
+  | 'enter'       // function entry
+  | 'exit';       // function exit
+
+export interface ParsedStatement {
+  type: StatementType;
+  content: string;
+  line: number;
+}
+
+export function splitIntoBasicBlocks(statements: string[]): BasicBlock[] {
+  return statements.map((s, i) => ({
+    id: `bb:${i}`,
+    statements: [s],
+    startLine: i,
+    endLine: i,
+  }));
+}
+
+export function parseStatements(_functionId: string, sourceLines: string[]): ParsedStatement[] {
+  const statements: ParsedStatement[] = [];
+  for (let i = 0; i < sourceLines.length; i++) {
+    const line = sourceLines[i].trim();
+    if (!line || line.startsWith('//') || line.startsWith('#')) continue;
+    const type = inferStatementType(line);
+    statements.push({ type, content: line, line: i + 1 });
+  }
+  return statements;
+}
+
+function inferStatementType(line: string): StatementType {
+  if (line.startsWith('if ') || line.startsWith('if(')) return 'if';
+  if (line.startsWith('while ') || line.startsWith('while(')) return 'while';
+  if (line.startsWith('for ') || line.startsWith('for(')) return 'for';
+  if (line.startsWith('switch ') || line.startsWith('switch(')) return 'switch';
+  if (line.startsWith('return ')) return 'return';
+  if (line.startsWith('throw ')) return 'throw';
+  if (line.startsWith('try ') || line.startsWith('try{')) return 'try';
+  if (line.match(/^\w+:$/)) return 'label';
+  if (line === 'enter' || line === 'function entry') return 'enter';
+  if (line === 'exit' || line === 'function exit') return 'exit';
+  if (line.includes('(') && !line.includes('=')) return 'call';
+  return 'assignment';
+}
+
+export function addCFGEdges(
+  cfg: CFG,
+  statements: ParsedStatement[],
+): CFG {
+  const nodes = new Map(cfg.nodes);
+  for (let i = 0; i < statements.length; i++) {
+    const nodeId = `${cfg.functionId}:bb:${i}`;
+    const node = nodes.get(nodeId);
+    if (!node) continue;
+    const stmt = statements[i];
+    if (stmt.type === 'if') {
+      if (i + 1 < statements.length) node.successors.push(`${cfg.functionId}:bb:${i + 1}`);
+    } else if (stmt.type === 'while' || stmt.type === 'for') {
+      node.successors = [nodeId];
+      if (i + 1 < statements.length) node.successors.push(`${cfg.functionId}:bb:${i + 1}`);
+    } else if (stmt.type === 'return' || stmt.type === 'throw') {
+      node.successors = [];
+    }
+    nodes.set(nodeId, node);
+  }
+  return { ...cfg, nodes };
+}
+

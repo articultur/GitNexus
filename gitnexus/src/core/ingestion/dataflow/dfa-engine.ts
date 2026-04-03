@@ -11,7 +11,7 @@
  * - Join operation: Combines facts from multiple predecessors
  */
 
-import type { CFGNode, DataFlowFact, LatticeValue } from './types.js';
+import type { CFGNode, DataFlowFact, LatticeValue, CFGResult } from './types.js';
 import { join, propagate, isTainted, isSanitized } from './lattice.js';
 import type { CFG } from './cfg-builder.js';
 
@@ -296,4 +296,185 @@ export function createDefaultContext(cfg: CFG): DFAContext {
     sanitizers: new Set(['sanitize', 'escape', 'htmlEscape', 'encodeForHTML', 'encodeForURL', 'trim']),
     sinks: new Set(['execute', 'eval', 'exec', 'execSync', 'query', 'sql']),
   };
+}
+
+// ── Reaching Definitions Analysis (RDA) ──────────────────────────────────────
+
+/**
+ * Reaching Definitions Analysis table.
+ * Maps each CFG node to its definition and use sets.
+ */
+export interface RDATable {
+  [nodeId: string]: {
+    def: Set<string>;  // Variables defined at this node
+    use: Set<string>;  // Variables used at this node
+  };
+}
+
+/**
+ * Compute the Reaching Definitions Analysis for a CFG.
+ *
+ * RDA determines, for each program point, which variable definitions
+ * (assignments) may reach that point without being overwritten.
+ *
+ * Algorithm (fixed-point iteration):
+ * 1. Initialize: GEN = statements in node, KILL = vars overwritten by node
+ * 2. Initialize RD_IN[entry] = empty set
+ * 3. Iterate until fixpoint:
+ *    RD_IN[n] = UNION of RD_OUT of all predecessors
+ *    RD_OUT[n] = GEN | (RD_IN[n] - KILL)
+ *
+ * @param cfg - CFGResult from cfg-builder
+ * @returns RDATable mapping each node to its def/use sets
+ */
+export function computeRDA(cfg: CFGResult): RDATable {
+  const nodeMap = new Map<string, CFGNode>();
+  for (const node of cfg.nodes) {
+    nodeMap.set(node.id, node);
+  }
+
+  // Build node index for quick predecessor lookup
+  const predMap = new Map<string, string[]>();
+  const succMap = new Map<string, string[]>();
+  for (const node of cfg.nodes) {
+    predMap.set(node.id, []);
+    succMap.set(node.id, []);
+  }
+  for (const edge of cfg.edges) {
+    predMap.get(edge.targetId)?.push(edge.sourceId);
+    succMap.get(edge.sourceId)?.push(edge.targetId);
+  }
+
+  // Initialize GEN and KILL sets for each node
+  // GEN(node): variables DEFINED (assigned) in this node
+  // KILL(node): variables that this node OVERWRITES
+  const genMap = new Map<string, Set<string>>();
+  const killMap = new Map<string, Set<string>>();
+
+  for (const node of cfg.nodes) {
+    const gen = new Set<string>();
+    const kill = new Set<string>();
+
+    for (const stmt of node.basicBlock) {
+      // x = expr → x is defined (GEN), expr vars are used (already tracked by stmt)
+      const assignMatch = stmt.match(/^(\w+)\s*=\s*(.+)$/);
+      if (assignMatch) {
+        const [, lhs] = assignMatch;
+        gen.add(lhs);
+      }
+    }
+
+    genMap.set(node.id, gen);
+    killMap.set(node.id, kill);
+  }
+
+  // Initialize RD_IN and RD_OUT
+  // RD_IN[n] = set of definitions reaching node n
+  // RD_OUT[n] = set of definitions leaving node n
+  const rdIn = new Map<string, Set<string>>();
+  const rdOut = new Map<string, Set<string>>();
+
+  for (const node of cfg.nodes) {
+    rdIn.set(node.id, new Set());
+    rdOut.set(node.id, new Set());
+  }
+
+  // Entry node has no reaching definitions
+  rdIn.set(cfg.functionId, new Set());
+  rdOut.set(cfg.functionId, new Set());
+
+  // Fixed-point iteration
+  let changed = true;
+  let iterations = 0;
+  const MAX_ITERATIONS = 1000; // Safety guard
+
+  while (changed && iterations < MAX_ITERATIONS) {
+    changed = false;
+    iterations++;
+
+    for (const node of cfg.nodes) {
+      // RD_IN[n] = UNION of RD_OUT of all predecessors
+      const preds = predMap.get(node.id) ?? [];
+      const newRdIn = new Set<string>();
+
+      if (preds.length === 0) {
+        // Entry node - no reaching definitions from predecessors
+        newRdIn.clear();
+      } else {
+        for (const predId of preds) {
+          const predOut = rdOut.get(predId);
+          if (predOut) {
+            for (const def of predOut) {
+              newRdIn.add(def);
+            }
+          }
+        }
+      }
+
+      // Check if RD_IN changed
+      const oldRdIn = rdIn.get(node.id)!;
+      if (oldRdIn.size !== newRdIn.size || ![...newRdIn].every(d => oldRdIn.has(d))) {
+        changed = true;
+        rdIn.set(node.id, newRdIn);
+      }
+
+      // RD_OUT[n] = GEN | (RD_IN[n] - KILL)
+      const currentRdIn = rdIn.get(node.id)!;
+      const gen = genMap.get(node.id)!;
+      const kill = killMap.get(node.id)!;
+      const newRdOut = new Set<string>();
+
+      // Start with GEN
+      for (const g of gen) {
+        newRdOut.add(g);
+      }
+
+      // Add RD_IN[n] minus KILL
+      for (const def of currentRdIn) {
+        // KILL is currently empty for simplicity; extend if needed
+        if (!kill.has(def)) {
+          newRdOut.add(def);
+        }
+      }
+
+      // Check if RD_OUT changed
+      const oldRdOut = rdOut.get(node.id)!;
+      if (oldRdOut.size !== newRdOut.size || ![...newRdOut].every(d => oldRdOut.has(d))) {
+        changed = true;
+        rdOut.set(node.id, newRdOut);
+      }
+    }
+  }
+
+  // Build RDATable: def = GEN (definitions produced here), use = variables used here
+  const rdaTable: RDATable = {};
+
+  for (const node of cfg.nodes) {
+    const use = new Set<string>();
+    for (const stmt of node.basicBlock) {
+      // Extract variables used on RHS of assignments
+      const assignMatch = stmt.match(/^(\w+)\s*=\s*(.+)$/);
+      if (assignMatch) {
+        const [, _lhs, rhs] = assignMatch;
+        // Find all variable references in RHS
+        const varMatches = rhs.matchAll(/\b([a-zA-Z_]\w*)\b/g);
+        for (const match of varMatches) {
+          use.add(match[1]);
+        }
+      } else {
+        // For non-assignment statements, extract all variable names
+        const varMatches = stmt.matchAll(/\b([a-zA-Z_]\w*)\b/g);
+        for (const match of varMatches) {
+          use.add(match[1]);
+        }
+      }
+    }
+
+    rdaTable[node.id] = {
+      def: genMap.get(node.id) ?? new Set(),
+      use,
+    };
+  }
+
+  return rdaTable;
 }

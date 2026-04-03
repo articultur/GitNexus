@@ -44,6 +44,57 @@ This repository is a **monorepo** with two main products: the **CLI / MCP packag
 | `detect_changes` | Map git diffs to affected symbols and processes. |
 | `rename` | Graph-assisted rename with `dry_run` preview (`graph` vs `text_search` confidence). |
 
+## Data Flow Analysis (Three-View: AST → CFG → DFG)
+
+GitNexus implements a layered code-analysis model inspired by COMEX, building three interdependent views of every indexed function:
+
+### AST (Abstract Syntax Tree) — Phase 4–8
+- Produced by **tree-sitter** parsers for each supported language.
+- Nodes represent syntax constructs (expressions, declarations, statements).
+- Used as the raw material for both CFG and DFG extraction.
+- Canonical path: `gitnexus/src/core/ingestion/parsers/`.
+
+### CFG (Control Flow Graph) — Phase 12
+- Built from the tree-sitter AST via `cfg-builder.ts`.
+- Represents the **static control flow** of a function: which statements execute in sequence, which branches are taken, and where loops land.
+- Core function: `buildCFG(tree, source, language, functionId?)` → `CFGResult`.
+
+**CFG edge types (`CFG_EDGE` in the graph):**
+
+| Edge type | Meaning |
+|-----------|---------|
+| `NEXT` | Sequential execution |
+| `TRUE_BRANCH` | Taken when condition is true (if/ternary) |
+| `FALSE_BRANCH` | Taken when condition is false |
+| `LOOP_HEADER` | Self-loop: re-enters loop at condition |
+| `BREAK` | Jumps to innermost loop header |
+| `CONTINUE` | Jumps back to loop header |
+| `SWITCH_CASE` | Reached from switch header |
+| `SWITCH_DEFAULT` | Reached via default clause |
+| `TRY_BODY` | Entry into try block |
+| `CATCH` | Exception caught by handler |
+| `THROW` | Exception propagation |
+| `RETURN` | Function exit |
+
+**CFG construction flow:**
+```
+Function source code
+  → tree-sitter parses to Tree
+    → buildCFG() walks AST recursively
+      → emit one block per statement node
+      → emit control-flow edges (NEXT, TRUE_BRANCH, …)
+        → CFGResult { nodes[], edges[] }
+          → writeCFGEdges() → CFG_EDGE graph edges
+```
+
+The walk is language-agnostic (same algorithm works for TypeScript, Python, Go, Rust, C, etc.) by matching against a set of standard tree-sitter node types.
+
+### DFG (Data Flow Graph) — Phase 12 (dataflow processor)
+- Built on top of the CFG using lattice-based data-flow analysis (`dfa-engine.ts`).
+- Propagates **value facts** (constant, tainted, sanitized) along CFG paths.
+- Taint analysis (`taint-engine.ts`) tracks SOURCE → SINK paths through the CFG.
+- Edges written: `DATA_FLOW`, `PROPAGATES`, `RETURNS`, `TAINTED`, `SANITIZES`, `SINK_REACHABLE`, `ALIASES`.
+
 ## Where to change what
 
 | If you are changing… | Start in… |

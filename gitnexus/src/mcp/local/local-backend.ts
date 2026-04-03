@@ -529,7 +529,7 @@ export class LocalBackend {
     ]);
 
     const languages = Object.values(SupportedLanguages).map((language) => {
-      const parserMode = language === SupportedLanguages.Cobol ? 'standalone' : 'tree-sitter';
+      const parserMode: 'tree-sitter' | 'standalone' = language === SupportedLanguages.Cobol ? 'standalone' : 'tree-sitter';
       const parserAvailable =
         parserMode === 'standalone' ? true : isLanguageAvailable(language as SupportedLanguages);
       let note: string | undefined;
