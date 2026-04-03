@@ -24,6 +24,18 @@ export const TYPESCRIPT_QUERIES = `
 (method_definition
   name: (property_identifier) @name) @definition.method
 
+; ES2022 #private methods (private_property_identifier not matched by property_identifier)
+(method_definition
+  name: (private_property_identifier) @name) @definition.method
+
+; Abstract method signatures in abstract classes
+(abstract_method_signature
+  name: (property_identifier) @name) @definition.method
+
+; Interface method signatures
+(method_signature
+  name: (property_identifier) @name) @definition.method
+
 (lexical_declaration
   (variable_declarator
     name: (identifier) @name
@@ -144,6 +156,10 @@ export const JAVASCRIPT_QUERIES = `
 
 (method_definition
   name: (property_identifier) @name) @definition.method
+
+; ES2022 #private methods
+(method_definition
+  name: (private_property_identifier) @name) @definition.method
 
 (lexical_declaration
   (variable_declarator
@@ -330,6 +346,7 @@ export const JAVA_QUERIES = `
 ; Calls
 (method_invocation name: (identifier) @call.name) @call
 (method_invocation object: (_) name: (identifier) @call.name) @call
+(method_reference) @call
 
 ; Constructor calls: new Foo()
 (object_creation_expression type: (type_identifier) @call.name) @call
