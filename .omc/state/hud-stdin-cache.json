@@ -1,0 +1,34 @@
+{
+  "session_id": "02bfa88c-6209-40d6-8b7d-e8e146a545f5",
+  "transcript_path": "/Users/nonon/.claude/projects/-Users-nonon-Desktop-GitNexus/02bfa88c-6209-40d6-8b7d-e8e146a545f5.jsonl",
+  "cwd": "/Users/nonon/Desktop/GitNexus",
+  "model": { "id": "MiniMax-M2.7", "display_name": "MiniMax-M2.7" },
+  "workspace": {
+    "current_dir": "/Users/nonon/Desktop/GitNexus",
+    "project_dir": "/Users/nonon/Desktop/GitNexus",
+    "added_dirs": []
+  },
+  "version": "2.1.90",
+  "output_style": { "name": "default" },
+  "cost": {
+    "total_cost_usd": 0.88152875,
+    "total_duration_ms": 48292,
+    "total_api_duration_ms": 30299,
+    "total_lines_added": 0,
+    "total_lines_removed": 0
+  },
+  "context_window": {
+    "total_input_tokens": 3054,
+    "total_output_tokens": 512,
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 1527,
+      "output_tokens": 309,
+      "cache_creation_input_tokens": 13515,
+      "cache_read_input_tokens": 107180
+    },
+    "used_percentage": 61,
+    "remaining_percentage": 39
+  },
+  "exceeds_200k_tokens": false
+}

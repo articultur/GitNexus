@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"git checkout -- .omc/ 2>&1 && git merge FETCH_HEAD -m \\\"Merge upstream/main: C++ pure virtual, Java method reference, TypeScript extractor, releases\\\" 2>&1\",\"description\":\"Discard .omc cha...",
+  "error": "Exit code 2\n错误：您对下列文件的本地修改将被合并操作覆盖：\n  .omc/project-memory.json .omc/state/agent-replay-47381802-b014-4444-be3e-b52236ee5402.jsonl .omc/state/idle-notif-cooldown.json .omc/state/last-tool-error.json gitnexus/.omc/state/last-tool-error.json\n使用策略 ort 合并失败。",
+  "timestamp": "2026-04-03T03:43:52.637Z",
+  "retry_count": 1
+}
