@@ -19,6 +19,7 @@ import { runFullAnalysis } from '../core/run-analyze.js';
 import fs from 'fs/promises';
 
 const OLLAMA_DEFAULT_URL = 'http://localhost:11434';
+const OLLAMA_DEFAULT_API = 'http://localhost:11434/v1';
 const OLLAMA_DEFAULT_MODEL = 'snowflake-arctic-embed:xs';
 const OLLAMA_EMBEDDING_DIMS = 384;
 
@@ -117,7 +118,7 @@ async function ensureOllamaAvailable(): Promise<boolean> {
  * Configure Ollama as the embedding backend.
  */
 function configureOllamaEmbedding(): void {
-  process.env.GITNEXUS_EMBEDDING_URL = OLLAMA_DEFAULT_URL;
+  process.env.GITNEXUS_EMBEDDING_URL = OLLAMA_DEFAULT_API;
   process.env.GITNEXUS_EMBEDDING_MODEL = OLLAMA_DEFAULT_MODEL;
   process.env.GITNEXUS_EMBEDDING_DIMS = String(OLLAMA_EMBEDDING_DIMS);
   console.log('  🔄 Using Ollama for embeddings\n');
