@@ -9,7 +9,7 @@
  */
 
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import v8 from 'v8';
 import cliProgress from 'cli-progress';
 import { closeLbug } from '../core/lbug/lbug-adapter.js';
@@ -23,9 +23,21 @@ const OLLAMA_DEFAULT_MODEL = 'snowflake-arctic-embed:xs';
 const OLLAMA_EMBEDDING_DIMS = 384;
 
 /**
+ * Check if Ollama binary is installed (exists in PATH).
+ */
+function isOllamaInstalled(): boolean {
+  try {
+    execFileSync('ollama', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check if Ollama server is running and has a compatible embedding model.
  */
-async function checkOllamaAvailable(): Promise<boolean> {
+async function checkOllamaRunning(): Promise<boolean> {
   // If user already configured HTTP embedding, respect their choice
   if (process.env.GITNEXUS_EMBEDDING_URL) return false;
 
@@ -47,13 +59,68 @@ async function checkOllamaAvailable(): Promise<boolean> {
 }
 
 /**
+ * Attempt to start Ollama server in the background.
+ * Returns true if startup appears successful (server responds within 5s).
+ */
+async function tryStartOllama(): Promise<boolean> {
+  if (!isOllamaInstalled()) return false;
+
+  try {
+    // Start ollama serve in background, detached
+    spawn('ollama', ['serve'], {
+      stdio: 'ignore',
+      detached: true,
+      shell: true,
+    }).unref();
+
+    // Wait up to 5s for server to come up
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      try {
+        const resp = await fetch(`${OLLAMA_DEFAULT_URL}/api/tags`, {
+          signal: AbortSignal.timeout(1000),
+        });
+        if (resp.ok) return true;
+      } catch {
+        // not ready yet
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure Ollama is running with the embedding model.
+ * If installed but not running, tries to start it.
+ * Returns true if Ollama is ready.
+ */
+async function ensureOllamaAvailable(): Promise<boolean> {
+  if (await checkOllamaRunning()) return true;
+
+  // Not running — try to start it
+  if (isOllamaInstalled()) {
+    console.log('  🔄 Ollama not running, starting it...\n');
+    const started = await tryStartOllama();
+    if (started) {
+      console.log('  ✅ Ollama started successfully\n');
+      return true;
+    }
+    console.log('  ⚠️  Failed to start Ollama automatically\n');
+  }
+
+  return false;
+}
+
+/**
  * Configure Ollama as the embedding backend.
  */
 function configureOllamaEmbedding(): void {
   process.env.GITNEXUS_EMBEDDING_URL = OLLAMA_DEFAULT_URL;
   process.env.GITNEXUS_EMBEDDING_MODEL = OLLAMA_DEFAULT_MODEL;
   process.env.GITNEXUS_EMBEDDING_DIMS = String(OLLAMA_EMBEDDING_DIMS);
-  console.log('  🔄 Falling back to Ollama for embeddings\n');
+  console.log('  🔄 Using Ollama for embeddings\n');
 }
 
 const HEAP_MB = 8192;
@@ -209,7 +276,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   const t0 = Date.now();
 
   // ── Ollama fallback for embeddings ───────────────────────────────
-  const ollamaAvailable = await checkOllamaAvailable();
+  const ollamaAvailable = await ensureOllamaAvailable();
 
   // If embeddings requested but HuggingFace access failed, show Ollama install guide
   if (options?.embeddings && !ollamaAvailable) {
@@ -218,7 +285,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
         '  Install Ollama to enable local embeddings:\n\n' +
         '    1. curl -fsSL https://ollama.com/install.sh | sh\n' +
         '    2. ollama pull snowflake-arctic-embed:xs\n' +
-        '    3. ollama serve &\n' +
+        '    3. (optional) ollama serve  # auto-started if not running\n' +
         '    4. npx gitnexus analyze --embeddings\n',
     );
   }
