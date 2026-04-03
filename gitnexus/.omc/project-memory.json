@@ -1,0 +1,401 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775158890758,
+  "projectRoot": "/Users/nonon/Desktop/GitNexus/gitnexus",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": ">=20.0.0",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "express",
+        "version": "4.19.2",
+        "category": "backend"
+      },
+      {
+        "name": "vitest",
+        "version": "4.0.18",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": "Node.js 20.0.0"
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "build": "tsc",
+      "serve": "tsx src/cli/index.ts serve",
+      "dev": "tsx watch src/cli/index.ts",
+      "test": "vitest run",
+      "test:unit": "vitest run test/unit",
+      "test:integration": "vitest run test/integration",
+      "test:watch": "vitest",
+      "test:coverage": "vitest run --coverage",
+      "prepare": "npm run build",
+      "prepack": "npm run build && chmod +x dist/cli/index.js"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "src",
+      "test"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "coverage": {
+      "path": "coverage",
+      "purpose": null,
+      "fileCount": 10,
+      "lastAccessed": 1775158890732,
+      "keyFiles": [
+        "base.css",
+        "block-navigation.js",
+        "clover.xml",
+        "coverage-final.json",
+        "favicon.png"
+      ]
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 0,
+      "lastAccessed": 1775158890733,
+      "keyFiles": []
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1775158890746,
+      "keyFiles": [
+        "taint-analysis-pending-todos.md"
+      ]
+    },
+    "hooks": {
+      "path": "hooks",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1775158890747,
+      "keyFiles": []
+    },
+    "skills": {
+      "path": "skills",
+      "purpose": null,
+      "fileCount": 7,
+      "lastAccessed": 1775158890747,
+      "keyFiles": [
+        "gitnexus-cli.md",
+        "gitnexus-debugging.md",
+        "gitnexus-exploring.md",
+        "gitnexus-guide.md",
+        "gitnexus-impact-analysis.md"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 0,
+      "lastAccessed": 1775158890747,
+      "keyFiles": []
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 2,
+      "lastAccessed": 1775158890748,
+      "keyFiles": [
+        "global-setup.ts",
+        "vitest.d.ts"
+      ]
+    },
+    "vendor": {
+      "path": "vendor",
+      "purpose": "Third-party code",
+      "fileCount": 0,
+      "lastAccessed": 1775158890748,
+      "keyFiles": []
+    },
+    "dist/config": {
+      "path": "dist/config",
+      "purpose": "Configuration files",
+      "fileCount": 4,
+      "lastAccessed": 1775158890748,
+      "keyFiles": [
+        "ignore-service.d.ts",
+        "ignore-service.js",
+        "supported-languages.d.ts"
+      ]
+    },
+    "dist/lib": {
+      "path": "dist/lib",
+      "purpose": "Library code",
+      "fileCount": 2,
+      "lastAccessed": 1775158890749,
+      "keyFiles": [
+        "utils.d.ts",
+        "utils.js"
+      ]
+    },
+    "dist/types": {
+      "path": "dist/types",
+      "purpose": "Type definitions",
+      "fileCount": 2,
+      "lastAccessed": 1775158890749,
+      "keyFiles": [
+        "pipeline.d.ts",
+        "pipeline.js"
+      ]
+    },
+    "src/config": {
+      "path": "src/config",
+      "purpose": "Configuration files",
+      "fileCount": 2,
+      "lastAccessed": 1775158890751,
+      "keyFiles": [
+        "ignore-service.ts",
+        "supported-languages.ts"
+      ]
+    },
+    "src/lib": {
+      "path": "src/lib",
+      "purpose": "Library code",
+      "fileCount": 1,
+      "lastAccessed": 1775158890757,
+      "keyFiles": [
+        "utils.ts"
+      ]
+    },
+    "src/types": {
+      "path": "src/types",
+      "purpose": "Type definitions",
+      "fileCount": 1,
+      "lastAccessed": 1775158890757,
+      "keyFiles": [
+        "pipeline.ts"
+      ]
+    },
+    "test/fixtures": {
+      "path": "test/fixtures",
+      "purpose": "Test fixtures",
+      "fileCount": 3,
+      "lastAccessed": 1775158890757,
+      "keyFiles": [
+        "api-impact-seed.ts",
+        "local-backend-seed.ts",
+        "search-seed.ts"
+      ]
+    },
+    "test/helpers": {
+      "path": "test/helpers",
+      "purpose": "Helper functions",
+      "fileCount": 3,
+      "lastAccessed": 1775158890757,
+      "keyFiles": [
+        "test-db.ts",
+        "test-graph.ts",
+        "test-indexed-db.ts"
+      ]
+    },
+    "test/utils": {
+      "path": "test/utils",
+      "purpose": "Utility functions",
+      "fileCount": 1,
+      "lastAccessed": 1775158890757,
+      "keyFiles": [
+        "hook-test-helpers.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/mcp/local/local-backend.ts",
+      "accessCount": 25,
+      "lastAccessed": 1775222209044,
+      "type": "file"
+    },
+    {
+      "path": "src/core/ingestion/dataflow/dfa-engine.ts",
+      "accessCount": 9,
+      "lastAccessed": 1775182024930,
+      "type": "file"
+    },
+    {
+      "path": "src/core/ingestion/dataflow/index.ts",
+      "accessCount": 9,
+      "lastAccessed": 1775183198409,
+      "type": "file"
+    },
+    {
+      "path": "src/core/ingestion/workers/parse-worker.ts",
+      "accessCount": 7,
+      "lastAccessed": 1775183163692,
+      "type": "file"
+    },
+    {
+      "path": "src/core/ingestion/parsing-processor.ts",
+      "accessCount": 7,
+      "lastAccessed": 1775221861137,
+      "type": "directory"
+    },
+    {
+      "path": "src/core/group/service.ts",
+      "accessCount": 7,
+      "lastAccessed": 1775222258951,
+      "type": "file"
+    },
+    {
+      "path": "test/unit/dataflow/path-sensitive.test.ts",
+      "accessCount": 4,
+      "lastAccessed": 1775159482636,
+      "type": "directory"
+    },
+    {
+      "path": "test/unit/dataflow/dfa-engine.test.ts",
+      "accessCount": 4,
+      "lastAccessed": 1775159508523,
+      "type": "directory"
+    },
+    {
+      "path": "test/unit/parse-worker.test.ts",
+      "accessCount": 4,
+      "lastAccessed": 1775160318185,
+      "type": "file"
+    },
+    {
+      "path": "src/core/ingestion/dataflow/types.ts",
+      "accessCount": 4,
+      "lastAccessed": 1775183180208,
+      "type": "file"
+    },
+    {
+      "path": "",
+      "accessCount": 3,
+      "lastAccessed": 1775158916439,
+      "type": "directory"
+    },
+    {
+      "path": "src/core/ingestion/dataflow",
+      "accessCount": 3,
+      "lastAccessed": 1775182024200,
+      "type": "directory"
+    },
+    {
+      "path": "src/core/ingestion/dataflow/storage-writer.ts",
+      "accessCount": 3,
+      "lastAccessed": 1775183164726,
+      "type": "file"
+    },
+    {
+      "path": "vitest.config.ts",
+      "accessCount": 3,
+      "lastAccessed": 1775221003056,
+      "type": "file"
+    },
+    {
+      "path": "test/unit/dataflow/taint-engine.test.ts",
+      "accessCount": 2,
+      "lastAccessed": 1775159404410,
+      "type": "file"
+    },
+    {
+      "path": "src",
+      "accessCount": 2,
+      "lastAccessed": 1775160489598,
+      "type": "directory"
+    },
+    {
+      "path": "test/unit/repo-manager.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775158906522,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1775158923340,
+      "type": "file"
+    },
+    {
+      "path": "test/unit/dataflow",
+      "accessCount": 1,
+      "lastAccessed": 1775160481596,
+      "type": "directory"
+    },
+    {
+      "path": "src/core/ingestion",
+      "accessCount": 1,
+      "lastAccessed": 1775160526708,
+      "type": "directory"
+    },
+    {
+      "path": "src/core/ingestion/dataflow/taint-engine.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775181995270,
+      "type": "file"
+    },
+    {
+      "path": "src/core/ingestion/dataflow/path-sensitive.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775181996371,
+      "type": "file"
+    },
+    {
+      "path": "src/core/ingestion/dataflow/lattice.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775182063828,
+      "type": "directory"
+    },
+    {
+      "path": "test/integration/local-backend-calltool.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775221003363,
+      "type": "file"
+    },
+    {
+      "path": "test/helpers/test-indexed-db.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775221017811,
+      "type": "file"
+    },
+    {
+      "path": "test/global-setup.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775221018055,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

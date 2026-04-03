@@ -111,6 +111,11 @@ import { detectFrameworkFromAST } from '../framework-detection.js';
 import { generateId } from '../../../lib/utils.js';
 import { preprocessImportPath } from '../import-processor.js';
 import { preprocessArktsContent } from '../languages/arkts-preprocess.js';
+import {
+  extractVueScript,
+  extractTemplateComponents,
+  isVueSetupTopLevel,
+} from '../vue-sfc-extractor.js';
 import type { NamedBinding } from '../named-bindings/types.js';
 import type { NodeLabel } from 'gitnexus-shared';
 import type { FieldInfo, FieldExtractorContext } from '../field-types.js';
@@ -333,6 +338,7 @@ const languageMap: Record<string, TreeSitterLanguage> = {
   ...(Dart ? { [SupportedLanguages.Dart]: Dart } : {}),
   ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
   ...(Objc ? { [SupportedLanguages.ObjectiveC]: Objc } : {}),
+  [SupportedLanguages.Vue]: TypeScript.typescript,
 };
 
 /**
@@ -1388,16 +1394,28 @@ const processFileGroup = (
     // Skip files larger than the max tree-sitter buffer (32 MB)
     if (file.content.length > TREE_SITTER_MAX_BUFFER) continue;
 
+    // Vue SFC preprocessing: extract <script> block content
+    let parseContent = file.content;
+    let lineOffset = 0;
+    let isVueSetup = false;
+    if (language === SupportedLanguages.Vue) {
+      const extracted = extractVueScript(file.content);
+      if (!extracted) continue; // skip .vue files with no script block
+      parseContent = extracted.scriptContent;
+      lineOffset = extracted.lineOffset;
+      isVueSetup = extracted.isSetup;
+    }
+
     clearCaches(); // Reset memoization before each new file
 
     // OC headers contain NS_ASSUME_NONNULL_BEGIN / NS_ASSUME_NONNULL_END macros that
     // tree-sitter-objc grammar cannot parse — strip them so heritage queries match.
-    const parseContent =
+    parseContent =
       language === SupportedLanguages.ObjectiveC
-        ? stripNullabilityMacros(file.content)
+        ? stripNullabilityMacros(parseContent)
         : language === SupportedLanguages.ArkTS
-          ? preprocessArktsContent(file.content)
-          : file.content;
+          ? preprocessArktsContent(parseContent)
+          : parseContent;
 
     let tree;
     try {

@@ -8,7 +8,9 @@
         "name": "JavaScript/TypeScript",
         "version": null,
         "confidence": "high",
-        "markers": ["package.json"]
+        "markers": [
+          "package.json"
+        ]
       }
     ],
     "frameworks": [],
@@ -37,7 +39,9 @@
   "structure": {
     "isMonorepo": false,
     "workspaces": [],
-    "mainDirectories": ["docs"],
+    "mainDirectories": [
+      "docs"
+    ],
     "gitBranches": {
       "defaultBranch": "main",
       "branchingStrategy": null
@@ -57,7 +61,13 @@
       "purpose": null,
       "fileCount": 9,
       "lastAccessed": 1775187914046,
-      "keyFiles": ["README.md", "__init__.py", "constants.py", "pyproject.toml", "run_eval.py"]
+      "keyFiles": [
+        "README.md",
+        "__init__.py",
+        "constants.py",
+        "pyproject.toml",
+        "run_eval.py"
+      ]
     },
     "gitnexus": {
       "path": "gitnexus",
@@ -91,7 +101,12 @@
       "purpose": null,
       "fileCount": 4,
       "lastAccessed": 1775187914047,
-      "keyFiles": ["package-lock.json", "package.json", "tsconfig.json", "tsconfig.tsbuildinfo"]
+      "keyFiles": [
+        "package-lock.json",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.tsbuildinfo"
+      ]
     },
     "gitnexus-test-setup": {
       "path": "gitnexus-test-setup",
@@ -125,14 +140,21 @@
       "purpose": "Documentation",
       "fileCount": 2,
       "lastAccessed": 1775187914049,
-      "keyFiles": ["2026-04-01-arkts-ets-support-plan.md", "taint-analysis-pending-todos.md"]
+      "keyFiles": [
+        "2026-04-01-arkts-ets-support-plan.md",
+        "taint-analysis-pending-todos.md"
+      ]
     },
     "gitnexus-shared/dist": {
       "path": "gitnexus-shared/dist",
       "purpose": "Distribution/build output",
       "fileCount": 16,
       "lastAccessed": 1775187914050,
-      "keyFiles": ["index.d.ts", "index.d.ts.map", "index.js"]
+      "keyFiles": [
+        "index.d.ts",
+        "index.d.ts.map",
+        "index.js"
+      ]
     },
     "gitnexus-shared/node_modules": {
       "path": "gitnexus-shared/node_modules",
@@ -146,7 +168,11 @@
       "purpose": "Source code",
       "fileCount": 4,
       "lastAccessed": 1775187914050,
-      "keyFiles": ["index.ts", "language-detection.ts", "languages.ts"]
+      "keyFiles": [
+        "index.ts",
+        "language-detection.ts",
+        "languages.ts"
+      ]
     },
     "gitnexus-web/node_modules": {
       "path": "gitnexus-web/node_modules",
@@ -160,17 +186,65 @@
       "purpose": "Source code",
       "fileCount": 4,
       "lastAccessed": 1775187914053,
-      "keyFiles": ["App.tsx", "index.css", "main.tsx"]
+      "keyFiles": [
+        "App.tsx",
+        "index.css",
+        "main.tsx"
+      ]
     },
     "gitnexus-web/test": {
       "path": "gitnexus-web/test",
       "purpose": "Test files",
       "fileCount": 1,
       "lastAccessed": 1775187914053,
-      "keyFiles": ["setup.ts"]
+      "keyFiles": [
+        "setup.ts"
+      ]
     }
   },
   "hotPaths": [
+    {
+      "path": "gitnexus/src/core/ingestion/workers/parse-worker.ts",
+      "accessCount": 20,
+      "lastAccessed": 1775221741302,
+      "type": "file"
+    },
+    {
+      "path": "gitnexus-shared/src/language-detection.ts",
+      "accessCount": 8,
+      "lastAccessed": 1775221553489,
+      "type": "file"
+    },
+    {
+      "path": "gitnexus/src/core/ingestion/entry-point-scoring.ts",
+      "accessCount": 4,
+      "lastAccessed": 1775221608045,
+      "type": "directory"
+    },
+    {
+      "path": "gitnexus/src/core/ingestion/framework-detection.ts",
+      "accessCount": 4,
+      "lastAccessed": 1775221609187,
+      "type": "directory"
+    },
+    {
+      "path": "gitnexus/src/core/ingestion/languages/index.ts",
+      "accessCount": 3,
+      "lastAccessed": 1775221567067,
+      "type": "file"
+    },
+    {
+      "path": "gitnexus/src/mcp/local/local-backend.ts",
+      "accessCount": 2,
+      "lastAccessed": 1775221434635,
+      "type": "file"
+    },
+    {
+      "path": "gitnexus-shared/src/languages.ts",
+      "accessCount": 2,
+      "lastAccessed": 1775221512737,
+      "type": "file"
+    },
     {
       "path": "AGENTS.md",
       "accessCount": 1,

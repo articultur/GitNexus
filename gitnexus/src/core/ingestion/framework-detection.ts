@@ -958,6 +958,7 @@ export const AST_FRAMEWORK_PATTERNS_BY_LANGUAGE = {
       patterns: FRAMEWORK_AST_PATTERNS.harmonyArkui,
     },
   ],
+  [SupportedLanguages.Vue]: [], // Vue uses TypeScript queries — entry points handled via TS patterns
   [SupportedLanguages.Cobol]: [], // Standalone regex processor — no AST framework patterns
   [SupportedLanguages.ObjectiveC]: [
     // Cocoa/AppKit/UIKit patterns
