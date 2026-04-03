@@ -57,7 +57,7 @@ import {
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
 import { processProcesses } from './process-processor.js';
-import { processDataflow, processCFG, parseDataflowOptions, type DataflowOptions } from './dataflow/index.js';
+import { processDataflow, processCFG, type DataflowOptions } from './dataflow/index.js';
 import { createResolutionContext } from './resolution-context.js';
 import { createASTCache } from './ast-cache.js';
 import { type PipelineProgress, getLanguageFromFilename } from 'gitnexus-shared';
@@ -487,6 +487,8 @@ export interface PipelineOptions {
   skipGraphPhases?: boolean;
   /** Dataflow analysis options (Phase 12) */
   dataflow?: Partial<DataflowOptions>;
+  /** Override max processes for graph analysis (default: auto, capped at 1000) */
+  maxProcesses?: number;
 }
 
 // ── Extracted pipeline phases ──────────────────────────────────────────────
@@ -1118,6 +1120,7 @@ async function runGraphAnalysisPhases(
   onProgress: ProgressFn,
   routeRegistry?: Map<string, { filePath: string; source: string }>,
   toolDefs?: { name: string; filePath: string; description: string }[],
+  maxProcessesOverride?: number,
 ): Promise<{
   communityResult: Awaited<ReturnType<typeof processCommunities>>;
   processResult: Awaited<ReturnType<typeof processProcesses>>;
@@ -1198,7 +1201,9 @@ async function runGraphAnalysisPhases(
   graph.forEachNode((n) => {
     if (n.label !== 'File') symbolCount++;
   });
-  const dynamicMaxProcesses = Math.max(20, Math.min(300, Math.round(symbolCount / 10)));
+  const baseMaxProcesses = Math.max(20, Math.round(symbolCount / 10));
+  const hardCap = 1000;
+  const dynamicMaxProcesses = Math.max(20, Math.min(hardCap, baseMaxProcesses));
 
   const processResult = await processProcesses(
     graph,
@@ -1212,7 +1217,7 @@ async function runGraphAnalysisPhases(
         stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
       });
     },
-    { maxProcesses: dynamicMaxProcesses, minSteps: 3 },
+    { maxProcesses: maxProcessesOverride ?? dynamicMaxProcesses, minSteps: 3 },
   );
 
   if (isDev) {
@@ -1694,6 +1699,7 @@ export const runPipelineFromRepo = async (
         onProgress,
         routeRegistry,
         toolDefs,
+        options?.maxProcesses,
       );
       communityResult = graphResults.communityResult;
       processResult = graphResults.processResult;
