@@ -43,6 +43,10 @@ This repository is a **monorepo** with two main products: the **CLI / MCP packag
 | `impact` | Blast radius (upstream/downstream) with depth and risk summary. |
 | `detect_changes` | Map git diffs to affected symbols and processes. |
 | `rename` | Graph-assisted rename with `dry_run` preview (`graph` vs `text_search` confidence). |
+| `route_map` | Show API route mappings: handlers, middleware chains, consumers. |
+| `shape_check` | Check API response shapes vs consumer property accesses for drift. |
+| `api_impact` | Pre-change impact report for an API route handler (consumers, middleware, flows). |
+| `tool_map` | Show MCP/RPC tool definitions, handler files, descriptions. |
 
 ## Data Flow Analysis (Three-View: AST → CFG → DFG)
 

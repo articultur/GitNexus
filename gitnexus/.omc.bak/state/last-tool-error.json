@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd gitnexus && npm test 2>&1\",\"timeout\":300000,\"description\":\"Run tests in gitnexus\"}",
-  "error": "Exit code 1\n(eval):cd:1: no such file or directory: gitnexus",
-  "timestamp": "2026-04-03T03:28:34.312Z",
-  "retry_count": 1
-}

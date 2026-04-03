@@ -96,3 +96,6 @@ GitNexus.sln
 .swarm/
 
 local_docs/
+
+# OMC backups
+.omc.bak/
