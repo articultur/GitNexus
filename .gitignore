@@ -97,5 +97,6 @@ GitNexus.sln
 
 local_docs/
 
-# OMC backups
+# OMC
+.omc/
 .omc.bak/

@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"git merge fork/main\",\"description\":\"Merge fork/main into local main\"}",
-  "error": "Exit code 1\n自动合并 README.md\n冲突（内容）：合并冲突于 README.md\n自动合并 gitnexus-shared/src/language-detection.ts\n冲突（内容）：合并冲突于 gitnexus-shared/src/language-detection.ts\n自动合并 gitnexus-shared/src/languages.ts\n冲突（内容）：合并冲突于 gitnexus-shared/src/languages.ts\n自动合并 gitnexus/README.md\n冲突（内容）：合并冲突于 gitnexus/README.md\n自动合并 gitnexus/package-lock.json\n自动合并 gitnexus/package.json\n自动合并 gitnexus/src/cli/index.ts\n自动合并 gitnexus/src/core/ingestion/entry-point-scoring.ts\n冲突（内容）：合并冲突于 gitnexus/src/core/ingestion/entry-point-scoring.t...",
-  "timestamp": "2026-04-03T13:01:27.764Z",
-  "retry_count": 1
-}
