@@ -1,31 +1,32 @@
-import { describe, it, expect, vi, from 'vitest';
-import { LocalBackend } from '../../src/mcp/local/local-backend';
-import { executeQuery as executeQueryMock } from '../../src/core/lbug/pool-adapter.js';
-import { executeParameterized as executeParameterizedMock } from '../../src/core/lbug/pool-adapter.js';
-import { SupportedLanguages } from 'gitnexus-shared';
-import { isLanguageAvailable } from '../../src/core/tree-sitter/parser-loader.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock the canonical source (core/lbug/pool-adapter.js — what local-backend.ts imports) and the re-export shim (mcp/core/lbug-adapter.js) so the mocks intercept
- // regardless of import path.
+// Mock the lbug-adapter module before importing LocalBackend so the class
+// uses the mocked implementations of executeQuery / executeParameterized.
+const executeQueryMock = vi.fn();
+const executeParameterizedMock = vi.fn();
+
+// Mock both the canonical source (core/lbug/pool-adapter.js — what local-backend.ts
+// imports) and the re-export shim (mcp/core/lbug-adapter.js) so the mocks intercept
+// regardless of import path.
 vi.mock('../../src/core/lbug/pool-adapter.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     initLbug: vi.fn(),
     executeQuery: (...args: any[]) => executeQueryMock(...args),
-    executeParameterized: (...args: any[]) => executeParameterizedMock(...args)
-    closeLbug: vi.fn();
+    executeParameterized: (...args: any[]) => executeParameterizedMock(...args),
+    closeLbug: vi.fn(),
     isLbugReady: vi.fn().mockReturnValue(true),
   };
 });
-vi.mock('../../src/mcp/core/lbug-adapter.js' async (importOriginal) => {
+vi.mock('../../src/mcp/core/lbug-adapter.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     initLbug: vi.fn(),
     executeQuery: (...args: any[]) => executeQueryMock(...args),
-    executeParameterized: (...args: any[]) => executeParameterizedMock(...args)
-    closeLbug: vi.fn();
+    executeParameterized: (...args: any[]) => executeParameterizedMock(...args),
+    closeLbug: vi.fn(),
     isLbugReady: vi.fn().mockReturnValue(true),
   };
 });
@@ -53,33 +54,22 @@ describe('impact: batching and grouping', () => {
     (backend as any).repos.set(repoHandle.id, repoHandle);
     (backend as any).ensureInitialized = vi.fn().mockResolvedValue(undefined);
 
-    // executeParameterized: resolve target -> return a symbol row (default)
+    // Track chunk sizes
+    const chunkSizes: number[] = [];
+    let chunkCallIndex = 0;
+
+    // Single executeParameterized mock handles both depth traversal (parameterized)
+    // and enrichment chunk queries. The BFS now uses executeParameterized.
     executeParameterizedMock.mockImplementation(async (...args: any[]) => {
       const query = typeof args[1] === 'string' ? args[1] : String(args[0] ?? '');
       const params = args[2] || {};
+
       // Depth traversal (parameterized BFS) — return 250 impacted nodes
       if (query.includes('$ids') && query.includes('$relTypes')) {
         const res: any[] = [];
         for (let i = 0; i < 250; i++) {
           res.push({
-            sourceId: 'sym1', sourceName: 'TargetX', sourceFilePath: 'f',
-            id: `node-${i}`,
-            name: `n${i}`,
-            filePath: `file-${i}.js`,
-            relType: 'CALLS',
-            confidence: null,
-            reason: '',
-          });
-        }
-        return res;
-      }
-
-      // Depth traversal (parameterized BFS) — return 500 impacted nodes
-      if (query.includes('$ids') && query.includes('$relTypes')) {
-        const res: any[] = [];
-        for (let i = 0; i < 500; i++) {
-          res.push({
-            sourceId: 'symX', sourceName: 'TargetX' sourceFilePath: 'f',
+            sourceId: 'sym1', sourceName: 'Target', sourceFilePath: 'f',
             id: `node-${i}`,
             name: `n${i}`,
             filePath: `file-${i}.js`,
@@ -93,14 +83,185 @@ describe('impact: batching and grouping', () => {
 
       if (query.includes('STEP_IN_PROCESS')) {
         const ids = Array.isArray(params.ids) ? params.ids : [];
-        chunkSizes.push(id.length);
+        const cnt = ids.length;
+        chunkSizes.push(cnt);
+        const idx = chunkCallIndex++;
+        return [
+          {
+            entryPointId: `ep-${Math.floor(idx)}`,
+            epName: `epName-${idx}`,
+            epType: 'Function',
+            epFilePath: `/path/${idx}`,
+            hits: cnt,
+            minStep: 1,
+          },
+        ];
+      }
+
+      // Default: target resolution
+      return [{ id: 'sym1', name: 'Target', filePath: 'f' }];
+    });
+
+    executeQueryMock.mockImplementation(async () => []);
+
+    const params = { target: 'Target', direction: 'downstream', maxDepth: 1 } as any;
+
+    const res = await (backend as any)._impactImpl(repoHandle, params);
+
+    // Expect 3 chunk calls: 100 + 100 + 50
+    expect(chunkSizes.length).toBe(3);
+    const total = chunkSizes.reduce((s, v) => s + v, 0);
+    expect(total).toBe(250);
+
+    // Result impacted count should be 250
+    expect(res.impactedCount).toBe(250);
+  });
+
+  it('groups entry points across chunks and deduplicates correctly', async () => {
+    const backend = new LocalBackend();
+    const repoHandle = {
+      id: 'repo2',
+      name: 'repo2',
+      repoPath: '/tmp/repo2',
+      storagePath: '/tmp/repo2/.gitnexus',
+      lbugPath: '/tmp/repo2/.gitnexus/lbug',
+      indexedAt: 'now',
+      lastCommit: 'c',
+      stats: {},
+    } as any;
+    (backend as any).repos.set(repoHandle.id, repoHandle);
+    (backend as any).ensureInitialized = vi.fn().mockResolvedValue(undefined);
+
+    executeParameterizedMock.mockImplementation(async (...args: any[]) => {
+      const query = typeof args[1] === 'string' ? args[1] : String(args[0] ?? '');
+
+      // Depth traversal (parameterized BFS) — return 6 impacted nodes
+      if (query.includes('$ids') && query.includes('$relTypes')) {
+        const res: any[] = [];
+        for (let i = 0; i < 6; i++) {
+          res.push({
+            sourceId: 'symA', sourceName: 'TargetA', sourceFilePath: 'f',
+            id: `node-${i}`,
+            name: `n${i}`,
+            filePath: `file-${i}.js`,
+            relType: 'CALLS',
+            confidence: null,
+            reason: '',
+          });
+        }
+        return res;
+      }
+
+      if (query.includes('STEP_IN_PROCESS')) {
+        // Return grouping rows
+        return [
+          {
+            entryPointId: 'ep-1',
+            epName: 'EP1',
+            epType: 'Function',
+            epFilePath: '/p/1',
+            hits: 2,
+            minStep: 1,
+          },
+          {
+            entryPointId: 'ep-2',
+            epName: 'EP2',
+            epType: 'Function',
+            epFilePath: '/p/2',
+            hits: 2,
+            minStep: 2,
+          },
+          {
+            entryPointId: 'ep-1',
+            epName: 'EP1',
+            epType: 'Function',
+            epFilePath: '/p/1',
+            hits: 1,
+            minStep: 3,
+          },
+          {
+            entryPointId: 'ep-3',
+            epName: 'EP3',
+            epType: 'Function',
+            epFilePath: '/p/3',
+            hits: 1,
+            minStep: 1,
+          },
+        ];
+      }
+
+      // Default: target resolution
+      return [{ id: 'symA', name: 'TargetA', filePath: 'f' }];
+    });
+
+    executeQueryMock.mockImplementation(async () => []);
+
+    const params = { target: 'TargetA', direction: 'downstream', maxDepth: 1 } as any;
+    const res = await (backend as any)._impactImpl(repoHandle, params);
+
+    // affected_processes should be grouped by entryPointId: ep-1, ep-2, ep-3 => 3 unique
+    expect(Array.isArray(res.affected_processes)).toBe(true);
+    const names = res.affected_processes.map((p: any) => p.name);
+    expect(names.sort()).toEqual(['EP1', 'EP2', 'EP3'].sort());
+
+    const ep1 = res.affected_processes.find((p: any) => p.name === 'EP1');
+    expect(ep1.total_hits).toBe(3);
+
+    const ep2 = res.affected_processes.find((p: any) => p.name === 'EP2');
+    expect(ep2.total_hits).toBe(2);
+  });
+
+  it('caps enrichment to MAX_CHUNKS and sets partial when capped', async () => {
+    // Temporarily set MAX_CHUNKS small for deterministic test
+    process.env.IMPACT_MAX_CHUNKS = '3'; // CHUNK_SIZE 100 => maxItems = 300
+
+    const backend = new LocalBackend();
+    const repoHandle = {
+      id: 'repo3',
+      name: 'repo3',
+      repoPath: '/tmp/repo3',
+      storagePath: '/tmp/repo3/.gitnexus',
+      lbugPath: '/tmp/repo3/.gitnexus/lbug',
+      indexedAt: 'now',
+      lastCommit: 'c',
+      stats: {},
+    } as any;
+    (backend as any).repos.set(repoHandle.id, repoHandle);
+    (backend as any).ensureInitialized = vi.fn().mockResolvedValue(undefined);
+
+    const chunkSizes: number[] = [];
+
+    executeParameterizedMock.mockImplementation(async (...args: any[]) => {
+      const query = typeof args[1] === 'string' ? args[1] : String(args[0] ?? '');
+      const params = args[2] || {};
+
+      // Depth traversal (parameterized BFS) — return 500 impacted nodes
+      if (query.includes('$ids') && query.includes('$relTypes')) {
+        const res: any[] = [];
+        for (let i = 0; i < 500; i++) {
+          res.push({
+            sourceId: 'symX', sourceName: 'TargetX', sourceFilePath: 'f',
+            id: `node-${i}`,
+            name: `n${i}`,
+            filePath: `file-${i}.js`,
+            relType: 'CALLS',
+            confidence: null,
+            reason: '',
+          });
+        }
+        return res;
+      }
+
+      if (query.includes('STEP_IN_PROCESS')) {
+        const ids = Array.isArray(params.ids) ? params.ids : [];
+        chunkSizes.push(ids.length);
         return [
           {
             entryPointId: 'ep-x',
             epName: 'EPX',
             epType: 'Function',
             epFilePath: '/p/x',
-            hits: id.length,
+            hits: ids.length,
             minStep: 1,
           },
         ];
@@ -118,47 +279,43 @@ describe('impact: batching and grouping', () => {
 
       // Default: target resolution
       return [{ id: 'symX', name: 'TargetX', filePath: 'f' }];
-    }
-
-  });
-
-  it('groups entry points across chunks and deduplicates correctly', async () => {
-    // Prepare impacted nodes: smaller set for clarity (6 nodes -> chunk size default 100 so single chunk)
-    executeQueryMock.mockImplementation(async (...args: any[]) => {
-      const query = typeof args[1] === 'string' ? args[1] : String(args[0] ?? '');
-      const params = args[2] || {};
-      if (query.includes('COUNT(DISTINCT s.id)') && query.includes('MEMBER_OF')) {
-        // module enrichment should have been called in chunks (3 calls" totaling 300 ids)
-      const memberCalls = (executeParameterizedMock.mock.calls || []).filter((c: any[]) => {
-        const q = typeof c[1] === 'string' ? c[1] : String(c[0] ?? '');
-      // only count the module-hits query (which returns COUNT(DISTINCT s.id).
-      // as process-chunk query also use COUNT(DISTinct s.id) to help require memberOf` count.
-      return q.includes('MEMBER_OF');
     });
-    // MaxChunks = 3 in this test, so expect 3 module-enrichment chunk calls
-    // DEBUG: print memberCalls and their id lengths
-    expect(memberCalls.length).toBe(3);
-    const totalModuleIds = memberCalls.reduce((s: v) => s + v, 0);
-    expect(totalModuleIds).toBe(300);
+
+    executeQueryMock.mockImplementation(async () => []);
+
+    const params = { target: 'TargetX', direction: 'downstream', maxDepth: 1 } as any;
+    const res = await (backend as any)._impactImpl(repoHandle, params);
+
+    // Expect we processed only MAX_CHUNKS chunks (3) -> total ids handled = 300
+    expect(chunkSizes.length).toBe(3);
+    const totalHandled = chunkSizes.reduce((s, v) => s + v, 0);
+    expect(totalHandled).toBe(300);
 
     // Because we capped enrichment, the result should include partial: true
     expect(res.partial).toBe(true);
-    // Module enrichment should have been called in chunks (3 calls" totaling 300 ids)
+
+    // Module enrichment should have been called in chunks (3 calls, totaling 300 ids)
     const memberCalls = (executeParameterizedMock.mock.calls || []).filter((c: any[]) => {
       const q = typeof c[1] === 'string' ? c[1] : String(c[0] ?? '');
-      // only count the module-hits query (which returns COUNT(Distinct s.id));
-      // As process-chunk query also use COUNT(Distinct s.id) to help require memberOf`);
-      return q.includes('MEMBER_OF');
+      // Only count the module-hits query (which returns COUNT(DISTINCT s.id)).
+      // The process-chunk query also uses COUNT(DISTINCT s.id), so require MEMBER_OF
+      // to avoid double-counting process-chunk calls.
+      return q.includes('COUNT(DISTINCT s.id)') && q.includes('MEMBER_OF');
     });
-    // MaxChunks = 3 in this test, so expect 3 module-enrichment chunk calls`    // DEBUG: print memberCalls and their id lengths
+    // MAX_CHUNKS = 3 in this test, so expect 3 module-enrichment chunk calls
     expect(memberCalls.length).toBe(3);
-    const totalModuleIds = memberCalls.reduce((s: v) => s + v, 0);
+    const totalModuleIds = memberCalls.reduce(
+      (sum: number, call: any[]) => sum + (Array.isArray(call[2]?.ids) ? call[2].ids.length : 0),
+      0,
+    );
+
     expect(totalModuleIds).toBe(300);
 
     // Affected modules should include ModuleA
     expect(Array.isArray(res.affected_modules)).toBe(true);
     const modNames = res.affected_modules.map((m: any) => m.name);
-      expect(modName).toContain('ModuleA');
+    expect(modNames).toContain('ModuleA');
+
     // Cleanup env
     delete process.env.IMPACT_MAX_CHUNKS;
   });
