@@ -134,6 +134,7 @@ export async function impactCommand(
       direction: options?.direction || 'upstream',
       maxDepth: options?.depth ? parseInt(options.depth, 10) : undefined,
       includeTests: options?.includeTests ?? false,
+      include_content: options?.content ?? false,
       repo: options?.repo,
       ...(relationTypes ? { relationTypes } : {}),
     });

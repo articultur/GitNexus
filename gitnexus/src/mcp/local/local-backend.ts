@@ -2652,7 +2652,7 @@ export class LocalBackend {
     // Batch-fetch source content for impacted symbols when requested
     let contentMap = new Map<string, string>();
     if (include_content && impacted.length > 0) {
-      const contentIds = impacted.slice(0, MAX_CHUNKS * CHUNK_SIZE).map((it: any) => String(it.id ?? ''));
+      const contentIds = impacted.slice(0, 1000).map((it: any) => String(it.id ?? ''));
       try {
         const contentRows = await executeParameterized(
           repo.id,
@@ -2744,6 +2744,7 @@ export class LocalBackend {
       minConfidence: number;
       includeTests: boolean;
       include_evidence: boolean;
+      include_content?: boolean;
     },
   ): Promise<any | null> {
     try {
@@ -2788,9 +2789,10 @@ export class LocalBackend {
       return await this._runImpactBFS(repo, sym, symType, dir, {
         maxDepth: opts.maxDepth,
         relationTypes,
-        includeTests: opts.includeTests,
+        includeTests: opts.includeTests ?? false,
         minConfidence: opts.minConfidence,
         include_evidence: opts.include_evidence ?? true,
+        include_content: opts.include_content ?? false,
       });
     } catch {
       return null;
