@@ -1233,9 +1233,8 @@ export const OBJECTIVEC_QUERIES = `
       (identifier) @name))) @definition.property
 
 ; ── OC Methods in @interface (declarations) ─────────────────────────────────
-; The identifier immediately after method_type is the first selector keyword.
-; For unary methods like - (void)alloc, it is the method name.
-; For multi-arg methods like - (CGSize)sizeOfView:css:, each identifier is captured.
+; @name captures the first selector keyword (Unary: "alloc"; Multi-arg: "sizeOfView").
+; @definition_node lets descriptionExtractor reconstruct the full selector "sizeOfView:css:".
 (method_declaration
   (method_type)
   (identifier) @name) @definition.method

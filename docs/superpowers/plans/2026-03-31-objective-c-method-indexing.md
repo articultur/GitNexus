@@ -4,7 +4,7 @@
 
 **Goal:** Fix Objective-C multi-parameter method indexing so `sizeOfView:css:attribute:superFrame:` returns the correct OC implementation instead of falling back to Java.
 
-**Architecture:** Use tree-sitter query captures `@selector.part` on each keyword declarator, then use `descriptionExtractor` hook to concatenate selector parts into full method names.
+**Architecture:** OC grammar uses a flat AST for method declarations — `method_type | identifier (sel) | method_parameter | identifier (sel) | method_parameter | ...`. The `descriptionExtractor` traverses the `method_declaration` node, identifies selector keyword identifiers (those followed by `method_parameter` or `;`), and joins them with `:` to reconstruct the full selector.
 
 **Tech Stack:** TypeScript, tree-sitter, vitest
 

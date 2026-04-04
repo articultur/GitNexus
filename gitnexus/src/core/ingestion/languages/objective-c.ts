@@ -18,7 +18,7 @@ import { cCppExportChecker } from '../export-detection.js';
 import { resolveCppImport } from '../import-resolvers/standard.js';
 import { OBJECTIVEC_QUERIES } from '../tree-sitter-queries.js';
 
-import { isObjcInsideContainer } from '../utils/ast-helpers.js';
+import { isObjcInsideContainer, type SyntaxNode } from '../utils/ast-helpers.js';
 import type { LanguageProvider } from '../language-provider.js';
 import { createFieldExtractor } from '../field-extractors/generic.js';
 import { objcConfig } from '../field-extractors/configs/objc.js';
@@ -104,20 +104,42 @@ const objcLabelOverride: NonNullable<LanguageProvider['labelOverride']> = (
   return isObjcInsideContainer(functionNode) ? null : defaultLabel;
 };
 
-/** Extract OC method description.
- * For multi-argument methods, the query produces multiple matches (one per
- * selector keyword). The description contains the full selector name which helps
- * disambiguate from similarly-named methods in other languages (e.g., Java).
- * For single-argument/unary methods, returns the method name as-is. */
+/** Extract full OC method selector name from the method declaration node.
+ * OC method selectors consist of multiple keyword parts: "sizeOfView:css:attribute:".
+ * The AST node structure for `- (CGSize)sizeOfView:(id)view css:(NSDictionary *)c`
+ * is a flat sequence: method_type | identifier (selector) | method_parameter |
+ * identifier (selector) | method_parameter | ...
+ * Selector keyword identifiers are those followed by a ':' token in the child list.
+ * Returns undefined to leave nodeName unchanged (pipeline uses @name capture). */
 const objcDescriptionExtractor: NonNullable<LanguageProvider['descriptionExtractor']> = (
   nodeLabel,
-  nodeName,
+  _nodeName,
   captureMap,
 ) => {
   if (nodeLabel !== 'Method') return undefined;
-  // nodeName is already the selector keyword from the @name capture
-  // For multi-arg methods, each selector keyword gets its own definition
-  return nodeName;
+  const defNode = captureMap['definition.method'];
+  if (!defNode) return undefined;
+
+  // Collect all selector keyword identifiers from the method children.
+  // In OC grammar, method_declaration children are a flat sequence:
+  //   "-" | method_type | identifier (sel) | method_parameter | identifier (sel) | method_parameter | ...
+  // The ":" colon lives INSIDE method_parameter as its first child.
+  // A selector keyword identifier is one whose nextSibling is method_parameter (or ";")
+  const parts: string[] = [];
+  let child: SyntaxNode | null = defNode.firstChild;
+  while (child) {
+    if (child.type === 'identifier') {
+      const next = child.nextSibling;
+      if (next && (next.type === 'method_parameter' || next.type === ';')) {
+        parts.push(child.text);
+      }
+    }
+    child = child.nextSibling;
+  }
+
+  // If no selector parts found (unary method with no ':'), return undefined
+  if (parts.length === 0) return undefined;
+  return parts.join(':') + ':';
 };
 
 export const objectiveCProvider = defineLanguage({
