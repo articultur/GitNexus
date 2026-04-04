@@ -55,6 +55,8 @@ export function analyzePathSensitive(
     pathConstraints: PathConstraint[],
     depth: number,
   ): void {
+    pathCount++;
+
     // Stop conditions
     if (pathCount >= maxPaths) return;
     if (depth > maxDepth) return;
@@ -101,7 +103,6 @@ export function analyzePathSensitive(
       }
     }
 
-    pathCount++;
   }
 
   // Start from entry node

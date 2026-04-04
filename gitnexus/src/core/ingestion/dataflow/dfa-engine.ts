@@ -66,7 +66,6 @@ export function analyzeForward(context: DFAContext): AnalysisResult {
   const { cfg } = context;
   const facts = new Map<string, Map<string, LatticeValue>>();
   const worklist = new Set<string>();
-  const visited = new Set<string>();
 
   // Initialize entry node with UNINIT for all variables
   const entryFacts = new Map<string, LatticeValue>();
@@ -78,7 +77,6 @@ export function analyzeForward(context: DFAContext): AnalysisResult {
     // Pop a node from worklist (using Set iterator)
     const nodeId = worklist.values().next().value!;
     worklist.delete(nodeId);
-    visited.add(nodeId);
 
     const node = cfg.nodes.get(nodeId);
     if (!node) continue;
@@ -125,14 +123,19 @@ export function analyzeForward(context: DFAContext): AnalysisResult {
           changed = true;
         }
       }
+      // Check for keys removed from outFacts (variables no longer defined)
+      for (const varName of existingOut.keys()) {
+        if (!outFacts.has(varName)) {
+          changed = true;
+          break;
+        }
+      }
     }
 
     // Add successors to worklist if facts changed
     if (changed) {
       for (const succId of node.successors) {
-        if (!visited.has(succId)) {
-          worklist.add(succId);
-        }
+        worklist.add(succId);
       }
     }
   }
@@ -255,11 +258,29 @@ function extractTaintInfo(
   const taintSinks: string[] = [];
   const sanitizedVariables: string[] = [];
 
+  // Track which nodes have taint sources
+  const seenTaintSourceNodes = new Set<string>();
+
   for (const [nodeId, nodeFacts] of facts) {
-    for (const [variable, value] of nodeFacts) {
-      if (isTainted(value)) {
-        taintSources.push(`${nodeId}:${variable}`);
+    // Check if this node contains an actual taint source call
+    const node = context.cfg.nodes.get(nodeId);
+    if (node) {
+      for (const stmt of node.basicBlock) {
+        const callMatch = stmt.match(/(\w+)\s*\((.*)\)/);
+        if (callMatch) {
+          const [, funcName] = callMatch;
+          if (context.taintSources?.has(funcName)) {
+            const key = `${nodeId}:${funcName}`;
+            if (!seenTaintSourceNodes.has(key)) {
+              seenTaintSourceNodes.add(key);
+              taintSources.push(key);
+            }
+          }
+        }
       }
+    }
+
+    for (const [variable, value] of nodeFacts) {
       if (isSanitized(value)) {
         sanitizedVariables.push(`${nodeId}:${variable}`);
       }
@@ -347,10 +368,26 @@ export function computeRDA(cfg: CFGResult): RDATable {
 
   // Initialize GEN and KILL sets for each node
   // GEN(node): variables DEFINED (assigned) in this node
-  // KILL(node): variables that this node OVERWRITES
+  // KILL(node): variables that this node OVERWRITES (definitions of same var in other nodes)
   const genMap = new Map<string, Set<string>>();
   const killMap = new Map<string, Set<string>>();
 
+  // First pass: collect all definitions per variable across the function
+  const varToDefNodes = new Map<string, Set<string>>();
+  for (const node of cfg.nodes) {
+    for (const stmt of node.basicBlock) {
+      const assignMatch = stmt.match(/^(\w+)\s*=\s*(.+)$/);
+      if (assignMatch) {
+        const [, lhs] = assignMatch;
+        if (!varToDefNodes.has(lhs)) {
+          varToDefNodes.set(lhs, new Set());
+        }
+        varToDefNodes.get(lhs)!.add(node.id);
+      }
+    }
+  }
+
+  // Second pass: compute GEN and KILL for each node
   for (const node of cfg.nodes) {
     const gen = new Set<string>();
     const kill = new Set<string>();
@@ -361,6 +398,15 @@ export function computeRDA(cfg: CFGResult): RDATable {
       if (assignMatch) {
         const [, lhs] = assignMatch;
         gen.add(lhs);
+        // KILL: all other definitions of this variable in the same function
+        const defNodes = varToDefNodes.get(lhs);
+        if (defNodes) {
+          for (const defNodeId of defNodes) {
+            if (defNodeId !== node.id) {
+              kill.add(`${lhs}:${defNodeId}`);
+            }
+          }
+        }
       }
     }
 

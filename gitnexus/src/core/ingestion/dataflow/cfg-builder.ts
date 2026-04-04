@@ -368,11 +368,10 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
       const catchId = freshId();
       s.nodes.push({ id: catchId, node: catchNode, basicBlock: [catchNode.text.trim().split('\n')[0]], blockNumber: s.nextBlockNumber++ });
       s.edges.push({ from: tryId, to: catchId, type: 'CATCH' });
-      // THROW edges from try body to this catch
-      for (const n of state.nodes) {
-        if (n.id !== tryId) {
-          const prevNode = state.nodes[state.nodes.findIndex(x => x.id === n.id) - 1];
-          // mark THROW edges at throw statements already added during walk
+      // THROW edges from throw statements in try body to this catch
+      for (const n of s.nodes) {
+        if (n.node.type === 'throw_statement') {
+          s.edges.push({ from: n.id, to: catchId, type: 'THROW' });
         }
       }
       s.edges.push({ from: tryId, to: catchId, type: 'CATCH' });

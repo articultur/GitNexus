@@ -1,6 +1,6 @@
 # GitNexus 项目质量评估报告
 
-> 评估时间: 2026-04-03
+> 评估时间: 2026-04-04
 > 评估范围: gitnexus/ (CLI/MCP 核心) + gitnexus-web/ (Web UI)
 
 ---
@@ -9,19 +9,15 @@
 
 | 测试类型 | 数量 | 状态 |
 |---------|------|------|
-| **单元测试** | 2,656 passed / 1 skipped | ✅ 健康 |
-| **集成测试** | 2,057 passed / 45 skipped / 1 error | ⚠️ 有 1 个错误 |
+| **单元+集成** | 5,091 passed / 60 skipped / 0 failures | ✅ 健康 |
 | **E2E 测试** | Playwright 5 tests | ⚠️ 需要服务运行 |
 | **Web UI 单元** | ~200 tests | 待验证 |
 
 ### 问题
 
-- **TypeScript 编译错误**: `local-backend.ts:583` 有类型不兼容问题
-  ```
-  Type 'string' is not assignable to type '"tree-sitter" | "standalone"'
-  ```
+- **TypeScript 编译**: ✅ 干净，0 errors
 
-- **集成测试 1 个错误**: Worker 意外退出 (vitest-pool fork 问题，环境相关)
+- **间歇性测试失败**: LadybugDB lock file 竞争（`/var/folders/.../lbug`）导致部分集成测试偶发失败，重跑可恢复
 
 ---
 
@@ -65,7 +61,6 @@
 - ✅ **文档齐全** - ARCHITECTURE.md, AGENTS.md, GUARDRAILS.md
 
 ### 问题
-- ❌ **TypeScript 编译错误** - 1 处类型不兼容
 - ⚠️ **低测试覆盖** - storage 模块仅 37%
 - ⚠️ **未使用 ESLint/Prettier** - 代码风格依赖人工
 - ⚠️ **worker-pool 未测试** - parse-worker 0% 覆盖
@@ -133,21 +128,20 @@ fix(objective-c): wire taint config and harden header language detection
 
 ## 9. 问题汇总
 
-### 🔴 必须修复
-1. **TypeScript 编译错误** - `local-backend.ts:583` 类型不兼容
-
 ### 🟡 建议改进
 1. **提高 storage/ 模块测试覆盖** (当前 37%)
 2. **embedder.ts 覆盖率过低** (21%)
 3. **parse-worker.ts 未启用测试** (0%)
 4. **数据流分析未产品化** - taint engine 未在 MCP 输出使用
+5. **间歇性测试失败** - LadybugDB lock 竞争，建议隔离测试环境
 
 ### 🟢 已做好的
-1. 单元测试覆盖率充足
+1. 单元+集成测试 5,091 passed，覆盖充足
 2. 依赖安全 (0 vulnerabilities)
-3. 文档完善
-4. CI/CD 流程成熟
-5. 多语言支持 (43 种)
+3. TypeScript 编译干净
+4. 文档完善
+5. CI/CD 流程成熟
+6. 多语言支持 (43 种)
 
 ---
 

@@ -357,16 +357,17 @@ function calculateConfidence(
  * Extract variable name from a statement.
  * For "x = userInput()", returns "x".
  * For "userInput()", returns "userInput".
+ * For "obj.method()", returns "obj.method" (captures full member expression).
  */
 function extractVariable(stmt: string): string {
   // Handle assignment patterns: "x = func()" or "let x = func()"
-  const assignMatch = stmt.match(/^\s*(?:let|const|var)?\s*(\w+)\s*=/);
+  const assignMatch = stmt.match(/^\s*(?:let|const|var)?\s*([\w$]+(?:\.[\w$]+)*)\s*=/);
   if (assignMatch) {
     return assignMatch[1];
   }
 
-  // Handle direct function call: "func()"
-  const callMatch = stmt.match(/^\s*(\w+)\s*\(/);
+  // Handle direct function call: "func()" or "obj.method()" or "obj.sub.method()"
+  const callMatch = stmt.match(/^\s*([\w$]+(?:\.[\w$]+)*)\s*\(/);
   if (callMatch) {
     return callMatch[1];
   }

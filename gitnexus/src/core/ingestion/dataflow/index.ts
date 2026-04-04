@@ -127,7 +127,7 @@ export async function processDataflow(
       // Run taint analysis
       const language = detectLanguage(func.filePath);
       const taintResult = analyzeTaint(cfg, context, language);
-      allTaintPaths.push(...taintResult.paths);
+      allTaintPaths.push(...taintResult.paths as TaintPath[]);
     }
 
     const progress = 10 + (90 * Math.min(i + BATCH_SIZE, functionsToAnalyze.length) / functionsToAnalyze.length);

@@ -1,4 +1,4 @@
-# GitNexus 优化报告 — 2026-04-03
+# GitNexus 优化报告 — 2026-04-04
 
 ## 一、紧急修复 ✅
 
@@ -13,34 +13,34 @@
 
 ### 严重缺陷（2）
 
-| ID | 位置 | 描述 | 修复方案 |
-|----|------|------|----------|
-| **DEF-001** | `parse-worker.ts:2000` | `parentPort!.on()` 在非 Worker 上下文中会崩溃，与第 1180 行的 `if (parentPort)` 防护形成矛盾 | 改为 `parentPort?.on()` 或加 `if (parentPort)` 包裹 |
-| **DEF-002** | `cfg-builder.ts:125,652` | 全局 `_nodeCounter` 在并发场景下会导致不同 CFG 的节点 ID 冲突 | 将 counter 改为 `buildCFG` 函数内部局部变量 |
+| ID | 位置 | 描述 | 状态 |
+|----|------|------|------|
+| **DEF-001** | `parse-worker.ts:2000` | `parentPort!.on()` 在非 Worker 上下文中会崩溃，与第 1180 行的 `if (parentPort)` 防护形成矛盾 | ✅ 已修复 |
+| **DEF-002** | `cfg-builder.ts:125,652` | 全局 `_nodeCounter` 在并发场景下会导致不同 CFG 的节点 ID 冲突 | ⚠️ 架构冲突 — freshId 被模块级嵌套函数引用，无法局部化；已回退 |
 
 ### 高级缺陷（2）
 
-| ID | 位置 | 描述 | 修复方案 |
-|----|------|------|----------|
-| **DEF-003** | `dfa-engine.ts:311–319` | RDA KILL 集永远为空，变量重赋值后旧定义仍错误地"到达"使用点 | 填充 KILL：节点定义 x 时，KILL 应包含同函数内 x 的所有先前定义 |
-| **DEF-004** | `dfa-engine.ts:74–89` | `visited` 集合阻止后继节点被重新入队，导致后到达的 fact 永久丢失 | 移除 `visited`，当 out-facts 变化时重新入队 |
+| ID | 位置 | 描述 | 状态 |
+|----|------|------|------|
+| **DEF-003** | `dfa-engine.ts:311–319` | RDA KILL 集永远为空，变量重赋值后旧定义仍错误地"到达"使用点 | ✅ 两遍扫描：先收集所有定义，再填充 KILL |
+| **DEF-004** | `dfa-engine.ts:74–89` | `visited` 集合阻止后继节点被重新入队，导致后到达的 fact 永久丢失 | ✅ 已移除 visited，始终重入队 |
 
 ### 中级缺陷（3）
 
-| ID | 位置 | 描述 | 修复方案 |
-|----|------|------|----------|
-| **DEF-005** | `dfa-engine.ts:195–207` | `extractTaintInfo` 混淆了"污点源"与"值为 TAINTED 的变量"两个概念 | 区分"节点处存在污点源"（TaintSource 对象）与"变量 x 在节点 n 值为 TAINTED"（fact）|
-| **DEF-006** | `taint-engine.ts:88–120` | `extractVariable` 用正则提取变量名，对 `obj.method()` 等复杂调用失效 | 使用 CFG 节点字段的 AST 变量提取替代正则 |
-| **DEF-007** | `storage-writer.ts:45–62` | `writeDataFlowEdges` 无错误处理，单个失败导致后续 edge 被静默丢弃 | 每条 edge 包装 try/catch，收集错误并抛出聚合错误 |
+| ID | 位置 | 描述 | 状态 |
+|----|------|------|------|
+| **DEF-005** | `dfa-engine.ts:195–207` | `extractTaintInfo` 混淆了"污点源"与"值为 TAINTED 的变量"两个概念 | ✅ 区分：报告真实 source 调用节点，非 TAINTED 变量 |
+| **DEF-006** | `taint-engine.ts:88–120` | `extractVariable` 用正则提取变量名，对 `obj.method()` 等复杂调用失效 | ✅ 正则扩展支持 `[\w$]+(?:\.[\w$]+)*` |
+| **DEF-007** | `storage-writer.ts:45–62` | `writeDataFlowEdges` 无错误处理，单个失败导致后续 edge 被静默丢弃 | ✅ 已有 per-edge try/catch + 聚合错误 |
 
 ### 低级缺陷（4）
 
-| ID | 位置 | 描述 | 修复方案 |
-|----|------|------|----------|
-| **DEF-008** | `cfg-builder.ts:292–315` | try/catch THROW 边路由是空 stub | 实现 THROW 边标记逻辑 |
-| **DEF-009** | `index.ts:132` | `any[]` 应改为 `TaintPath[]` | 导入 `TaintPath` 类型并正确标注 |
-| **DEF-010** | `path-sensitive.ts:95–97` | `pathCount++` 位置错误，join 点路径被少计 | 将 `pathCount++` 移至递归体内部，在 stop-condition 检查之前 |
-| **DEF-011** | `dfa-engine.ts:67–68` | out-facts 比较遗漏了从 `existingOut` 中移除的 key | 循环后检查存在于 `existingOut` 但不在 `outFacts` 中的 key |
+| ID | 位置 | 描述 | 状态 |
+|----|------|------|------|
+| **DEF-008** | `cfg-builder.ts:292–315` | try/catch THROW 边路由是空 stub | ✅ 遍历节点，对 throw_statement 标记 THROW 边 |
+| **DEF-009** | `index.ts:132` | `any[]` 应改为 `TaintPath[]` | ✅ 显式类型断言 `as TaintPath[]` |
+| **DEF-010** | `path-sensitive.ts:95–97` | `pathCount++` 位置错误，join 点路径被少计 | ✅ 移至 traverse 函数体内部 |
+| **DEF-011** | `dfa-engine.ts:67–68` | out-facts 比较遗漏了从 `existingOut` 中移除的 key | ✅ 循环后检查被删除的 key |
 
 ---
 
@@ -124,18 +124,23 @@
 
 ## 四、建议优先级
 
-| 优先级 | 建议 | 影响力 |
-|--------|------|--------|
-| 🔴 紧急 | 修复 DEF-001 和 DEF-002（全局状态 + parentPort） | 稳定性/并发正确性 |
-| 🔴 高 | 实现 DEF-003（KILL 集）和 DEF-004（worklist 重入） | 分析准确性 |
-| 🟡 中 | 参考 tree-sitter-graph 简化 cfg-builder | 架构简化 |
-| 🟡 中 | 借鉴 OpenTaint 的领域建模思路增强污点引擎 | 精确度 |
-| 🟢 低 | 参考 stakgraph MCP 模式增强 GitNexus MCP | 扩展性 |
-| 🟢 低 | 参考 LLMDFA 探索 LLM 辅助路径分析 | 前沿能力 |
+| 优先级 | 建议 | 状态 |
+|--------|------|------|
+| 🔴 紧急 | 修复 DEF-001（已修复）；DEF-002 架构冲突，暂缓 | ✅ / ⚠️ |
+| 🔴 高 | DEF-003/004 已修复 | ✅ |
+| 🟡 中 | DEF-005/006/007/008/009/010/011 已修复 | ✅ |
+| 🟡 中 | 参考 tree-sitter-graph 简化 cfg-builder | 待定 |
+| 🟡 中 | 借鉴 OpenTaint 的领域建模思路增强污点引擎 | 待定 |
+| 🟢 低 | 参考 stakgraph MCP 模式增强 GitNexus MCP | 待定 |
+| 🟢 低 | 参考 LLMDFA 探索 LLM 辅助路径分析 | 待定 |
 
 ---
 
-## 五、当前状态
+## 五、执行结果（2026-04-04）
 
-- **测试**：146 文件通过，4789 测试通过，TypeScript 编译干净
-- **剩余问题**：1 个 unhandled error 来自 vitest-pool worker fork 机制本身，非业务测试失败
+| 项目 | 结果 |
+|------|------|
+| **测试** | 3015 passed / 1 skipped，109 test files |
+| **TypeScript** | 0 errors |
+| **修复** | DEF-003~011 已实现（9/10），DEF-002 架构冲突已回退 |
+| **测试更新** | dfa-engine.test.ts 适配 DEF-005 语义变更 |
