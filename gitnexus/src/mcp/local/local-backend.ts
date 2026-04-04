@@ -159,10 +159,32 @@ export const IMPACT_RELATION_CONFIDENCE: Readonly<Record<string, number>> = {
 const confidenceForRelType = (relType: string | undefined): number =>
   IMPACT_RELATION_CONFIDENCE[relType ?? ''] ?? 0.5;
 
+/** Filter and normalize relation types for impact analysis. Returns defaults if none survive. */
+const filterRelationTypes = (raw?: string[]): string[] => {
+  const filtered = raw && raw.length > 0
+    ? raw.filter((t) => VALID_RELATION_TYPES.has(t))
+    : [];
+  return filtered.length > 0 ? filtered : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
+};
+
 /** Structured error logging for query failures — replaces empty catch blocks */
 function logQueryError(context: string, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
   console.error(`GitNexus [${context}]: ${msg}`);
+}
+
+/** Shared params for impact analysis methods */
+interface ImpactParams {
+  target: string;
+  direction: 'upstream' | 'downstream';
+  maxDepth?: number;
+  relationTypes?: string[];
+  includeTests?: boolean;
+  minConfidence?: number;
+  /** When false, omit the `evidence` block from the response. Default: true */
+  include_evidence?: boolean;
+  /** When true, include source code content for each impacted symbol. */
+  include_content?: boolean;
 }
 
 export interface CodebaseContext {
@@ -1076,7 +1098,9 @@ export class LocalBackend {
               endLine: label !== 'File' ? (nodeRow.endLine ?? nodeRow[3]) : undefined,
             });
           }
-        } catch {}
+        } catch (e) {
+          logQueryError('semanticSearch:node-lookup', e);
+        }
       }
 
       return results;
@@ -2108,18 +2132,7 @@ export class LocalBackend {
 
   private async impact(
     repo: RepoHandle,
-    params: {
-      target: string;
-      direction: 'upstream' | 'downstream';
-      maxDepth?: number;
-      relationTypes?: string[];
-      includeTests?: boolean;
-      minConfidence?: number;
-      /** When false, omit the `evidence` block from the response. Default: true */
-      include_evidence?: boolean;
-      /** When true, include source code content for each impacted symbol. */
-      include_content?: boolean;
-    },
+    params: ImpactParams,
   ): Promise<any> {
     try {
       return await this._impactImpl(repo, params);
@@ -2138,28 +2151,14 @@ export class LocalBackend {
 
   private async _impactImpl(
     repo: RepoHandle,
-    params: {
-      target: string;
-      direction: 'upstream' | 'downstream';
-      maxDepth?: number;
-      relationTypes?: string[];
-      includeTests?: boolean;
-      minConfidence?: number;
-      include_evidence?: boolean;
-      include_content?: boolean;
-    },
+    params: ImpactParams,
   ): Promise<any> {
     await this.ensureInitialized(repo.id);
 
     const { target, direction } = params;
     const include_evidence = params.include_evidence ?? true;
     const maxDepth = params.maxDepth || 3;
-    const rawRelTypes =
-      params.relationTypes && params.relationTypes.length > 0
-        ? params.relationTypes.filter((t) => VALID_RELATION_TYPES.has(t))
-        : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
-    const relationTypes =
-      rawRelTypes.length > 0 ? rawRelTypes : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
+    const relationTypes = filterRelationTypes(params.relationTypes);
     const includeTests = params.includeTests ?? false;
     const minConfidence = params.minConfidence ?? 0;
     const include_content = params.include_content ?? false;
@@ -2273,8 +2272,7 @@ export class LocalBackend {
     },
   ): Promise<any> {
     const { maxDepth, relationTypes, includeTests, minConfidence, include_evidence, include_content } = opts;
-    const relTypeFilter = relationTypes.map((t) => `'${t}'`).join(', ');
-    const confidenceFilter = minConfidence > 0 ? ` AND r.confidence >= ${minConfidence}` : '';
+    const effectiveMinConf = minConfidence > 0 ? minConfidence : 0;
 
     const symId = sym.id || sym[0];
 
@@ -2338,15 +2336,18 @@ export class LocalBackend {
     for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
       const nextFrontier: string[] = [];
 
-      // Batch frontier nodes into a single Cypher query per depth level
-      const idList = frontier.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
-      const query =
+      // Batch frontier nodes into a single parameterized Cypher query per depth level
+      const baseQuery =
         direction === 'upstream'
-          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN [${idList}] AND r.type IN [${relTypeFilter}]${confidenceFilter} RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`
-          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN [${idList}] AND r.type IN [${relTypeFilter}]${confidenceFilter} RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`;
+          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN $ids AND r.type IN $relTypes AND r.confidence >= $minConf RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`
+          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN $ids AND r.type IN $relTypes AND r.confidence >= $minConf RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`;
 
       try {
-        const related = await executeQuery(repo.id, query);
+        const related = await executeParameterized(repo.id, baseQuery, {
+          ids: frontier,
+          relTypes: relationTypes,
+          minConf: effectiveMinConf,
+        });
 
         for (const rel of related) {
           const relId = rel.id || rel[1];
@@ -2781,12 +2782,7 @@ export class LocalBackend {
     const symType =
       typeof labelRaw === 'string' && labelRaw.trim().length > 0 ? labelRaw.trim() : '';
 
-    const rawRelTypes =
-      opts.relationTypes && opts.relationTypes.length > 0
-        ? opts.relationTypes.filter((t) => VALID_RELATION_TYPES.has(t))
-        : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
-    const relationTypes =
-      rawRelTypes.length > 0 ? rawRelTypes : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
+    const relationTypes = filterRelationTypes(opts.relationTypes);
 
     try {
       return await this._runImpactBFS(repo, sym, symType, dir, {
