@@ -1022,7 +1022,8 @@ export class LocalBackend {
             bm25Score: bm25Result.score,
           });
         }
-      } catch {
+      } catch (e) {
+        logQueryError('bm25Search:symbol-lookup', e);
         const fileName = fullPath.split('/').pop() || fullPath;
         results.push({
           name: fileName,
@@ -1256,7 +1257,8 @@ export class LocalBackend {
           symbolCount: c.symbolCount || c[4],
         }));
         result.clusters = this.aggregateClusters(rawClusters).slice(0, limit);
-      } catch {
+      } catch (e) {
+        logQueryError('overview:clusters', e);
         result.clusters = [];
       }
     }
@@ -1279,7 +1281,8 @@ export class LocalBackend {
           processType: p.processType || p[3],
           stepCount: p.stepCount || p[4],
         }));
-      } catch {
+      } catch (e) {
+        logQueryError('overview:processes', e);
         result.processes = [];
       }
     }
@@ -1455,8 +1458,8 @@ export class LocalBackend {
           { symId },
         );
         isClassLike = typeCheck.length > 0;
-      } catch {
-        /* not a Class/Interface node */
+      } catch (e) {
+        logQueryError('context:class-type-check', e);
       }
     } else if (!isClassLike) {
       isClassLike = symRawType === 'Class' || symRawType === 'Interface';
@@ -2225,6 +2228,7 @@ export class LocalBackend {
       }
     } catch {
       /* fall through to unlabeled match */
+      logQueryError('impact:target-resolution-labeled', new Error('Labeled match failed, falling back'));
     }
 
     // Fall back to unlabeled match for any other node type
@@ -2754,7 +2758,8 @@ export class LocalBackend {
     try {
       await this.refreshRepos();
       await this.ensureInitialized(repoId);
-    } catch {
+    } catch (e) {
+      logQueryError('impactByUid:init', e);
       return null;
     }
 
@@ -2979,8 +2984,8 @@ export class LocalBackend {
         }
         list.push(name);
       }
-    } catch {
-      /* no ENTRY_POINT_OF edges yet */
+    } catch (e) {
+      logQueryError('fetchLinkedFlowsBatch', e);
     }
     return result;
   }
