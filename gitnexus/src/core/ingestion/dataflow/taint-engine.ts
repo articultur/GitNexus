@@ -16,9 +16,11 @@ import type {
   TaintSink,
   TaintStep,
   Sanitizer,
+  CFGNode,
 } from './types.js';
 import type { CFG } from './cfg-builder.js';
 import type { DFAContext } from './dfa-engine.js';
+import type { SyntaxNode } from 'tree-sitter';
 
 // ── Result Types ───────────────────────────────────────────────────────────
 
@@ -71,8 +73,9 @@ export function analyzeTaint(
 
   // Scan CFG for sources, sinks, and sanitizers using improved pattern matching
   // Uses function call patterns for better precision (reduces false positives from variable names)
-  for (const [nodeId, node] of cfg.nodes) {
-    for (const stmt of node.basicBlock) {
+  for (const [nodeId, cfgNode] of cfg.nodes) {
+    const astNode = getAstNode(cfgNode);
+    for (const stmt of cfgNode.basicBlock) {
       // Skip comments to reduce false positives
       const trimmed = stmt.trim();
       if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('/*')) {
@@ -84,7 +87,7 @@ export function analyzeTaint(
         if (hasFunctionCall(stmt, pattern)) {
           sources.push({
             nodeId,
-            variable: extractVariable(stmt),
+            variable: extractVariable(stmt, astNode),
             kind: 'source:' + pattern,
             description: 'Taint source: ' + pattern + '()',
           });
@@ -97,7 +100,7 @@ export function analyzeTaint(
         if (hasFunctionCall(stmt, pattern)) {
           sinks.push({
             nodeId,
-            variable: extractVariable(stmt),
+            variable: extractVariable(stmt, astNode),
             kind: 'sink:' + pattern,
             description: 'Taint sink: ' + pattern + '()',
           });
@@ -110,7 +113,7 @@ export function analyzeTaint(
         if (hasFunctionCall(stmt, pattern)) {
           sanitizers.push({
             nodeId,
-            variable: extractVariable(stmt),
+            variable: extractVariable(stmt, astNode),
             description: 'Sanitizer: ' + pattern + '()',
           });
           break;
@@ -210,7 +213,15 @@ function findVariableAwareTaintPath(
     if (!node) continue;
 
     const stmt = node.basicBlock.join(' ');
-    const updatedTaint = transferTaint(stmt, current.tainted, sourcePatterns, sanitizerPatterns);
+    const astNode = getAstNode(node);
+    const updatedTaint = transferTaintWithContext(
+      stmt,
+      astNode,
+      current.tainted,
+      sourcePatterns,
+      sanitizerPatterns,
+      cfg,
+    );
 
     const nodeSanitizers = sanitizers.filter((s) => s.nodeId === current.nodeId);
     const updatedSanitizers = [...current.sanitizersInPath, ...nodeSanitizers];
@@ -241,11 +252,18 @@ function findVariableAwareTaintPath(
   return undefined;
 }
 
-function transferTaint(
+/**
+ * Transfer taint with inter-procedural context.
+ * When a function call is encountered and the callee is in the CFG,
+ * inline the callee's effect on taint.
+ */
+function transferTaintWithContext(
   stmt: string,
+  astNode: SyntaxNode | undefined,
   tainted: Set<string>,
   sourcePatterns: Set<string>,
   sanitizerPatterns: Set<string>,
+  cfg: CFG,
 ): Set<string> {
   const next = new Set<string>(tainted);
   const lhs = extractAssignedVariable(stmt);
@@ -266,6 +284,27 @@ function transferTaint(
     return next;
   }
 
+  // Check for function call and inline callee effect if in CFG (inter-procedural tracking)
+  if (lhs && hasFunctionCall(stmt, '')) {
+    // Extract callee name from AST if available
+    const calleeName = astNode ? extractCalleeFromAst(astNode) : extractCalleeFromText(stmt);
+    if (calleeName && cfg.nodes.has(calleeName)) {
+      // Callee is in CFG - inline its taint effect
+      const calleeNode = cfg.nodes.get(calleeName);
+      if (calleeNode) {
+        const calleeTaint = inlineCalleeTaint(calleeNode, tainted);
+        for (const t of calleeTaint) {
+          next.add(t);
+        }
+      }
+    }
+    // Also propagate through parameters: if y = foo(x) and x is tainted, y is tainted
+    if (usesAnyVariable(stmt, tainted)) {
+      next.add(lhs);
+    }
+    return next;
+  }
+
   // Assignment propagation: y = x / y = foo(x)
   if (lhs) {
     if (usesAnyVariable(stmt, tainted, lhs)) {
@@ -279,6 +318,42 @@ function transferTaint(
 
   // Non-assignment calls can represent parameter passing but do not create locals.
   return next;
+}
+
+/**
+ * Inline the callee's effect on taint - if callee returns a tainted value,
+ * propagate that taint through the call.
+ */
+function inlineCalleeTaint(calleeNode: CFGNode, tainted: Set<string>): Set<string> {
+  const result = new Set<string>();
+  for (const stmt of calleeNode.basicBlock) {
+    const lhs = extractAssignedVariable(stmt);
+    if (lhs && hasAnyFunctionCall(stmt, new Set(['userInput', 'getenv', 'getParameter', 'request']))) {
+      result.add(lhs);
+    }
+    // Propagate through assignments
+    if (lhs && usesAnyVariable(stmt, tainted)) {
+      result.add(lhs);
+    }
+  }
+  return result;
+}
+
+/**
+ * Extract callee name from AST node (AST-aware).
+ */
+function extractCalleeFromAst(node: SyntaxNode): string | null {
+  const callee = childByType(node, 'function', 'callee', 'method');
+  return extractCalleeName(callee);
+}
+
+/**
+ * Extract callee name from statement text (fallback).
+ */
+function extractCalleeFromText(stmt: string): string | null {
+  // Match "obj.method()" or "func()"
+  const match = stmt.match(/([\w$]+(?:\.[\w$]+)*)\s*\(/);
+  return match?.[1] ?? null;
 }
 
 function sinkUsesTaintedInput(stmt: string, sinkPatterns: Set<string>, tainted: Set<string>): boolean {
@@ -354,12 +429,31 @@ function calculateConfidence(
 }
 
 /**
- * Extract variable name from a statement.
+ * Extract variable name from a statement using AST.
+ * Falls back to regex if AST node is not available.
+ *
  * For "x = userInput()", returns "x".
  * For "userInput()", returns "userInput".
  * For "obj.method()", returns "obj.method" (captures full member expression).
  */
-function extractVariable(stmt: string): string {
+function extractVariable(stmt: string, astNode?: unknown): string {
+  // AST-based extraction: traverse children by type
+  if (astNode && typeof astNode === 'object' && astNode !== null) {
+    const node = astNode as SyntaxNode;
+    // For assignment expressions: left side is the variable
+    // Common assignment node types across languages
+    const lhs = childByType(node, 'left', 'left_expression', 'identifier', 'member_expression', 'variable_name');
+    if (lhs) {
+      return extractIdentifierText(lhs) || extractIdentifierText(childByType(node, 'right')) || stmt;
+    }
+    // For call expressions: the function being called
+    const callee = childByType(node, 'function', 'callee', 'method');
+    if (callee) {
+      return extractIdentifierText(callee) || stmt;
+    }
+  }
+
+  // Fallback to regex-based extraction
   // Handle assignment patterns: "x = func()" or "let x = func()"
   const assignMatch = stmt.match(/^\s*(?:let|const|var)?\s*([\w$]+(?:\.[\w$]+)*)\s*=/);
   if (assignMatch) {
@@ -373,6 +467,63 @@ function extractVariable(stmt: string): string {
   }
 
   return stmt.trim().split(' ')[0] || stmt;
+}
+
+/**
+ * Get the first child node matching one of the given type names (by type or field name).
+ * Mirrors the objective-c.ts pattern: traverse children checking type.
+ */
+function childByType(node: SyntaxNode, ...types: string[]): SyntaxNode | null {
+  for (const child of node.children) {
+    if (types.includes(child.type)) {
+      return child;
+    }
+  }
+  // Also check field names
+  for (const type of types) {
+    const fieldChild = node.childForFieldName(type);
+    if (fieldChild) return fieldChild;
+  }
+  return null;
+}
+
+/**
+ * Extract text from an identifier node, handling member expressions recursively.
+ * For "obj.method", returns "obj.method".
+ */
+function extractIdentifierText(node: SyntaxNode | null): string | null {
+  if (!node) return null;
+  if (node.type === 'identifier' || node.type === 'property_identifier' ||
+      node.type === 'simple_identifier' || node.type === 'field_identifier') {
+    return node.text;
+  }
+  if (node.type === 'member_expression') {
+    const obj = childByType(node, 'object', 'expression');
+    const prop = childByType(node, 'property', 'field');
+    const objText = extractIdentifierText(obj);
+    const propText = extractIdentifierText(prop);
+    if (objText && propText) return `${objText}.${propText}`;
+  }
+  return node.text || null;
+}
+
+/**
+ * Extract function name from a call expression AST node.
+ */
+function extractCalleeName(node: SyntaxNode | null): string | null {
+  if (!node) return null;
+  if (node.type === 'identifier') return node.text;
+  if (node.type === 'member_expression') {
+    return extractIdentifierText(node);
+  }
+  return null;
+}
+
+/**
+ * Get the AST node for a CFG node, if available.
+ */
+function getAstNode(node: CFGNode): SyntaxNode | undefined {
+  return node.astNode as SyntaxNode | undefined;
 }
 
 /**

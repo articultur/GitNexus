@@ -687,6 +687,7 @@ export function buildCFG(
       successors: [...new Set(succs)],
       blockNumber: n.blockNumber,
       statementType,
+      astNode: n.node,
     };
   });
 

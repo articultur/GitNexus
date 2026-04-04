@@ -64,6 +64,7 @@ export interface CFGNode {
   blockNumber?: number;   // Basic block number
   statementType?: string; // 'if' | 'while' | 'for' | etc.
   label?: string;         // Display text
+  astNode?: unknown;       // SyntaxNode from tree-sitter
 }
 
 export interface CFGEdge {
