@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import {
   getGroupDir,
   getGroupsBaseDir,
+  getDefaultGitnexusDir,
   writeContractRegistry,
   readContractRegistry,
   listGroups,
@@ -22,6 +23,37 @@ describe('Group storage', () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('getDefaultGitnexusDir returns GITNEXUS_HOME or ~/.gitnexus', () => {
+    // Without env var, returns ~/.gitnexus
+    const dir = getDefaultGitnexusDir();
+    expect(dir).toMatch(/[/\\]\.gitnexus$/);
+    // With env var, returns that path
+    const oldHome = process.env.GITNEXUS_HOME;
+    process.env.GITNEXUS_HOME = tmpDir;
+    expect(getDefaultGitnexusDir()).toBe(tmpDir);
+    if (oldHome !== undefined) process.env.GITNEXUS_HOME = oldHome;
+    else delete process.env.GITNEXUS_HOME;
+  });
+
+  it('createGroupDir with force:true overwrites existing group', async () => {
+    // First creation
+    const dir1 = await createGroupDir(tmpDir, 'testforce');
+    expect(fs.existsSync(path.join(dir1, 'group.yaml'))).toBe(true);
+
+    // Force overwrite should not throw
+    const dir2 = await createGroupDir(tmpDir, 'testforce', true);
+    expect(dir2).toBe(dir1);
+    // Template content preserved after overwrite
+    const content = fs.readFileSync(path.join(dir1, 'group.yaml'), 'utf-8');
+    expect(content).toContain('version: 1');
+    expect(content).toContain('testforce');
+  });
+
+  it('createGroupDir without force throws on existing group', async () => {
+    await createGroupDir(tmpDir, 'existing');
+    await expect(createGroupDir(tmpDir, 'existing')).rejects.toThrow(/already exists/);
   });
 
   it('getGroupsBaseDir returns ~/.gitnexus/groups/', () => {

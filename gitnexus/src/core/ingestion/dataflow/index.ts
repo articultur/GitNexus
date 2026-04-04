@@ -14,8 +14,12 @@ import type { KnowledgeGraph } from '../../graph/types.js';
 import type { ResolutionContext } from '../resolution-context.js';
 import type { CommunityMembership } from '../community-processor.js';
 import { buildCFG, buildCFGFromStatements, cfgToResult, parseStatements } from './cfg-builder.js';
+import { buildCFGFromTSG, isTSGAvailable } from './cfg-from-tsg.js';
 import { analyzeForward, createDefaultContext } from './dfa-engine.js';
 import { analyzeTaint } from './taint-engine.js';
+import { loadParser, isLanguageAvailable } from '../../tree-sitter/parser-loader.js';
+import type Parser from 'tree-sitter';
+import type { SupportedLanguages } from 'gitnexus-shared';
 import {
   writeDataFlowEdges,
   writeTaintPaths,
@@ -215,6 +219,9 @@ export function parseDataflowOptions(flags: Record<string, unknown>): Partial<Da
 /**
  * Phase 12 (CFG): Build Control Flow Graphs for all functions and write CFG_EDGE edges.
  *
+ * Routes to buildCFGFromTSG (tree-sitter-graph DSL) when available,
+ * falling back to the legacy buildCFGFromStatements (text-based).
+ *
  * @param knowledgeGraph - The knowledge graph
  * @param onProgress - Progress callback
  */
@@ -236,6 +243,13 @@ export async function processCFG(
     }
   });
 
+  // Probe TSG availability once (check CLI + DSL files)
+  let tsgAvailable: { cli: boolean; dsl: Record<string, boolean> } | null = null;
+  try { tsgAvailable = isTSGAvailable(); } catch { /* TSG not installed */ }
+
+  const useTSG = tsgAvailable !== null && tsgAvailable.cli;
+  const parser = useTSG ? await loadParser() : null;
+
   onProgress?.(`Building CFGs for ${functions.length} functions...`, 10);
 
   const BATCH_SIZE = 100;
@@ -243,6 +257,23 @@ export async function processCFG(
     const batch = functions.slice(i, i + BATCH_SIZE);
 
     for (const func of batch) {
+      const lang = detectLanguage(func.filePath) as SupportedLanguages;
+      const source = func.content.join('\n');
+
+      if (useTSG && isLanguageAvailable(lang) && tsgAvailable?.dsl[lang.toLowerCase()]) {
+        try {
+          const { loadLanguage } = await import('../../tree-sitter/parser-loader.js');
+          await loadLanguage(lang);
+          const tree = parser!.parse(source);
+          const cfgResult = buildCFGFromTSG({ rootNode: tree.rootNode }, source, lang, func.id);
+          writeCFGEdges(knowledgeGraph, cfgResult);
+          continue;
+        } catch (err) {
+          // TSG failed (CLI error, parse error, etc.) — fall through to legacy
+          // console.warn(`TSG failed for ${func.id}, falling back:`, err);
+        }
+      }
+      // Legacy path
       const statements = parseStatements(func.id, func.content);
       const cfg = buildCFGFromStatements(func.id, statements);
       writeCFGEdges(knowledgeGraph, cfgToResult(cfg));
