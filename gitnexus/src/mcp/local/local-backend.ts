@@ -2228,9 +2228,9 @@ export class LocalBackend {
         const priorityToLabel = ['Class', 'Interface', 'Function', 'Method', 'Constructor'];
         symType = priorityToLabel[best.priority ?? best[3]] ?? '';
       }
-    } catch {
-      /* fall through to unlabeled match */
-      logQueryError('impact:target-resolution-labeled', new Error('Labeled match failed, falling back'));
+    } catch (e) {
+      // Log the real error before falling through to unlabeled match
+      logQueryError('impact:target-resolution-labeled', e);
     }
 
     // Fall back to unlabeled match for any other node type
