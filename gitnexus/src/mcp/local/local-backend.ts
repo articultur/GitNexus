@@ -29,6 +29,7 @@ import {
 import { SupportedLanguages } from 'gitnexus-shared';
 import { isLanguageAvailable } from '../../core/tree-sitter/parser-loader.js';
 import { GroupService, type GroupToolPort } from '../../core/group/service.js';
+import { resolveLLMConfig, callLLM } from '../../core/wiki/llm-client.js';
 // AI context generation is CLI-only (gitnexus analyze)
 // import { generateAIContextFiles } from '../../cli/ai-context.js';
 
@@ -702,6 +703,10 @@ export class LocalBackend {
         return this.toolMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
+      case 'shortest_path':
+        return this.shortestPath(repo, params);
+      case 'get_code':
+        return this.getCode(repo, params);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
@@ -726,6 +731,7 @@ export class LocalBackend {
       limit?: number;
       max_symbols?: number;
       include_content?: boolean;
+      method?: string;
     },
   ): Promise<any> {
     if (!params.query?.trim()) {
@@ -738,16 +744,30 @@ export class LocalBackend {
     const maxSymbolsPerProcess = params.max_symbols || 10;
     const includeContent = params.include_content ?? false;
     const searchQuery = params.query.trim();
+    const method = params.method ?? 'hybrid';
 
-    // Step 1: Run hybrid search to get matching symbols
+    // Step 1: Run search based on method
     const searchLimit = processLimit * maxSymbolsPerProcess; // fetch enough raw results
-    const [bm25SearchResult, semanticResults] = await Promise.all([
-      this.bm25Search(repo, searchQuery, searchLimit),
-      this.semanticSearch(repo, searchQuery, searchLimit),
-    ]);
+    let bm25Results: any[] = [];
+    let semanticResults: any[] = [];
+    let ftsUsed = false;
 
-    const bm25Results = bm25SearchResult.results;
-    const ftsUsed = bm25SearchResult.ftsUsed;
+    if (method === 'fulltext' || method === 'bm25') {
+      const bm25SearchResult = await this.bm25Search(repo, searchQuery, searchLimit);
+      bm25Results = bm25SearchResult.results;
+      ftsUsed = bm25SearchResult.ftsUsed;
+    } else if (method === 'vector' || method === 'semantic') {
+      semanticResults = await this.semanticSearch(repo, searchQuery, searchLimit);
+    } else {
+      // hybrid (default)
+      const [bm25SearchResult, semResults] = await Promise.all([
+        this.bm25Search(repo, searchQuery, searchLimit),
+        this.semanticSearch(repo, searchQuery, searchLimit),
+      ]);
+      bm25Results = bm25SearchResult.results;
+      ftsUsed = bm25SearchResult.ftsUsed;
+      semanticResults = semResults;
+    }
 
     // Merge via reciprocal rank fusion
     const scoreMap = new Map<string, { score: number; data: any }>();
@@ -3151,6 +3171,204 @@ export class LocalBackend {
     };
   }
 
+  /**
+   * Shortest path between two nodes via BFS on CodeRelation edges.
+   */
+  private async shortestPath(
+    repo: RepoHandle,
+    params: {
+      source_id: string;
+      target_id: string;
+      max_hops?: number;
+      relation_types?: string[];
+    },
+  ): Promise<any> {
+    await this.ensureInitialized(repo.id);
+
+    const { source_id, target_id, max_hops = 5, relation_types } = params;
+
+    if (!source_id || !target_id) {
+      return { error: 'source_id and target_id are required.' };
+    }
+
+    const relTypes = relation_types && relation_types.length > 0
+      ? relation_types
+      : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES', 'DATA_FLOW'];
+
+    type BFSEntry = { nodeId: string; path: string[]; edges: { sourceId: string; targetId: string; type: string; confidence: number | null }[] };
+    const visited = new Set<string>();
+    const queue: BFSEntry[] = [];
+
+    queue.push({ nodeId: source_id, path: [source_id], edges: [] });
+    visited.add(source_id);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+
+      if (current.path.length > max_hops) continue;
+
+      if (current.nodeId === target_id) {
+        const nodeDetails = await this.resolvePathNodes(repo.id, current.path);
+        return {
+          nodes: nodeDetails,
+          edges: current.edges,
+          hop_count: current.path.length - 1,
+        };
+      }
+
+      const expandQuery = `
+        MATCH (n {id: $nodeId})-[r:CodeRelation]->(target)
+        WHERE r.type IN $relTypes AND NOT target.id IN $visited
+        RETURN target.id AS targetId, r.type AS relType, r.confidence AS confidence
+      `;
+
+      try {
+        const rows = await executeParameterized(
+          repo.id,
+          expandQuery,
+          { nodeId: current.nodeId, relTypes, visited: Array.from(visited) },
+        );
+
+        for (const row of rows) {
+          const nextId: string = row.targetId ?? row[0];
+          if (visited.has(nextId)) continue;
+          visited.add(nextId);
+
+          queue.push({
+            nodeId: nextId,
+            path: [...current.path, nextId],
+            edges: [...current.edges, {
+              sourceId: current.nodeId,
+              targetId: nextId,
+              type: row.relType ?? row[1],
+              confidence: row.confidence ?? row[2] ?? null,
+            }],
+          });
+        }
+      } catch (e) {
+        logQueryError('shortestPath:expand', e);
+      }
+    }
+
+    return {
+      nodes: [],
+      edges: [],
+      hop_count: -1,
+      message: `No path found between ${source_id} and ${target_id} within ${max_hops} hops.`,
+    };
+  }
+
+  private async resolvePathNodes(repoId: string, nodeIds: string[]): Promise<any[]> {
+    const results: any[] = [];
+    for (const nodeId of nodeIds) {
+      const label = nodeId.includes(':') ? nodeId.split(':')[0] : 'Unknown';
+      if (!VALID_NODE_LABELS.has(label)) continue;
+      try {
+        const rows = await executeParameterized(
+          repoId,
+          `MATCH (n:\`${label}\` {id: $nodeId}) RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine LIMIT 1`,
+          { nodeId },
+        );
+        if (rows.length > 0) {
+          const r = rows[0];
+          results.push({
+            uid: r.id ?? r[0],
+            name: r.name ?? r[1],
+            kind: label,
+            filePath: r.filePath ?? r[2],
+            startLine: r.startLine ?? r[3] ?? null,
+            endLine: r.endLine ?? r[4] ?? null,
+          });
+        }
+      } catch (e) {
+        logQueryError('resolvePathNodes', e);
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Standalone get_code tool — retrieve source code from a node's file span.
+   */
+  private async getCode(
+    repo: RepoHandle,
+    params: {
+      uid?: string;
+      name?: string;
+      file_path?: string;
+    },
+  ): Promise<any> {
+    await this.ensureInitialized(repo.id);
+
+    const { uid, name, file_path } = params;
+
+    if (!uid && !name) {
+      return { error: 'uid or name parameter is required.' };
+    }
+
+    if (uid) {
+      const label = uid.includes(':') ? uid.split(':')[0] : 'Unknown';
+      if (!VALID_NODE_LABELS.has(label)) {
+        return { error: `Invalid UID format: unknown label "${label}"` };
+      }
+      try {
+        const rows = await executeParameterized(
+          repo.id,
+          `MATCH (n:\`${label}\` {id: $uid}) RETURN n.id AS id, n.name AS name, labels(n)[0] AS kind, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine, n.content AS content LIMIT 1`,
+          { uid },
+        );
+        if (rows.length === 0) {
+          return { error: `Node ${uid} not found` };
+        }
+        const r = rows[0];
+        return {
+          uid: r.id ?? r[0],
+          name: r.name ?? r[1],
+          kind: r.kind ?? label,
+          filePath: r.filePath ?? r[3],
+          startLine: r.startLine ?? r[4],
+          endLine: r.endLine ?? r[5],
+          content: r.content ?? r[6] ?? null,
+        };
+      } catch (e) {
+        logQueryError('getCode:uid-lookup', e);
+        return { error: `Failed to fetch node: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    let whereClause = 'WHERE n.name = $symName';
+    const queryParams: Record<string, string> = { symName: name };
+
+    if (file_path) {
+      whereClause += ' AND n.filePath CONTAINS $filePath';
+      queryParams.filePath = file_path;
+    }
+
+    try {
+      const rows = await executeParameterized(
+        repo.id,
+        `MATCH (n) ${whereClause} RETURN n.id AS id, n.name AS name, labels(n)[0] AS kind, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine, n.content AS content LIMIT 1`,
+        queryParams,
+      );
+      if (rows.length === 0) {
+        return { error: `No symbol found matching "${name}"${file_path ? ` in ${file_path}` : ''}` };
+      }
+      const r = rows[0];
+      return {
+        uid: r.id ?? r[0],
+        name: r.name ?? r[1],
+        kind: r.kind ?? r[2],
+        filePath: r.filePath ?? r[3],
+        startLine: r.startLine ?? r[4],
+        endLine: r.endLine ?? r[5],
+        content: r.content ?? r[6] ?? null,
+      };
+    } catch (e) {
+      logQueryError('getCode:name-lookup', e);
+      return { error: `Failed to fetch symbol: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
   private async apiImpact(
     repo: RepoHandle,
     params: { route?: string; file?: string },
@@ -3477,6 +3695,76 @@ export class LocalBackend {
     };
   }
 
+
+  /**
+   * explain_dataflow tool — LLM-powered explanation of a TaintPath.
+   * Accepts a JSON-string taint_path and returns a plain English vulnerability explanation.
+   */
+  private async explainDataflow(
+    _repo: RepoHandle,
+    params: { taint_path: string },
+  ): Promise<{ explanation: string; raw?: string }> {
+    let taintPath: any;
+    try {
+      taintPath = JSON.parse(params.taint_path);
+    } catch {
+      return { explanation: 'Invalid taint_path JSON. Expected: { source, sink, path, sanitizers, confidence }' };
+    }
+
+    const { source, sink, path = [], sanitizers = [], confidence = 0 } = taintPath;
+
+    const pathSteps = path
+      .map((s: any) => `  - ${s.from} --[${s.operation}]--> ${s.to}`)
+      .join('\n');
+
+    const sanitizerList = sanitizers.length
+      ? sanitizers
+          .map((s: any) => `  - ${s.variable} at ${s.nodeId}: ${s.description}`)
+          .join('\n')
+      : '  (none)';
+
+    const prompt = `You are a security expert explaining a data flow vulnerability.
+
+## Source (untrusted input)
+- Node: ${source?.nodeId ?? '?'}
+- Variable: ${source?.variable ?? '?'}
+- Kind: ${source?.kind ?? '?'}
+- Description: ${source?.description ?? '?'}
+
+## Sink (harmful destination)
+- Node: ${sink?.nodeId ?? '?'}
+- Variable: ${sink?.variable ?? '?'}
+- Kind: ${sink?.kind ?? '?'}
+- Description: ${sink?.description ?? '?'}
+
+## Propagation path
+${pathSteps || '  (path unavailable)'}
+
+## Sanitizers on path
+${sanitizerList}
+
+## Confidence
+${confidence}
+
+Please explain in plain English:
+1. What the vulnerability is and how it works
+2. What an attacker could do (attack scenario)
+3. How to fix or mitigate it
+
+Be concise — 3-5 sentences maximum.`;
+
+    try {
+      const config = await resolveLLMConfig({ maxTokens: 500 });
+      const result = await callLLM(prompt, config);
+      return { explanation: result.content };
+    } catch (err) {
+      return {
+        explanation:
+          'LLM explanation unavailable. Check that an API key is configured (GITNEXUS_API_KEY or OPENAI_API_KEY).',
+        raw: String(err),
+      };
+    }
+  }
   async disconnect(): Promise<void> {
     await closeLbug(); // close all connections
     // Note: we intentionally do NOT call disposeEmbedder() here.

@@ -2,7 +2,7 @@
  * Unit Tests: MCP Tool Definitions
  *
  * Tests: GITNEXUS_TOOLS from tools.ts
- * - All 16 tools are defined (per-repo + group_*)
+ * - All 17 tools are defined (per-repo + group_*)
  * - Each tool has valid name, description, inputSchema
  * - Required fields are correct
  * - Optional repo parameter is present on tools that need it
@@ -19,8 +19,8 @@ const GROUP_TOOLS = new Set([
 ]);
 
 describe('GITNEXUS_TOOLS', () => {
-  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 5 group)', () => {
-    expect(GITNEXUS_TOOLS).toHaveLength(16);
+  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 1 explain_dataflow + 5 group)', () => {
+    expect(GITNEXUS_TOOLS).toHaveLength(19);
   });
 
   it('contains all expected tool names', () => {
