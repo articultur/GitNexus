@@ -2652,21 +2652,24 @@ export class LocalBackend {
     // Batch-fetch source content for impacted symbols when requested
     let contentMap = new Map<string, string>();
     if (include_content && impacted.length > 0) {
-      const contentIds = impacted.slice(0, 1000).map((it: any) => String(it.id ?? ''));
-      try {
-        const contentRows = await executeParameterized(
-          repo.id,
-          `MATCH (n) WHERE n.id IN $ids AND n.content IS NOT NULL
-           RETURN n.id AS id, n.content AS content`,
-          { ids: contentIds },
-        ).catch(() => []);
-        for (const row of contentRows) {
-          const id = row.id ?? row[0];
-          const content = row.content ?? row[1];
-          if (id && content) contentMap.set(String(id), content);
+      const maxContentItems = Math.min(impacted.length, 1000);
+      for (let i = 0; i < maxContentItems; i += 100) {
+        const chunkIds = impacted.slice(i, Math.min(i + 100, maxContentItems)).map((it: any) => String(it.id ?? ''));
+        try {
+          const contentRows = await executeParameterized(
+            repo.id,
+            `MATCH (n) WHERE n.id IN $ids AND n.content IS NOT NULL
+             RETURN n.id AS id, n.content AS content`,
+            { ids: chunkIds },
+          ).catch(() => []);
+          for (const row of contentRows) {
+            const id = row.id ?? row[0];
+            const content = row.content ?? row[1];
+            if (id && content) contentMap.set(String(id), content);
+          }
+        } catch (e) {
+          logQueryError('impact:content-fetch', e);
         }
-      } catch (e) {
-        logQueryError('impact:content-fetch', e);
       }
     }
 
