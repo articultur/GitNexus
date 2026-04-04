@@ -1240,14 +1240,15 @@ export class LocalBackend {
       try {
         // Fetch more raw communities than the display limit so aggregation has enough data
         const rawLimit = Math.max(limit * 5, 200);
-        const clusters = await executeQuery(
+        const clusters = await executeParameterized(
           repo.id,
           `
           MATCH (c:Community)
           RETURN c.id AS id, c.label AS label, c.heuristicLabel AS heuristicLabel, c.cohesion AS cohesion, c.symbolCount AS symbolCount
           ORDER BY c.symbolCount DESC
-          LIMIT ${rawLimit}
+          LIMIT $limit
         `,
+          { limit: rawLimit },
         );
         const rawClusters = clusters.map((c: any) => ({
           id: c.id || c[0],
@@ -1265,14 +1266,15 @@ export class LocalBackend {
 
     if (params.showProcesses !== false) {
       try {
-        const processes = await executeQuery(
+        const processes = await executeParameterized(
           repo.id,
           `
           MATCH (p:Process)
           RETURN p.id AS id, p.label AS label, p.heuristicLabel AS heuristicLabel, p.processType AS processType, p.stepCount AS stepCount
           ORDER BY p.stepCount DESC
-          LIMIT ${limit}
+          LIMIT $limit
         `,
+          { limit },
         );
         result.processes = processes.map((p: any) => ({
           id: p.id || p[0],
@@ -2777,7 +2779,8 @@ export class LocalBackend {
          LIMIT 1`,
         { uid },
       );
-    } catch {
+    } catch (e) {
+      logQueryError('impactByUid:uid-lookup', e);
       return null;
     }
     if (!rows?.length) return null;
@@ -2798,7 +2801,8 @@ export class LocalBackend {
         include_evidence: opts.include_evidence ?? true,
         include_content: opts.include_content ?? false,
       });
-    } catch {
+    } catch (e) {
+      logQueryError('impactByUid:bfs', e);
       return null;
     }
   }
