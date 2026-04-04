@@ -116,6 +116,7 @@ export async function impactCommand(
     depth?: string;
     includeTests?: boolean;
     dataFlow?: boolean;
+    content?: boolean;
   },
 ): Promise<void> {
   if (!target?.trim()) {

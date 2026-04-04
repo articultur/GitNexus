@@ -2117,6 +2117,8 @@ export class LocalBackend {
       minConfidence?: number;
       /** When false, omit the `evidence` block from the response. Default: true */
       include_evidence?: boolean;
+      /** When true, include source code content for each impacted symbol. */
+      include_content?: boolean;
     },
   ): Promise<any> {
     try {
@@ -2144,6 +2146,7 @@ export class LocalBackend {
       includeTests?: boolean;
       minConfidence?: number;
       include_evidence?: boolean;
+      include_content?: boolean;
     },
   ): Promise<any> {
     await this.ensureInitialized(repo.id);
@@ -2159,6 +2162,7 @@ export class LocalBackend {
       rawRelTypes.length > 0 ? rawRelTypes : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
     const includeTests = params.includeTests ?? false;
     const minConfidence = params.minConfidence ?? 0;
+    const include_content = params.include_content ?? false;
 
     // Resolve target by name, preferring Class/Interface over Constructor
     // (fix #480: Java class and constructor share the same name).
@@ -2247,6 +2251,7 @@ export class LocalBackend {
       includeTests,
       minConfidence,
       include_evidence,
+      include_content,
     });
   }
 
@@ -2264,9 +2269,10 @@ export class LocalBackend {
       includeTests: boolean;
       minConfidence: number;
       include_evidence: boolean;
+      include_content: boolean;
     },
   ): Promise<any> {
-    const { maxDepth, relationTypes, includeTests, minConfidence, include_evidence } = opts;
+    const { maxDepth, relationTypes, includeTests, minConfidence, include_evidence, include_content } = opts;
     const relTypeFilter = relationTypes.map((t) => `'${t}'`).join(', ');
     const confidenceFilter = minConfidence > 0 ? ` AND r.confidence >= ${minConfidence}` : '';
 
@@ -2643,6 +2649,27 @@ export class LocalBackend {
       });
     }
 
+    // Batch-fetch source content for impacted symbols when requested
+    let contentMap = new Map<string, string>();
+    if (include_content && impacted.length > 0) {
+      const contentIds = impacted.slice(0, MAX_CHUNKS * CHUNK_SIZE).map((it: any) => String(it.id ?? ''));
+      try {
+        const contentRows = await executeParameterized(
+          repo.id,
+          `MATCH (n) WHERE n.id IN $ids AND n.content IS NOT NULL
+           RETURN n.id AS id, n.content AS content`,
+          { ids: contentIds },
+        ).catch(() => []);
+        for (const row of contentRows) {
+          const id = row.id ?? row[0];
+          const content = row.content ?? row[1];
+          if (id && content) contentMap.set(String(id), content);
+        }
+      } catch (e) {
+        logQueryError('impact:content-fetch', e);
+      }
+    }
+
     // Risk scoring
     const processCount = affectedProcesses.length;
     const moduleCount = affectedModules.length;
@@ -2695,6 +2722,7 @@ export class LocalBackend {
               name: item.name,
               filePath: item.filePath,
               type: item.type,
+              ...(include_content && contentMap.has(String(item.id)) && { content: contentMap.get(String(item.id)) }),
             },
           })),
         },
