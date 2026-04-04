@@ -1,7 +1,7 @@
 # tree-sitter-graph Migration Plan for cfg-builder.ts
 
 **Date:** 2026-04-04
-**Status:** Research Complete -- Awaiting Decision
+**Status:** Phase 5 Complete -- All tests green
 **Owner:** GitNexus Core Team
 
 ---
@@ -489,7 +489,7 @@ This is a legitimate extension point in tree-sitter-graph's design. The library 
 |-----------|------|------|
 | All static edge types correct | TRUE_BRANCH, FALSE_BRANCH, SWITCH_CASE, TRY_BODY, CATCH, NEXT all match `buildCFG` | Some edges missing or incorrect |
 | TypeScript test suite passes | 100% of existing CFG tests pass | Test failures |
-| JS + Python DSL files written | Both DSLs cover all statement types | Incomplete coverage |
+| JS + Python DSL files written | Both DSLs cover all statement types | ✅ Both complete (Phase 5 JS, Phase 6 Python) |
 
 **Go/No-Go:** Proceed to Phase 3 only if TypeScript test suite is green and at least one other language DSL is in review.
 
