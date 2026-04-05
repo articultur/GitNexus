@@ -147,26 +147,38 @@ const processParsingWithWorkers = async (
   const allTypeEnvBindings: FileTypeEnvBindings[] = [];
   for (const result of chunkResults) {
     for (const node of result.nodes) {
-      graph.addNode({
-        id: node.id,
-        label: node.label as NodeLabel,
-        properties: node.properties,
-      });
+      try {
+        graph.addNode({
+          id: node.id,
+          label: node.label as NodeLabel,
+          properties: node.properties,
+        });
+      } catch (err) {
+        console.warn(`  Warning: failed to add node ${node.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     for (const rel of result.relationships) {
-      graph.addRelationship(rel);
+      try {
+        graph.addRelationship(rel);
+      } catch (err) {
+        console.warn(`  Warning: failed to add relationship: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     for (const sym of result.symbols) {
-      symbolTable.add(sym.filePath, sym.name, sym.nodeId, sym.type, {
-        parameterCount: sym.parameterCount,
-        requiredParameterCount: sym.requiredParameterCount,
-        parameterTypes: sym.parameterTypes,
-        returnType: sym.returnType,
-        declaredType: sym.declaredType,
-        ownerId: sym.ownerId,
-      });
+      try {
+        symbolTable.add(sym.filePath, sym.name, sym.nodeId, sym.type, {
+          parameterCount: sym.parameterCount,
+          requiredParameterCount: sym.requiredParameterCount,
+          parameterTypes: sym.parameterTypes,
+          returnType: sym.returnType,
+          declaredType: sym.declaredType,
+          ownerId: sym.ownerId,
+        });
+      } catch (err) {
+        console.warn(`  Warning: failed to add symbol ${sym.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     allImports.push(...result.imports);
