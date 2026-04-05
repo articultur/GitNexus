@@ -431,7 +431,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     console.warn = origWarn;
     console.error = origError;
     bar.stop();
-    console.error(`\n  Analysis failed: ${err.message}\n`);
+    console.error(`\n  Analysis failed: ${err.stack ?? err.message}\n`);
     process.exitCode = 1;
     return;
   }
