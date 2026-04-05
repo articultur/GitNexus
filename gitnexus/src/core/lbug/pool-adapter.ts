@@ -53,8 +53,10 @@ const dbCache = new Map<string, SharedDB>();
 const MAX_POOL_SIZE = 5;
 /** Idle timeout before closing a repo's connections */
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-/** Max connections per repo (caps concurrent queries per repo) */
-const MAX_CONNS_PER_REPO = 8;
+/** Max connections per repo (caps concurrent queries per repo)
+ *  macOS N-API destructor bugs can leave lock handles unreleased, so use
+ *  fewer connections on Darwin to reduce lock handle pressure. */
+const MAX_CONNS_PER_REPO = process.platform === 'darwin' ? 4 : 8;
 
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -202,7 +204,10 @@ const QUERY_TIMEOUT_MS = 30_000;
 const WAITER_TIMEOUT_MS = 15_000;
 
 const LOCK_RETRY_ATTEMPTS = 3;
-const LOCK_RETRY_DELAY_MS = 2000;
+// Base delay 3s with exponential backoff (3s, 4.5s, 6.75s) + random jitter (0-500ms)
+// to avoid thundering herd when multiple processes retry simultaneously.
+// Core adapter uses 500ms base — give it more room.
+const LOCK_RETRY_DELAY_MS = 3000;
 
 /** Deduplicates concurrent initLbug calls for the same repoId */
 const initPromises = new Map<string, Promise<void>>();
@@ -278,7 +283,10 @@ async function doInitLbug(repoId: string, dbPath: string): Promise<void> {
         const isLockError =
           lastError.message.includes('Could not set lock') || lastError.message.includes('lock');
         if (!isLockError || attempt === LOCK_RETRY_ATTEMPTS) break;
-        await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY_MS * attempt));
+        // Exponential backoff: 3s * 1.5^(attempt-1) + jitter (0-500ms)
+        const baseDelay = LOCK_RETRY_DELAY_MS * Math.pow(1.5, attempt - 1);
+        const jitter = Math.random() * 500;
+        await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter));
       }
     }
 
