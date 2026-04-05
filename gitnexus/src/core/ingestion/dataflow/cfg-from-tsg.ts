@@ -172,7 +172,7 @@ export function buildCFGFromTSG(
     typescript: 'ts', javascript: 'js', python: 'py',
   };
   const ext = EXT_MAP[langKey] ?? 'txt';
-  const tmpSource = join(process.env.TMPDIR ?? '/tmp', `gitnexus-tsg-${Date.now()}.${ext}`);
+  const tmpSource = join(process.env.TMPDIR ?? '/tmp', `gitnexus-tsg-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
   writeFileSync(tmpSource, source);
 
   try {
