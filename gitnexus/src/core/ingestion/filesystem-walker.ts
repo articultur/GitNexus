@@ -21,8 +21,8 @@ export interface FilePath {
 
 const READ_CONCURRENCY = 32;
 
-/** Skip files larger than 512KB — they're usually generated/vendored and crash tree-sitter */
-const MAX_FILE_SIZE = 512 * 1024;
+/** Skip files larger than 256KB — deeply nested TypeScript/C++ can exhaust macOS ~2MB C stack */
+const MAX_FILE_SIZE = 256 * 1024;
 
 /**
  * Phase 1: Scan repository — stat files to get paths + sizes, no content loaded.
