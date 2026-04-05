@@ -38,7 +38,7 @@ const FUNCTION_NODE_TYPES = new Set([
 ]);
 
 /**
- * Extract function name from a function node (inlined from cfg-builder).
+ * Extract function name from a function node.
  */
 function extractFunctionName(node: SyntaxNode): string | null {
   const nameNode =
@@ -52,19 +52,12 @@ function extractFunctionName(node: SyntaxNode): string | null {
 }
 
 /**
- * Extract function ID from a tree root node (inlined from cfg-builder).
+ * Extract function ID from a tree root node.
  */
-function extractFunctionId(rootNode: SyntaxNode, _language: SupportedLanguages): string | null {
+function extractFunctionId(rootNode: SyntaxNode): string | null {
   for (const child of rootNode.namedChildren) {
     if (FUNCTION_NODE_TYPES.has(child.type)) {
       return extractFunctionName(child) ?? null;
-    }
-    // Java / Kotlin: class → method
-    if (child.type === 'class_declaration' || child.type === 'class_body') {
-      const method = child.childForFieldName('method_declaration')
-        ?? child.childForFieldName('method_definition')
-        ?? child.childForFieldName('constructor_declaration');
-      if (method) return extractFunctionName(method) ?? null;
     }
   }
   return null;
@@ -161,7 +154,7 @@ export function buildCFGFromTSG(
   language: SupportedLanguages,
   functionId?: string,
 ): CFGResult {
-  const fid = functionId ?? extractFunctionId(tree.rootNode, language) ?? 'anonymous';
+  const fid = functionId ?? extractFunctionId(tree.rootNode) ?? 'anonymous';
   const langKey = language.toLowerCase();
 
   const tsgCLI = findTSGCLI();

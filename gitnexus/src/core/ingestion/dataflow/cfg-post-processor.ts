@@ -18,6 +18,9 @@
  * ]
  */
 
+import type { CFGResult, CFGEdgeType } from './types.js';
+import type { SyntaxNode } from 'tree-sitter';
+
 export interface TSGAttr {
   type: 'string' | 'bool' | 'integer';
   string?: string;
@@ -378,9 +381,6 @@ export function postProcessTSGGraph(
 
   return { nodes, edges: resultEdges };
 }
-
-import type { CFGResult, CFGEdgeType } from './types.js';
-import type { SyntaxNode } from 'tree-sitter';
 
 /**
  * Convert to buildCFG-compatible CFGResult format

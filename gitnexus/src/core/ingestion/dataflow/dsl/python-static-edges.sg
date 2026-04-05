@@ -163,11 +163,25 @@
 
 ; ============================================================
 ; CONDITIONAL EXPRESSION
+; Python conditional_expression: positional children [consequence, condition, alternative]
+; Note: condition child is not captured — it doesn't need a CFG node
 ; ============================================================
-(conditional_expression) @ternary
+(conditional_expression
+  (_)
+  (_) @then
+  (_) @else
+) @ternary
 {
   node @ternary.cfg
   attr (@ternary.cfg) label = (source-text @ternary)
+
+  let @then.node = (node)
+  edge @ternary.cfg -> @then.node
+  attr (@ternary.cfg -> @then.node) type = "TRUE_BRANCH"
+
+  let @else.node = (node)
+  edge @ternary.cfg -> @else.node
+  attr (@ternary.cfg -> @else.node) type = "FALSE_BRANCH"
 }
 
 ; ============================================================

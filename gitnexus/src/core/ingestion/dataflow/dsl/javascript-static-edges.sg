@@ -78,7 +78,9 @@
 ; ============================================================
 ; FOR LOOP — LOOP_HEADER
 ; ============================================================
-(for_statement) @for
+(for_statement
+  body: (statement_block) @body
+) @for
 {
   node @for.cfg
   attr (@for.cfg) label = "for"
@@ -87,12 +89,19 @@
   edge @for.cfg -> @for.cfg
   attr (@for.cfg -> @for.cfg) type = "LOOP_HEADER"
   attr (@for.cfg -> @for.cfg) isLoopHeader = #true
+
+  node @body.cfg
+  attr (@body.cfg) label = (source-text @body)
+  edge @for.cfg -> @body.cfg
+  attr (@for.cfg -> @body.cfg) type = "NEXT"
 }
 
 ; ============================================================
 ; FOR-IN / FOR-OF LOOP — LOOP_HEADER
 ; ============================================================
-(for_in_statement) @forin
+(for_in_statement
+  body: (statement_block) @body
+) @forin
 {
   node @forin.cfg
   attr (@forin.cfg) label = "for"
@@ -101,6 +110,11 @@
   edge @forin.cfg -> @forin.cfg
   attr (@forin.cfg -> @forin.cfg) type = "LOOP_HEADER"
   attr (@forin.cfg -> @forin.cfg) isLoopHeader = #true
+
+  node @body.cfg
+  attr (@body.cfg) label = (source-text @body)
+  edge @forin.cfg -> @body.cfg
+  attr (@forin.cfg -> @body.cfg) type = "NEXT"
 }
 
 ; ============================================================

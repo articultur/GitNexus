@@ -206,7 +206,6 @@ const WAITER_TIMEOUT_MS = 15_000;
 const LOCK_RETRY_ATTEMPTS = 3;
 // Base delay 3s with exponential backoff (3s, 4.5s, 6.75s) + random jitter (0-500ms)
 // to avoid thundering herd when multiple processes retry simultaneously.
-// Core adapter uses 500ms base — give it more room.
 const LOCK_RETRY_DELAY_MS = 3000;
 
 /** Deduplicates concurrent initLbug calls for the same repoId */
