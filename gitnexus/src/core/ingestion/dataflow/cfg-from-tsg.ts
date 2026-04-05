@@ -29,7 +29,7 @@ const __dirname = dirname(__filename);
 
 // Re-export for convenience
 export { parseTSGOutput, postProcessTSGGraph } from './cfg-post-processor.js';
-export type { TSGNode, TSGGraph, CFGNode, CFGEdge } from './cfg-post-processor.js';
+export type { TSGNode, CFGNode, CFGEdge } from './cfg-post-processor.js';
 
 /** Function node types across languages */
 const FUNCTION_NODE_TYPES = new Set([

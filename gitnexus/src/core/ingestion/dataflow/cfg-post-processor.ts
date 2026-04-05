@@ -37,10 +37,6 @@ export interface TSGNode {
   attrs: Record<string, TSGAttr>;
 }
 
-export interface TSGGraph {
-  nodes: TSGNode[];
-}
-
 export interface CFGNode {
   id: number;
   label: string;
@@ -61,12 +57,6 @@ function getString(attrs: Record<string, TSGAttr>, key: string): string | undefi
   return undefined;
 }
 
-/** Extract bool attribute value */
-function getBool(attrs: Record<string, TSGAttr>, key: string): boolean {
-  const attr = attrs[key];
-  if (attr?.type === 'bool') return attr.bool ?? false;
-  return false;
-}
 
 /** Build flat node list and edge list */
 export function parseTSGOutput(json: string): { nodes: CFGNode[]; edges: CFGEdge[] } {
@@ -141,19 +131,6 @@ function addSequentialNextEdges(nodes: CFGNode[], edges: CFGEdge[]): CFGEdge[] {
 }
 
 /**
- * Find loop header nodes (LOOP_HEADER self-edge)
- */
-function findLoopHeaders(edges: CFGEdge[]): Set<number> {
-  const headers = new Set<number>();
-  for (const e of edges) {
-    if (e.type === 'LOOP_HEADER' && e.sourceId === e.targetId) {
-      headers.add(e.sourceId);
-    }
-  }
-  return headers;
-}
-
-/**
  * Resolve BREAK and CONTINUE edges to loop headers — PRECISE version using AST parent-walking.
  * For each break/continue, walks up the AST to find the innermost enclosing loop.
  */
@@ -165,7 +142,6 @@ function resolveBreakContinue(
   const newEdges = [...edges];
   const existingKeys = new Set(newEdges.map(e => `${e.sourceId}|${e.targetId}|${e.type}`));
 
-  const loopHeaders = findLoopHeaders(edges);
   const loopNodes = nodes.filter(n => n.statementType === 'loop');
 
   // Build AST → CFG label mapping by walking the tree
@@ -218,11 +194,12 @@ function resolveBreakContinue(
   return newEdges;
 }
 
-/** Walk all nodes in an AST */
-function walkAST(node: SyntaxNode, cb: (n: SyntaxNode) => void): void {
+/** Walk all nodes in an AST with depth limit to prevent stack overflow */
+function walkAST(node: SyntaxNode, cb: (n: SyntaxNode) => void, depth = 0, maxDepth = 1000): void {
+  if (depth > maxDepth) return;
   cb(node);
   for (const child of node.children) {
-    walkAST(child, cb);
+    walkAST(child, cb, depth + 1, maxDepth);
   }
 }
 

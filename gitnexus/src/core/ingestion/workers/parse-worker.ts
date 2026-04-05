@@ -456,7 +456,8 @@ function findClassNodeByQualifiedName(node: SyntaxNode): SyntaxNode | null {
   // namespace_definition blocks (the majority of production C++ uses namespaces).
   const root = node.tree.rootNode;
   const classTypes = new Set(['class_specifier', 'struct_specifier']);
-  const searchIn = (parent: SyntaxNode): SyntaxNode | null => {
+  const searchIn = (parent: SyntaxNode, depth = 0): SyntaxNode | null => {
+    if (depth > 200) return null; // Cap: C++ namespace nesting rarely exceeds this
     for (let i = 0; i < parent.namedChildCount; i++) {
       const child = parent.namedChild(i);
       if (!child) continue;
@@ -466,7 +467,7 @@ function findClassNodeByQualifiedName(node: SyntaxNode): SyntaxNode | null {
       }
       // Recurse into namespace blocks
       if (child.type === 'namespace_definition') {
-        const found = searchIn(child);
+        const found = searchIn(child, depth + 1);
         if (found) return found;
       }
     }

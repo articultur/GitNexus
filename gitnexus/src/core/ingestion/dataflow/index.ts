@@ -124,8 +124,29 @@ export async function processDataflow(
       // Run DFA (unless taint-only mode)
       if (!opts.taintOnly) {
         const result = analyzeForward(context);
-        // Convert DFA results to edges (simplified - would need more work for production)
-        // For now, we rely on taint analysis for edge generation
+        for (const [nodeId, nodeFacts] of result.facts) {
+          const cfgNode = cfg.nodes.get(nodeId);
+          if (!cfgNode || cfgNode.id === cfg.entryNodeId) continue;
+          for (const [variable, value] of nodeFacts) {
+            if (value === 'UNINIT' || value === 'NAC') continue;
+            for (const predId of cfgNode.predecessors) {
+              const predFacts = result.facts.get(predId);
+              if (!predFacts || !predFacts.has(variable) || predFacts.get(variable) === 'UNINIT') {
+                allEdges.push({
+                  sourceId: predId,
+                  targetId: nodeId,
+                  type: 'DATA_FLOW',
+                  properties: {
+                    sourceVariable: variable,
+                    targetVariable: variable,
+                    confidence: 0.8,
+                    reason: `DFA: ${variable} = ${value} (from ${predId} → ${nodeId})`,
+                  },
+                });
+              }
+            }
+          }
+        }
       }
 
       // Run taint analysis

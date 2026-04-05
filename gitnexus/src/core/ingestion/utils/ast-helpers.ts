@@ -886,10 +886,11 @@ export const extractMethodSignature = (node: SyntaxNode | null | undefined): Met
 // ============================================================================
 
 /** Walk an AST node depth-first, returning the first descendant with the given type. */
-export function findDescendant(node: SyntaxNode, type: string): SyntaxNode | null {
+export function findDescendant(node: SyntaxNode, type: string, depth = 0, maxDepth = 1000): SyntaxNode | null {
+  if (depth > maxDepth) return null;
   if (node.type === type) return node;
   for (const child of node.children ?? []) {
-    const found = findDescendant(child, type);
+    const found = findDescendant(child, type, depth + 1, maxDepth);
     if (found) return found;
   }
   return null;
