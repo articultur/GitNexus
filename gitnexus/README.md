@@ -171,8 +171,8 @@ gitnexus wiki --model <model>    # Wiki with custom LLM model (default: minimax/
 Use dataflow modes during indexing to enable variable-level flow edges in the graph.
 
 ```bash
-# Basic variable-level flow extraction (recommended default)
-gitnexus analyze --dataflow basic
+# Base variable-level flow extraction (recommended default)
+gitnexus analyze --dataflow base
 
 # Full mode for deepest flow extraction (slower)
 gitnexus analyze --dataflow full
@@ -181,10 +181,8 @@ gitnexus analyze --dataflow full
 Available modes:
 
 - `off` - disable dataflow analysis
-- `basic` - conservative variable-level propagation
-- `context` - adds context-aware propagation
-- `path` - tracks richer path information
-- `full` - maximum extraction depth and detail
+- `base` - conservative variable-level propagation
+- `full` - maximum extraction depth and detail (includes path-sensitive analysis)
 
 Once indexed with dataflow enabled, include flow edges in impact analysis:
 

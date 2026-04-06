@@ -28,7 +28,7 @@ program
   .option('--skip-agents-md', 'Skip updating the gitnexus section in AGENTS.md and CLAUDE.md')
   .option('--skip-git', 'Index a folder without requiring a .git directory')
   .option('-v, --verbose', 'Enable verbose ingestion warnings (default: false)')
-  .option('--dataflow <mode>', 'Dataflow analysis mode: off, basic, context, path, full (default: basic)')
+  .option('--dataflow <mode>', 'Dataflow analysis mode: off, base, full (default: base)')
   .addHelpText(
     'after',
     '\nEnvironment variables:\n  GITNEXUS_NO_GITIGNORE=1  Skip .gitignore parsing (still reads .gitnexusignore)',
@@ -142,6 +142,15 @@ program
   .description('Execute raw Cypher query against the knowledge graph')
   .option('-r, --repo <name>', 'Target repository')
   .action(createLazyAction(() => import('./tool.js'), 'cypherCommand'));
+
+program
+  .command('detect_changes')
+  .description('Map git diff to affected symbols and execution flows')
+  .option('--scope <scope>', 'What to analyze: unstaged (default), staged, all, compare')
+  .option('--base-ref <ref>', 'Branch/commit for "compare" scope (e.g., main)')
+  .option('-r, --repo <name>', 'Target repository')
+  .option('--no-evidence', 'Omit evidence block from output')
+  .action(createLazyAction(() => import('./tool.js'), 'detectChangesCommand'));
 
 // ─── Eval Server (persistent daemon for SWE-bench) ─────────────────
 

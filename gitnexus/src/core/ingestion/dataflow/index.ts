@@ -17,6 +17,9 @@ import { buildCFG, buildCFGFromStatements, cfgToResult, parseStatements } from '
 import { buildCFGFromTSG, isTSGAvailable } from './cfg-from-tsg.js';
 import { analyzeForward, createDefaultContext } from './dfa-engine.js';
 import { analyzeTaint } from './taint-engine.js';
+import { analyzePathSensitive, type PathSensitiveResult } from './path-sensitive.js';
+import { detectChangedFunctions, getTransitiveDependencies } from './incremental.js';
+import type { LatticeValue } from './types.js';
 import { loadParser, isLanguageAvailable } from '../../tree-sitter/parser-loader.js';
 import type Parser from 'tree-sitter';
 import type { SupportedLanguages } from 'gitnexus-shared';
@@ -33,21 +36,62 @@ import type { TaintPath } from './types.js';
 
 export interface DataflowOptions {
   /** Analysis mode - affects precision and performance */
-  mode: 'off' | 'basic' | 'context' | 'path' | 'full';
+  mode: 'off' | 'base' | 'full';
   /** Enable incremental analysis (only re-analyze changed functions) */
   incremental: boolean;
   /** Skip general data flow, only do taint analysis */
   taintOnly: boolean;
   /** Maximum functions to analyze (for context-sensitive, limits explosion) */
   maxFunctions?: number;
+  /** Repository path for incremental analysis (required when incremental=true) */
+  repoPath?: string;
 }
 
 const DEFAULT_OPTIONS: DataflowOptions = {
-  mode: 'basic',
+  mode: 'base',
   incremental: false,
   taintOnly: false,
   maxFunctions: 1000,
 };
+
+// ── Path-Sensitive Result Conversion ─────────────────────────────────────
+
+/**
+ * Convert path-sensitive result to merged lattice facts.
+ * Takes the most precise value for each variable at each node across all paths.
+ */
+function convertPathSensitiveResult(
+  pathResult: PathSensitiveResult,
+): Map<string, Map<string, LatticeValue>> {
+  const merged = new Map<string, Map<string, LatticeValue>>();
+  for (const [_pathId, nodeFacts] of pathResult.paths) {
+    for (const [nodeId, variableFacts] of nodeFacts) {
+      if (!merged.has(nodeId)) merged.set(nodeId, new Map());
+      const existing = merged.get(nodeId)!;
+      for (const [variable, value] of variableFacts) {
+        const current = existing.get(variable);
+        if (!current || valuePriority(current) < valuePriority(value)) {
+          existing.set(variable, value);
+        }
+      }
+    }
+  }
+  return merged;
+}
+
+/**
+ * Priority for lattice value merge decisions (higher = more precise).
+ */
+function valuePriority(v: LatticeValue): number {
+  const priorities: Record<LatticeValue, number> = {
+    CONSTANT: 4,
+    TAINTED: 3,
+    SANITIZED: 3,
+    NAC: 2,
+    UNINIT: 1,
+  };
+  return priorities[v] ?? 0;
+}
 
 // ── Main Processor ────────────────────────────────────────────────────────
 
@@ -99,11 +143,32 @@ export async function processDataflow(
 
   onProgress?.(`Analyzing ${functions.length} functions...`, 10);
 
-  // Limit context-sensitive analysis to prevent state explosion
+  // Filter to affected functions in incremental mode
+  let functionsToAnalyze = functions;
+  if (opts.incremental && opts.repoPath) {
+    try {
+      const { affectedFunctions, changedFiles } = await detectChangedFunctions(
+        opts.repoPath,
+        knowledgeGraph,
+      );
+      if (changedFiles.length === 0) {
+        onProgress?.('No changes detected, skipping dataflow analysis', 100);
+        return; // Exit early, nothing to do
+      }
+      const transitiveDeps = getTransitiveDependencies(knowledgeGraph, affectedFunctions);
+      const affectedSet = new Set([...affectedFunctions, ...transitiveDeps]);
+      functionsToAnalyze = functions.filter((f) => affectedSet.has(f.id));
+      onProgress?.(`Incremental: analyzing ${functionsToAnalyze.length} affected functions`, 10);
+    } catch (e) {
+      throw new Error(`Incremental analysis failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Limit analysis to prevent state explosion (only 'full' mode benefits from limiting)
   const maxFunctions = opts.maxFunctions ?? 1000;
-  const functionsToAnalyze = opts.mode === 'context' || opts.mode === 'path'
-    ? functions.slice(0, maxFunctions)
-    : functions;
+  functionsToAnalyze = opts.mode === 'full'
+    ? functionsToAnalyze.slice(0, maxFunctions)
+    : functionsToAnalyze;
 
   const allEdges: DataFlowEdge[] = [];
   const allTaintPaths: TaintPath[] = [];
@@ -123,14 +188,25 @@ export async function processDataflow(
 
       // Run DFA (unless taint-only mode)
       if (!opts.taintOnly) {
-        const result = analyzeForward(context);
-        for (const [nodeId, nodeFacts] of result.facts) {
+        let resultFacts: Map<string, Map<string, LatticeValue>>;
+
+        if (opts.mode === 'full') {
+          // Path-sensitive analysis: tracks values per-path, more precise
+          const pathResult = analyzePathSensitive(cfg, 10, 1000);
+          resultFacts = convertPathSensitiveResult(pathResult);
+        } else {
+          // Standard flow-sensitive analysis
+          const result = analyzeForward(context);
+          resultFacts = result.facts;
+        }
+
+        for (const [nodeId, nodeFacts] of resultFacts) {
           const cfgNode = cfg.nodes.get(nodeId);
           if (!cfgNode || cfgNode.id === cfg.entryNodeId) continue;
           for (const [variable, value] of nodeFacts) {
             if (value === 'UNINIT' || value === 'NAC') continue;
             for (const predId of cfgNode.predecessors) {
-              const predFacts = result.facts.get(predId);
+              const predFacts = resultFacts.get(predId);
               if (!predFacts || !predFacts.has(variable) || predFacts.get(variable) === 'UNINIT') {
                 allEdges.push({
                   sourceId: predId,
@@ -224,15 +300,22 @@ export function parseDataflowOptions(flags: Record<string, unknown>): Partial<Da
   }
 
   const mode = flags.dataflow as string | undefined;
-  if (mode === 'off' || mode === 'basic' || mode === 'context' || mode === 'path' || mode === 'full') {
+  // Map deprecated mode names to new names
+  const modeAliasMap: Record<string, string> = {
+    'basic': 'base',
+    'context': 'base',
+    'path': 'base',
+  };
+  const mappedMode = modeAliasMap[mode ?? ''] ?? mode;
+  if (mappedMode === 'off' || mappedMode === 'base' || mappedMode === 'full') {
     return {
-      mode,
+      mode: mappedMode,
       incremental: flags.incremental === true,
       taintOnly: flags.taintOnly === true,
     };
   }
 
-  return { mode: 'basic' };
+  return { mode: 'base' };
 }
 
 // ── CFG Construction ────────────────────────────────────────────────────────

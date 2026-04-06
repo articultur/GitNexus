@@ -376,6 +376,36 @@ const classIdCache = new Map<SyntaxNode, string | null>();
 const functionIdCache = new Map<SyntaxNode, string | null>();
 const exportCache = new Map<SyntaxNode, boolean>();
 
+/**
+ * Estimate nesting depth of a file by scanning for deep template/generic chains.
+ * C++ template nesting (e.g. `Foo<Bar<Baz<Qux>>>`) and TypeScript conditional types
+ * can produce ASTs thousands of levels deep that exhaust macOS's ~2MB C stack.
+ * Returns the maximum estimated nesting depth, capped at 1000.
+ */
+const estimateNestingDepth = (content: string): number => {
+  let maxDepth = 0;
+  let currentDepth = 0;
+  // Track depth by counting consecutive angle brackets, arrows, and parens
+  // that appear in template/generic positions (after identifiers or keywords)
+  let i = 0;
+  const len = content.length;
+  while (i < len) {
+    const ch = content[i];
+    if (ch === '<' || ch === '>' || ch === '(' || ch === ')' || ch === '{' || ch === '}') {
+      if (ch === '<' || ch === '{' || ch === '(') {
+        currentDepth++;
+        if (currentDepth > maxDepth) maxDepth = currentDepth;
+      } else {
+        currentDepth = Math.max(0, currentDepth - 1);
+      }
+    } else if (ch === '\n' || ch === ';') {
+      currentDepth = Math.max(0, currentDepth - 1);
+    }
+    i++;
+  }
+  return maxDepth;
+};
+
 const clearCaches = (): void => {
   classIdCache.clear();
   functionIdCache.clear();

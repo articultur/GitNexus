@@ -171,9 +171,7 @@ export async function runFullAnalysis(
   }
 
   // ── Phase 1: Full Pipeline (0–60%) ────────────────────────────────
-  const dataflowOptions = options.dataflow
-    ? parseDataflowOptions({ dataflow: options.dataflow } as Record<string, unknown>)
-    : undefined;
+  const dataflowOptions = parseDataflowOptions({ dataflow: options.dataflow ?? 'base' } as Record<string, unknown>);
   const pipelineResult = await runPipelineFromRepo(
     repoPath,
     (p) => {
@@ -217,10 +215,10 @@ export async function runFullAnalysis(
 
     try {
       await createFTSIndex('File', 'file_fts', ['name', 'content']);
-      await createFTSIndex('Function', 'function_fts', ['name', 'content']);
-      await createFTSIndex('Class', 'class_fts', ['name', 'content']);
-      await createFTSIndex('Method', 'method_fts', ['name', 'content']);
-      await createFTSIndex('Interface', 'interface_fts', ['name', 'content']);
+      await createFTSIndex('Function', 'function_fts', ['name', 'content', 'parameterNames', 'returnType', 'qualifier']);
+      await createFTSIndex('Class', 'class_fts', ['name', 'content', 'qualifier']);
+      await createFTSIndex('Method', 'method_fts', ['name', 'content', 'parameterNames', 'returnType', 'qualifier']);
+      await createFTSIndex('Interface', 'interface_fts', ['name', 'content', 'qualifier']);
     } catch {
       // Non-fatal — FTS is best-effort
     }

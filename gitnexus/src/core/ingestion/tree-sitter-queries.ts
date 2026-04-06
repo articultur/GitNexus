@@ -386,6 +386,14 @@ export const C_QUERIES = `
 (enum_specifier name: (type_identifier) @name) @definition.enum
 (type_definition declarator: (type_identifier) @name) @definition.typedef
 
+; Global / file-scope variables — declarations NOT inside a function body.
+; Matches: int g_counter; extern char* g_name; static int s_flag;
+; Excludes: local variables inside function_definition (handled separately by type extractors).
+; Uses anchor @ after declaration to exclude child matches that are function signatures.
+(declaration
+  declarator: [(identifier) (pointer_declarator) (reference_declarator)]
+  @name) @definition.global
+
 ; Macros
 (preproc_function_def name: (identifier) @name) @definition.macro
 (preproc_def name: (identifier) @name) @definition.macro
@@ -463,6 +471,14 @@ export const CPP_QUERIES = `
 ; Typedefs and unions (common in C-style headers and mixed C/C++ code)
 (type_definition declarator: (type_identifier) @name) @definition.typedef
 (union_specifier name: (type_identifier) @name) @definition.union
+
+; Global / file-scope variables — declarations NOT inside a function body.
+; Matches: int g_counter; extern char* g_name; static int s_flag;
+; Excludes: local variables inside function_definition (handled separately by type extractors).
+; Excludes: member fields inside class/struct bodies (field_declaration is handled above).
+(declaration
+  declarator: [(identifier) (pointer_declarator) (reference_declarator)]
+  @name) @definition.global
 
 ; Macros
 (preproc_function_def name: (identifier) @name) @definition.macro

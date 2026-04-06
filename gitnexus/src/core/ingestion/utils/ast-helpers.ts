@@ -25,6 +25,7 @@ export const DEFINITION_CAPTURE_KEYS = [
   'definition.type',
   'definition.const',
   'definition.static',
+  'definition.global',
   'definition.typedef',
   'definition.macro',
   'definition.union',
@@ -227,6 +228,7 @@ export function getLabelFromCaptures(
   if (captureMap['definition.type']) return 'TypeAlias';
   if (captureMap['definition.const']) return 'Const';
   if (captureMap['definition.static']) return 'Static';
+  if (captureMap['definition.global']) return 'Variable';
   if (captureMap['definition.typedef']) return 'Typedef';
   if (captureMap['definition.macro']) return 'Macro';
   if (captureMap['definition.union']) return 'Union';
@@ -500,7 +502,8 @@ export const extractFunctionName = (
     if (!nameNode) {
       for (let i = 0; i < node.childCount; i++) {
         const c = node.child(i);
-        if (c?.type === 'property_identifier') {
+        // property_identifier: TypeScript/JS method names; identifier: OC method names
+        if (c?.type === 'property_identifier' || c?.type === 'identifier') {
           nameNode = c;
           break;
         }

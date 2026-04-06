@@ -775,7 +775,7 @@ export class LocalBackend {
     for (let i = 0; i < bm25Results.length; i++) {
       const result = bm25Results[i];
       const key = result.nodeId || result.filePath;
-      const rrfScore = 1 / (60 + i);
+      const rrfScore = 1 / (20 + i);
       const existing = scoreMap.get(key);
       if (existing) {
         existing.score += rrfScore;
@@ -787,7 +787,7 @@ export class LocalBackend {
     for (let i = 0; i < semanticResults.length; i++) {
       const result = semanticResults[i];
       const key = result.nodeId || result.filePath;
-      const rrfScore = 1 / (60 + i);
+      const rrfScore = 1 / (20 + i);
       const existing = scoreMap.get(key);
       if (existing) {
         existing.score += rrfScore;
@@ -1079,7 +1079,7 @@ export class LocalBackend {
           CAST(${queryVecStr} AS FLOAT[${dims}]), ${limit})
         YIELD node AS emb, distance
         WITH emb, distance
-        WHERE distance < 0.6
+        WHERE distance < 0.25
         RETURN emb.nodeId AS nodeId, distance
         ORDER BY distance
       `;

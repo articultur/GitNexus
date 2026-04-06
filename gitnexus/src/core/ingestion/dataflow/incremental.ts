@@ -9,7 +9,6 @@
  * to dependent functions.
  */
 
-import { execFileSync } from 'node:child_process';
 import type { KnowledgeGraph } from '../../graph/types.js';
 
 /**
@@ -37,12 +36,12 @@ export interface IncrementalAnalysisResult {
  * @param baseCommit - Commit to compare against (default: HEAD~1)
  * @returns Functions that need re-analysis
  */
-export function detectChangedFunctions(
+export async function detectChangedFunctions(
   repoPath: string,
   knowledgeGraph: KnowledgeGraph,
   baseCommit?: string,
-): IncrementalAnalysisResult {
-  const changedFiles = getChangedFiles(repoPath, baseCommit);
+): Promise<IncrementalAnalysisResult> {
+  const changedFiles = await getChangedFiles(repoPath, baseCommit);
   const affectedFunctions = findAffectedFunctions(knowledgeGraph, changedFiles);
   const callGraphChanged = detectCallGraphChanges(knowledgeGraph, changedFiles);
 
@@ -56,23 +55,54 @@ export function detectChangedFunctions(
 /**
  * Get list of changed files from git.
  */
-function getChangedFiles(repoPath: string, baseCommit?: string): string[] {
+async function getChangedFiles(repoPath: string, baseCommit?: string): Promise<string[]> {
+  // Dynamically import to avoid issues with ESM
+  const { execFileSync } = await import('node:child_process');
+
   try {
     const commit = baseCommit ?? 'HEAD~1';
     const result = execFileSync(
       'git',
-      ['diff', '--name-only', commit, 'HEAD'],
+      ['diff', '--name-status', commit, 'HEAD'],
       { cwd: repoPath, encoding: 'utf-8' },
     );
 
-    return result
-      .split('\n')
-      .map((f) => f.trim())
-      .filter((f) => f.length > 0);
-  } catch {
-    // If git fails (e.g., no commits yet), return empty
-    return [];
+    const changedFiles: string[] = [];
+    for (const line of result.split('\n')) {
+      if (!line.trim()) continue;
+      const parts = line.split('\t');
+      const statusField = parts[0];
+      // Status field is like 'M', 'A', 'D', or 'R100' (rename with score)
+      const status = statusField.charAt(0);
+      // For M, A, D: one path after status
+      // For R: two paths after status (old and new)
+      const filePath = status === 'R' ? parts[2] : parts[1];
+      // Status: M=modified, A=added, D=deleted, R=renamed
+      if ((status === 'R' || status === 'M' || status === 'A') && filePath) {
+        changedFiles.push(filePath);
+      }
+      // Skip D (deleted) - no functions to re-analyze
+    }
+    return changedFiles;
+  } catch (e) {
+    throw new Error(`Git diff failed: ${e instanceof Error ? e.message : String(e)} at ${repoPath}`);
   }
+}
+
+/**
+ * Check if a file path matches a changed file path.
+ * Uses exact match or parent directory match to avoid false positives
+ * (e.g., 'auth.ts' should not match 'auth-helpers.ts').
+ */
+function fileMatchesChangedPath(filePath: string, changedFile: string): boolean {
+  const normalizedFilePath = filePath.replace(/\\/g, '/');
+  const normalizedTarget = changedFile.replace(/\\/g, '/');
+  // Exact match or this file is inside the changed directory
+  return (
+    normalizedFilePath === normalizedTarget ||
+    normalizedFilePath.startsWith(normalizedTarget + '/') ||
+    normalizedTarget.startsWith(normalizedFilePath + '/')
+  );
 }
 
 /**
@@ -94,7 +124,7 @@ function findAffectedFunctions(
   knowledgeGraph.forEachNode((node) => {
     if (node.label === 'Function' || node.label === 'Method') {
       const filePath = node.properties.filePath as string | undefined;
-      if (filePath && changedFiles.some((f) => filePath.includes(f))) {
+      if (filePath && changedFiles.some((f) => fileMatchesChangedPath(filePath, f))) {
         affectedFunctions.add(node.id);
       }
     }
@@ -142,8 +172,8 @@ function detectCallGraphChanges(
         const targetPath = targetNode.properties.filePath as string | undefined;
 
         if (
-          changedFiles.some((f) => sourcePath?.includes(f)) ||
-          changedFiles.some((f) => targetPath?.includes(f))
+          (sourcePath && changedFiles.some((f) => fileMatchesChangedPath(sourcePath, f))) ||
+          (targetPath && changedFiles.some((f) => fileMatchesChangedPath(targetPath, f)))
         ) {
           hasCallGraphImpact = true;
         }
@@ -198,20 +228,25 @@ export function filterSkippableFunctions(
   affectedFunctions: string[],
 ): string[] {
   const affectedSet = new Set(affectedFunctions);
+  const relationships: Array<{ type: string; sourceId: string; targetId: string }> = [];
+
+  // Collect relationships first to allow early exit
+  knowledgeGraph.forEachRelationship((rel) => {
+    relationships.push(rel);
+  });
 
   return allFunctions.filter((funcId) => {
     // Skip if not directly affected
     if (affectedSet.has(funcId)) return false;
 
-    // Skip if it doesn't call any affected function
-    let callsAffected = false;
-    knowledgeGraph.forEachRelationship((rel) => {
+    // Skip if it doesn't call any affected function - early exit
+    for (const rel of relationships) {
       if (rel.type === 'CALLS' && rel.sourceId === funcId && affectedSet.has(rel.targetId)) {
-        callsAffected = true;
+        return false; // does call affected, so NOT skippable
       }
-    });
+    }
 
-    return !callsAffected;
+    return true; // no call to affected functions, so skippable
   });
 }
 

@@ -17,10 +17,12 @@ import type {
   TaintStep,
   Sanitizer,
   CFGNode,
+  BoundaryInfo,
 } from './types.js';
 import type { CFG } from './cfg-builder.js';
 import type { DFAContext } from './dfa-engine.js';
 import type { SyntaxNode } from 'tree-sitter';
+import { getBoundaryConfig } from '../type-extractors/taint.js';
 
 // ── Result Types ───────────────────────────────────────────────────────────
 
@@ -33,6 +35,8 @@ export interface TaintAnalysisResult {
   sinks: TaintSink[];
   /** All detected sanitizers */
   sanitizers: Sanitizer[];
+  /** All detected boundary crossings on this CFG */
+  boundaries: BoundaryInfo[];
 }
 
 // ── Taint Analysis ───────────────────────────────────────────────────────
@@ -43,17 +47,18 @@ export interface TaintAnalysisResult {
  * @param cfg - Control flow graph
  * @param context - DFA context with symbol table and call graph
  * @param language - Language identifier (used for context)
- * @returns Taint analysis result with paths, sources, sinks, sanitizers
+ * @returns Taint analysis result with paths, sources, sinks, sanitizers, and boundaries
  */
 export function analyzeTaint(
   cfg: CFG,
   context: DFAContext,
-  _language: string
+  language: string
 ): TaintAnalysisResult {
   const sources: TaintSource[] = [];
   const sinks: TaintSink[] = [];
   const sanitizers: Sanitizer[] = [];
   const paths: TaintPath[] = [];
+  const boundaries: BoundaryInfo[] = [];
 
   // Standard taint patterns (language-agnostic)
   const sourcePatterns = context.taintSources ?? new Set([
@@ -119,6 +124,37 @@ export function analyzeTaint(
           break;
         }
       }
+
+      // Check for cross-language / cross-process boundary crossings
+      const boundaryConfig = getBoundaryConfig(language);
+      if (boundaryConfig) {
+        for (const nodeType of boundaryConfig.sendNodeTypes) {
+          if (astNode?.type === nodeType) {
+            const send = boundaryConfig.extractSendCall(astNode);
+            if (send) {
+              boundaries.push({
+                boundaryType: send.boundaryType,
+                sourceZone: language,
+                targetZone: inferTargetZone(send.boundaryType, language),
+                preservedTaint: true,
+              });
+            }
+          }
+        }
+        for (const nodeType of boundaryConfig.receiveNodeTypes) {
+          if (astNode?.type === nodeType) {
+            const recv = boundaryConfig.extractReceiveCall(astNode);
+            if (recv) {
+              boundaries.push({
+                boundaryType: recv.boundaryType,
+                sourceZone: inferSourceZone(recv.boundaryType, language),
+                targetZone: language,
+                preservedTaint: true,
+              });
+            }
+          }
+        }
+      }
     }
   }
 
@@ -154,30 +190,59 @@ export function analyzeTaint(
     sources: deduplicateById(sources),
     sinks: deduplicateById(sinks),
     sanitizers: deduplicateById(sanitizers),
+    boundaries: deduplicateBoundaries(boundaries),
   };
 }
 
-// ── Path Finding ─────────────────────────────────────────────────────────
+/**
+ * Infer target zone based on boundary type and source language.
+ */
+function inferTargetZone(boundaryType: string, sourceZone: string): string {
+  switch (boundaryType) {
+    case 'IPC_SEND':
+    case 'PROCESS_SPAWN':
+      return 'worker';
+    case 'FFI_CALL':
+      if (sourceZone === 'python') return 'native-c';
+      if (sourceZone === 'go') return 'native-c';
+      if (sourceZone === 'java') return 'native-jvm';
+      return 'native-unknown';
+    case 'SANDBOX_EXIT':
+      return 'eval';
+    case 'DESERIALIZE':
+      return 'deserialized';
+    default:
+      return 'unknown';
+  }
+}
 
 /**
- * Find a taint path from source to sink through the CFG.
+ * Infer source zone based on boundary type and target language.
  */
-function findTaintPath(
-  source: TaintSource,
-  sink: TaintSink,
-  cfg: CFG,
-  sanitizers: Sanitizer[]
-): { steps: TaintStep[]; sanitizersInPath: Sanitizer[] } | undefined {
-  return findVariableAwareTaintPath(
-    source,
-    sink,
-    cfg,
-    sanitizers,
-    new Set<string>(),
-    new Set<string>(),
-    new Set<string>(),
-  );
+function inferSourceZone(boundaryType: string, targetZone: string): string {
+  switch (boundaryType) {
+    case 'IPC_RECEIVE':
+      return 'worker';
+    case 'SANDBOX_ENTER':
+      return 'sandbox';
+    case 'DESERIALIZE':
+      return 'external';
+    default:
+      return 'unknown';
+  }
 }
+
+function deduplicateBoundaries(boundaries: BoundaryInfo[]): BoundaryInfo[] {
+  const seen = new Set<string>();
+  return boundaries.filter((b) => {
+    const key = b.boundaryType + '::' + b.sourceZone + '->' + b.targetZone;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ── Path Finding ─────────────────────────────────────────────────────────
 
 function findVariableAwareTaintPath(
   source: TaintSource,

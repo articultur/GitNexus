@@ -662,7 +662,7 @@ export const processCalls = async (
           receiverName !== undefined &&
           receiverTypeName === undefined &&
           languageSeed.callForm === 'member' &&
-          (language === 'java' || language === 'csharp' || language === 'kotlin')
+          (language === 'java' || language === 'csharp' || language === 'kotlin' || language === 'objectivec')
         ) {
           const c0 = receiverName.charCodeAt(0);
           if (c0 >= 65 && c0 <= 90) receiverTypeName = receiverName;

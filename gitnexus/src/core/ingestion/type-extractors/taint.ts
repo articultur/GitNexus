@@ -929,6 +929,386 @@ export const arktsTaintConfig: TaintConfig = {
   extractSanitizerCall: arktsTaintSanitizer,
 };
 
+// ── Boundary / IPC Patterns (Cross-Language) ────────────────────────────────
+
+export interface BoundaryPattern {
+  name: string;
+  boundaryType: 'IPC_SEND' | 'IPC_RECEIVE' | 'FFI_CALL' | 'DESERIALIZE' | 'SANDBOX_EXIT' | 'MEMORY_SHARED' | 'PROCESS_SPAWN';
+  description: string;
+}
+
+export interface BoundaryConfig {
+  /** AST node types that represent boundary send (data leaving current zone) */
+  sendNodeTypes: ReadonlySet<string>;
+  extractSendCall: (node: SyntaxNode) => BoundaryPattern | undefined;
+  /** AST node types that represent boundary receive (data entering current zone) */
+  receiveNodeTypes: ReadonlySet<string>;
+  extractReceiveCall: (node: SyntaxNode) => BoundaryPattern | undefined;
+}
+
+// TypeScript / JavaScript IPC patterns (Worker threads)
+const TS_IPC_SEND_SELECTORS = new Set([
+  'postMessage',
+  'send',
+  'sendMessage',
+]);
+
+const TS_IPC_RECEIVE_SELECTORS = new Set([
+  'onmessage',
+  'on',
+  'addEventListener',
+  'addListener',
+]);
+
+const TS_MEMORY_SHARED_PATTERNS = new Set([
+  'SharedArrayBuffer',
+  'Atomics.load',
+  'Atomics.store',
+  'Atomics.wait',
+  'Atomics.notify',
+]);
+
+const TS_DESERIALIZE_PATTERNS = new Set([
+  'JSON.parse',
+  'Response.json',
+  'JSONDecoder',
+]);
+
+function tsExtractSendCall(node: SyntaxNode): BoundaryPattern | undefined {
+  if (node.type === 'call_expression' || node.type === 'member_expression') {
+    let objName: string | undefined;
+    let methodName: string | undefined;
+
+    if (node.type === 'call_expression') {
+      const callee = node.childForFieldName('callee');
+      if (callee?.type === 'member_expression') {
+        const obj = callee.childForFieldName('object');
+        const prop = callee.childForFieldName('property');
+        objName = obj?.type === 'identifier' ? obj.text : undefined;
+        methodName = prop?.type === 'identifier' ? prop.text : undefined;
+      }
+    }
+
+    if (methodName === 'postMessage' || methodName === 'send' || methodName === 'sendMessage') {
+      return {
+        name: `ts-ipc-send:${methodName}`,
+        boundaryType: 'IPC_SEND',
+        description: `IPC send: ${objName ?? ''}.${methodName}()`,
+      };
+    }
+    if (methodName === 'spawn' || methodName === 'fork') {
+      return {
+        name: `ts-process-spawn:${methodName}`,
+        boundaryType: 'PROCESS_SPAWN',
+        description: `Process spawn: ${objName ?? ''}.${methodName}()`,
+      };
+    }
+  }
+  return undefined;
+}
+
+function tsExtractReceiveCall(node: SyntaxNode): BoundaryPattern | undefined {
+  // Receive handlers: obj.onmessage = handler / obj.addEventListener('message', handler)
+  let objName: string | undefined;
+  let propName: string | undefined;
+
+  if (node.type === 'member_expression') {
+    const obj = node.childForFieldName('object');
+    const prop = node.childForFieldName('property');
+    objName = obj?.type === 'identifier' ? obj.text : undefined;
+    propName = prop?.type === 'identifier' ? prop.text : undefined;
+  } else if (node.type === 'call_expression') {
+    const callee = node.childForFieldName('callee');
+    if (callee?.type === 'member_expression') {
+      const obj = callee.childForFieldName('object');
+      const prop = callee.childForFieldName('property');
+      objName = obj?.type === 'identifier' ? obj.text : undefined;
+      propName = prop?.type === 'identifier' ? prop.text : undefined;
+    }
+  }
+
+  if (propName === 'onmessage' || propName === 'on') {
+    return {
+      name: `ts-ipc-receive:${propName}`,
+      boundaryType: 'IPC_RECEIVE',
+      description: `IPC receive handler: ${objName ?? ''}.${propName}`,
+    };
+  }
+  if (objName === 'addEventListener' || objName === 'addListener') {
+    return {
+      name: `ts-ipc-receive:addEventListener`,
+      boundaryType: 'IPC_RECEIVE',
+      description: `IPC receive via addEventListener`,
+    };
+  }
+  return undefined;
+}
+
+export const typescriptBoundaryConfig: BoundaryConfig = {
+  sendNodeTypes: new Set(['call_expression', 'member_expression']),
+  extractSendCall: tsExtractSendCall,
+  receiveNodeTypes: new Set(['call_expression', 'member_expression']),
+  extractReceiveCall: tsExtractReceiveCall,
+};
+
+// Electron IPC patterns
+const ELECTRON_IPC_SEND_SELECTORS = new Set([
+  'send',
+  'invoke',
+  'postMessage',
+  'sendSync',
+]);
+
+const ELECTRON_IPC_RECEIVE_SELECTORS = new Set([
+  'handle',
+  'on',
+  'once',
+  'receive',
+]);
+
+function electronExtractSendCall(node: SyntaxNode): BoundaryPattern | undefined {
+  const callee = node.childForFieldName('callee');
+  if (!callee || callee.type !== 'member_expression') return undefined;
+  const obj = callee.childForFieldName('object');
+  const prop = callee.childForFieldName('property');
+  const objName = obj?.type === 'identifier' ? obj.text : undefined;
+  const methodName = prop?.type === 'identifier' ? prop.text : undefined;
+
+  if (objName === 'ipcRenderer' && methodName && ELECTRON_IPC_SEND_SELECTORS.has(methodName)) {
+    return {
+      name: `electron-ipc-send:${methodName}`,
+      boundaryType: 'IPC_SEND',
+      description: `Electron IPC send: ipcRenderer.${methodName}()`,
+    };
+  }
+  if (objName === 'webContents' && methodName === 'send') {
+    return {
+      name: `electron-ipc-send:webContents`,
+      boundaryType: 'IPC_SEND',
+      description: `Electron IPC send: webContents.send()`,
+    };
+  }
+  return undefined;
+}
+
+function electronExtractReceiveCall(node: SyntaxNode): BoundaryPattern | undefined {
+  const callee = node.childForFieldName('callee');
+  if (!callee || callee.type !== 'member_expression') return undefined;
+  const obj = callee.childForFieldName('object');
+  const prop = callee.childForFieldName('property');
+  const objName = obj?.type === 'identifier' ? obj.text : undefined;
+  const methodName = prop?.type === 'identifier' ? prop.text : undefined;
+
+  if (objName === 'ipcMain' && methodName && ELECTRON_IPC_RECEIVE_SELECTORS.has(methodName)) {
+    return {
+      name: `electron-ipc-receive:${methodName}`,
+      boundaryType: 'IPC_RECEIVE',
+      description: `Electron IPC receive: ipcMain.${methodName}()`,
+    };
+  }
+  return undefined;
+}
+
+export const electronBoundaryConfig: BoundaryConfig = {
+  sendNodeTypes: new Set(['call_expression']),
+  extractSendCall: electronExtractSendCall,
+  receiveNodeTypes: new Set(['call_expression']),
+  extractReceiveCall: electronExtractReceiveCall,
+};
+
+// ── Go cgo FFI patterns ─────────────────────────────────────────────────────
+
+const GO_CGO_IMPORTS = new Set(['C']);
+const GO_UNSAFE_POINTER = new Set(['unsafe.Pointer']);
+
+function goExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
+  const callee = node.childForFieldName('callee');
+  if (!callee) return undefined;
+
+  // import "C" — direct cgo call
+  if (callee.type === 'identifier') {
+    const name = callee.text;
+    if (name === 'C' || GO_CGO_IMPORTS.has(name)) {
+      return {
+        name: 'go-cgo-call',
+        boundaryType: 'FFI_CALL',
+        description: 'Go cgo call: import "C"',
+      };
+    }
+  }
+
+  // unsafe.Pointer conversion
+  if (callee.type === 'call_expression') {
+    const func = callee.childForFieldName('function');
+    if (func?.type === 'identifier' && func.text === 'unsafe.Pointer') {
+      return {
+        name: 'go-unsafe-pointer',
+        boundaryType: 'FFI_CALL',
+        description: 'Go unsafe pointer (FFI boundary)',
+      };
+    }
+  }
+  return undefined;
+}
+
+export const goBoundaryConfig: BoundaryConfig = {
+  sendNodeTypes: new Set(['call_expression', 'import_declaration']),
+  extractSendCall: goExtractFFICall,
+  receiveNodeTypes: new Set(['call_expression']),
+  extractReceiveCall: () => undefined,
+};
+
+// ── Python ctypes / cffi FFI patterns ───────────────────────────────────────
+
+const PYTHON_CTYPES_CDLL = new Set(['LoadLibrary', 'CDLL', 'PyDLL', 'CFUNCTYPE']);
+const PYTHON_CFFI_FUNCTIONS = new Set(['cdef', 'dlopen', 'FFI']);
+
+function pythonExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
+  let fnName: string | undefined;
+
+  if (node.type === 'call_expression') {
+    const callee = node.childForFieldName('callee');
+    if (callee?.type === 'member_expression') {
+      const obj = callee.childForFieldName('object');
+      const prop = callee.childForFieldName('property');
+      const objName = obj?.type === 'identifier' ? obj.text : undefined;
+      fnName = prop?.type === 'identifier' ? prop.text : undefined;
+
+      if (objName === 'ctypes' && fnName && PYTHON_CTYPES_CDLL.has(fnName)) {
+        return {
+          name: `python-ctypes:${fnName}`,
+          boundaryType: 'FFI_CALL',
+          description: `Python ctypes FFI: ctypes.${fnName}()`,
+        };
+      }
+      if (objName === 'cffi' && fnName && PYTHON_CFFI_FUNCTIONS.has(fnName)) {
+        return {
+          name: `python-cffi:${fnName}`,
+          boundaryType: 'FFI_CALL',
+          description: `Python cffi FFI: cffi.${fnName}()`,
+        };
+      }
+    }
+  }
+  return undefined;
+}
+
+export const pythonBoundaryConfig: BoundaryConfig = {
+  sendNodeTypes: new Set(['call_expression', 'member_expression']),
+  extractSendCall: pythonExtractFFICall,
+  receiveNodeTypes: new Set(['call_expression']),
+  extractReceiveCall: () => undefined,
+};
+
+// ── Rust FFI patterns ───────────────────────────────────────────────────────
+
+const RUST_EXTERN_BLOCK = new Set(['extern']);
+const RUST_FFI_FUNCTIONS = new Set(['libloading', 'dlsym', 'RawFd']);
+
+function rustExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
+  // extern "C" block entry
+  if (node.type === 'declaration' || node.type === 'foreign_block') {
+    const children = node.children;
+    for (const child of children) {
+      if (child.type === 'identifier' && child.text === 'extern') {
+        return {
+          name: 'rust-extern-c',
+          boundaryType: 'FFI_CALL',
+          description: 'Rust extern "C" FFI boundary',
+        };
+      }
+    }
+  }
+
+  // #[repr(C)] attribute on structs/enums
+  if (node.type === 'attribute_item') {
+    const attr = node.childForFieldName('attribute');
+    if (attr?.text.includes('repr') && attr.text.includes('C')) {
+      return {
+        name: 'rust-repr-c',
+        boundaryType: 'FFI_CALL',
+        description: 'Rust #[repr(C)] FFI struct',
+      };
+    }
+  }
+
+  return undefined;
+}
+
+export const rustBoundaryConfig: BoundaryConfig = {
+  sendNodeTypes: new Set(['declaration', 'attribute_item', 'foreign_block']),
+  extractSendCall: rustExtractFFICall,
+  receiveNodeTypes: new Set([]),
+  extractReceiveCall: () => undefined,
+};
+
+// ── Node.js native addon patterns ───────────────────────────────────────────
+
+const NODE_ADDON_PATTERNS = new Set([
+  'process.dlopen',
+  'require',
+  'Dlopen',
+  'node-addon-api',
+]);
+
+function nodeExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
+  if (node.type === 'call_expression') {
+    const callee = node.childForFieldName('callee');
+    if (callee?.type === 'member_expression') {
+      const obj = callee.childForFieldName('object');
+      const prop = callee.childForFieldName('property');
+      const objName = obj?.type === 'identifier' ? obj.text : undefined;
+      const propName = prop?.type === 'identifier' ? prop.text : undefined;
+
+      // require('.node') or require('native-module')
+      if (objName === 'require') {
+        const args = node.childForFieldName('arguments');
+        const arg = args?.children?.[0];
+        if (arg?.type === 'string' && (arg.text.endsWith("'.node'") || arg.text.endsWith('".node"'))) {
+          return {
+            name: 'node-addon-require',
+            boundaryType: 'FFI_CALL',
+            description: 'Node.js native addon require: require(.node)',
+          };
+        }
+      }
+
+      // process.dlopen
+      if (objName === 'process' && propName === 'dlopen') {
+        return {
+          name: 'node-dlopen',
+          boundaryType: 'FFI_CALL',
+          description: 'Node.js dlopen: process.dlopen()',
+        };
+      }
+    }
+  }
+  return undefined;
+}
+
+export const nodeBoundaryConfig: BoundaryConfig = {
+  sendNodeTypes: new Set(['call_expression', 'member_expression']),
+  extractSendCall: nodeExtractFFICall,
+  receiveNodeTypes: new Set(['call_expression']),
+  extractReceiveCall: () => undefined,
+};
+
+// ── Boundary Config Registry ─────────────────────────────────────────────────
+
+export const BOUNDARY_CONFIGS: Record<string, BoundaryConfig> = {
+  typescript: typescriptBoundaryConfig,
+  javascript: typescriptBoundaryConfig,
+  electron: electronBoundaryConfig,
+  go: goBoundaryConfig,
+  python: pythonBoundaryConfig,
+  rust: rustBoundaryConfig,
+  nodejs: nodeBoundaryConfig,
+};
+
+export function getBoundaryConfig(language: string): BoundaryConfig | undefined {
+  return BOUNDARY_CONFIGS[language.toLowerCase()];
+}
+
 // ── Taint Config Registry ───────────────────────────────────────────────────
 
 /**
