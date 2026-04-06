@@ -27,7 +27,7 @@ async function queryFTSViaExecutor(
   // Escape single quotes and backslashes to prevent Cypher injection
   const escapedQuery = query.replace(/\\/g, '\\\\').replace(/'/g, "''");
   const cypher = `
-    CALL QUERY_FTS_INDEX('${tableName}', '${indexName}', '${escapedQuery}', conjunctive := true)
+    CALL QUERY_FTS_INDEX('${tableName}', '${indexName}', '${escapedQuery}', conjunctive := false)
     RETURN node, score
     ORDER BY score DESC
     LIMIT ${limit}

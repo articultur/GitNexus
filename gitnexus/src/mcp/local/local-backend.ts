@@ -2205,6 +2205,22 @@ export class LocalBackend {
       targetName = target.substring(dotIdx + 1);
     }
 
+    // Try exact ID match first (handles "Method:SDWebImage/.../dataTask" style IDs)
+    const isQualified = target.includes('/') || target.includes(':');
+    if (isQualified) {
+      try {
+        const idRows = await executeParameterized(repo.id,
+          `MATCH (n {id: $target}) RETURN n.id AS id, n.name AS name, n.filePath AS filePath LIMIT 1`,
+          { target }
+        );
+        if (idRows.length > 0) {
+          sym = idRows[0];
+        }
+      } catch (e) {
+        logQueryError('impact:target-resolution-id', e);
+      }
+    }
+
     try {
       // Build the UNION ALL query; optionally add a HAS_METHOD arm for
       // "Class.method" disambiguation when parentClassName is provided.

@@ -215,12 +215,12 @@ export async function runFullAnalysis(
 
     try {
       await createFTSIndex('File', 'file_fts', ['name', 'content']);
-      await createFTSIndex('Function', 'function_fts', ['name', 'content', 'parameterNames', 'returnType', 'qualifier']);
-      await createFTSIndex('Class', 'class_fts', ['name', 'content', 'qualifier']);
-      await createFTSIndex('Method', 'method_fts', ['name', 'content', 'parameterNames', 'returnType', 'qualifier']);
-      await createFTSIndex('Interface', 'interface_fts', ['name', 'content', 'qualifier']);
-    } catch {
-      // Non-fatal — FTS is best-effort
+      await createFTSIndex('Function', 'function_fts', ['name']);
+      await createFTSIndex('Class', 'class_fts', ['name']);
+      await createFTSIndex('Method', 'method_fts', ['name']);
+      await createFTSIndex('Interface', 'interface_fts', ['name']);
+    } catch (err) {
+      console.warn('GitNexus: FTS index creation failed (search will be unavailable):', err?.message);
     }
 
     // ── Phase 3.5: Re-insert cached embeddings ────────────────────────
