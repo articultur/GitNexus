@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"timeout 60 npx tsc --noEmit 2>&1\",\"timeout\":90000,\"description\":\"TypeScript compile check\"}",
-  "error": "Exit code 2\nnpm warn Unknown user config \"email\". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.\nsrc/core/ingestion/dataflow/storage-writer.ts(236,7): error TS2322: Type '\"CFG_EDGE\"' is not assignable to type 'RelationshipType'.",
-  "timestamp": "2026-04-03T03:54:38.479Z",
-  "retry_count": 1
-}

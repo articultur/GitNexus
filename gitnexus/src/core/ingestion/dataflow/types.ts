@@ -17,7 +17,18 @@ export type DataFlowEdgeType =
   | 'TAINTED'          // Taint propagation: user_input → query
   | 'SANITIZES'        // Sanitization: sanitize(x) → x is clean
   | 'SINK_REACHABLE'   // Complete path reaching SINK
-  | 'ALIASES';         // Alias: a = b, then a.x = 1 also affects b.x
+  | 'ALIASES'          // Alias: a = b, then a.x = 1 also affects b.x
+  | 'BOUNDARY_CROSS';  // Cross-language/cross-process boundary transfer
+
+export type BoundaryType =
+  | 'FFI_CALL'         // FFI call (.node, ctypes, cgo, JNI)
+  | 'IPC_SEND'        // IPC send (postMessage, ipcRenderer.send)
+  | 'IPC_RECEIVE'     // IPC receive (onmessage, ipcMain.handle)
+  | 'MEMORY_SHARED'   // Shared memory (SharedArrayBuffer, ctypes pointers)
+  | 'SANDBOX_ENTER'   // Sandbox entry (contextBridge.exposeInMainWorld)
+  | 'SANDBOX_EXIT'    // Sandbox exit (eval, new Function)
+  | 'DESERIALIZE'     // Deserialization (pickle, unmarshal, JSON.parse)
+  | 'PROCESS_SPAWN';  // Process spawn (child_process.spawn, Worker)
 
 export interface DataFlowProperties {
   sourceVariable?: string;
@@ -25,7 +36,35 @@ export interface DataFlowProperties {
   taintKind?: 'SOURCE' | 'SINK' | 'SANITIZER' | null;
   pathLength?: number;
   isPathSpecific?: boolean;
+  boundary?: BoundaryInfo;
 }
+
+export interface BoundaryInfo {
+  boundaryType: BoundaryType;
+  sourceZone: string;
+  targetZone: string;
+  preservedTaint: boolean;
+}
+
+export interface TrustZone {
+  language: string;
+  sandbox: boolean;
+  privileges: 'full' | 'restricted' | 'minimal';
+  defaultTaintModel: 'propagate' | 'isolated' | 'opaque';
+}
+
+export const ZONE_MAP: Record<string, TrustZone> = {
+  'nodejs': { language: 'nodejs', sandbox: false, privileges: 'full', defaultTaintModel: 'propagate' },
+  'electron-main': { language: 'nodejs', sandbox: false, privileges: 'full', defaultTaintModel: 'propagate' },
+  'electron-renderer': { language: 'javascript', sandbox: true, privileges: 'minimal', defaultTaintModel: 'isolated' },
+  'electron-worker': { language: 'javascript', sandbox: false, privileges: 'full', defaultTaintModel: 'propagate' },
+  'python': { language: 'python', sandbox: false, privileges: 'full', defaultTaintModel: 'propagate' },
+  'java-jvm': { language: 'java', sandbox: false, privileges: 'full', defaultTaintModel: 'propagate' },
+  'android-art': { language: 'java', sandbox: true, privileges: 'restricted', defaultTaintModel: 'isolated' },
+  'swift-native': { language: 'swift', sandbox: false, privileges: 'full', defaultTaintModel: 'propagate' },
+  'go-runtime': { language: 'go', sandbox: false, privileges: 'full', defaultTaintModel: 'propagate' },
+  'dart': { language: 'dart', sandbox: false, privileges: 'full', defaultTaintModel: 'propagate' },
+};
 
 // ── Control Flow Graph ────────────────────────────────────────────────────────
 
@@ -64,6 +103,7 @@ export interface CFGNode {
   blockNumber?: number;   // Basic block number
   statementType?: string; // 'if' | 'while' | 'for' | etc.
   label?: string;         // Display text
+  astNode?: unknown;       // SyntaxNode from tree-sitter
 }
 
 export interface CFGEdge {

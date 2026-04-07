@@ -20,6 +20,7 @@ export enum SupportedLanguages {
   Swift = 'swift',
   Dart = 'dart',
   ArkTS = 'arkts',
+  Vue = 'vue',
   /** Standalone regex processor — no tree-sitter, no LanguageProvider. */
   Cobol = 'cobol',
   ObjectiveC = 'objectivec',

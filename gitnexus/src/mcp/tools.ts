@@ -80,12 +80,86 @@ Hybrid ranking: BM25 keyword + semantic vector search, ranked by Reciprocal Rank
           description: 'Include full symbol source code (default: false)',
           default: false,
         },
+        method: {
+          type: 'string',
+          description: 'Search method: "hybrid" (default, BM25+vector RRF), "fulltext" (BM25 only), "vector" (semantic only), "semantic" (alias for vector)',
+          enum: ['hybrid', 'fulltext', 'vector', 'semantic'],
+          default: 'hybrid',
+        },
         repo: {
           type: 'string',
           description: 'Repository name or path. Omit if only one repo is indexed.',
         },
       },
       required: ['query'],
+    },
+  },
+  {
+    name: 'shortest_path',
+    description: `Find the shortest path between two graph nodes using BFS on edges.
+Returns the node path array with edge types connecting source to target.
+
+WHEN TO USE: Understanding indirect relationships between symbols, tracing dependencies across multiple hops, or finding connection paths in the code graph.
+
+Returns: { nodes: [{uid, name, kind, filePath, startLine, endLine}, ...], edges: [{sourceId, targetId, type, confidence}, ...], hop_count: number }`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source_id: {
+          type: 'string',
+          description: 'Source node UID (e.g. "Function:abc123")',
+        },
+        target_id: {
+          type: 'string',
+          description: 'Target node UID (e.g. "Class:def456")',
+        },
+        max_hops: {
+          type: 'number',
+          description: 'Maximum hops to traverse (default: 5)',
+          default: 5,
+        },
+        relation_types: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Edge types to traverse (default: common usage edges)',
+        },
+        repo: {
+          type: 'string',
+          description: 'Repository name or path. Omit if only one repo is indexed.',
+        },
+      },
+      required: ['source_id', 'target_id'],
+    },
+  },
+  {
+    name: 'get_code',
+    description: `Retrieve source code for a specific node from its file span.
+
+WHEN TO USE: Getting the actual source code content for a symbol (function, class, method, etc.) when you already have its node UID or name+file_path from prior tool results.
+AFTER THIS: Use the code directly for analysis, refactoring, or review.
+
+Returns: { uid, name, kind, filePath, startLine, endLine, content }`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uid: {
+          type: 'string',
+          description: 'Node UID from prior tool results (zero-ambiguity lookup)',
+        },
+        name: {
+          type: 'string',
+          description: 'Symbol name (alternative to uid)',
+        },
+        file_path: {
+          type: 'string',
+          description: 'File path to disambiguate common names (use with name)',
+        },
+        repo: {
+          type: 'string',
+          description: 'Repository name or path. Omit if only one repo is indexed.',
+        },
+      },
+      required: [],
     },
   },
   {
@@ -292,6 +366,10 @@ Confidence: 1.0 = certain, <0.8 = fuzzy match`,
           type: 'string',
           description: 'Repository name or path. Omit if only one repo is indexed.',
         },
+        file_path: {
+          type: 'string',
+          description: 'File path to filter impact results to a specific file.',
+        },
       },
       required: ['target', 'direction'],
     },
@@ -375,6 +453,107 @@ Returns: single route object when one match, or { routes: [...], total: N } for 
         repo: { type: 'string', description: 'Repository name or path.' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'group_list',
+    description: `List all configured repository groups, or return details for one group (repos, manifest links).
+
+WHEN TO USE: Discover groups before group_sync. Optional "name" returns a single group's config.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name. Omit to list all groups.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'group_sync',
+    description: `Rebuild the Contract Registry (contracts.json) for a group: extract HTTP contracts, apply manifest links, exact-match cross-links.
+
+WHEN TO USE: After changing group.yaml or re-indexing member repos.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+        skipEmbeddings: {
+          type: 'boolean',
+          description: 'Exact + BM25 only (Demo PR: same as default exact path)',
+        },
+        exactOnly: { type: 'boolean', description: 'Exact match only in cascade' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'group_contracts',
+    description: `Inspect contracts and cross-links from the group's contracts.json.
+
+WHEN TO USE: Debug cross-repo links after group_sync.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+        type: { type: 'string', description: 'Filter by contract type (http, topic, …)' },
+        repo: { type: 'string', description: 'Filter by group repo path (e.g. app/backend)' },
+        unmatchedOnly: { type: 'boolean', description: 'Only contracts with no cross-link' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'group_query',
+    description: `Run the query tool across all repos in a group and merge process results via reciprocal rank fusion.
+
+WHEN TO USE: Semantic / hybrid search across a whole product group.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+        query: { type: 'string', description: 'Search query' },
+        subgroup: { type: 'string', description: 'Limit to repo paths under this prefix' },
+        limit: { type: 'number', description: 'Max merged results (default 5)' },
+      },
+      required: ['name', 'query'],
+    },
+  },
+  {
+    name: 'group_status',
+    description: `Report index staleness (commit vs HEAD) and Contract Registry staleness (indexedAt) for each repo in a group.
+
+WHEN TO USE: Before group_sync or when agents should refresh indexes.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Group name' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'explain_dataflow',
+    description: `Explain a data flow security vulnerability in plain English using an LLM.
+
+WHEN TO USE: After running an impact analysis that returns a TaintPath (source→sink propagation). Converts technical graph data into a human-readable security explanation.
+
+Takes a taint_path JSON string (source node, sink node, propagation steps, sanitizers, confidence) and returns a plain English explanation of the vulnerability, attack scenario, and recommended fix.
+
+Low cost: ~0.001 per call (uses a fast, small model).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taint_path: {
+          type: 'string',
+          description:
+            'JSON string of the TaintPath object: { source: {nodeId, variable, kind, description}, sink: {nodeId, variable, kind, description}, path: [{from, to, operation}], sanitizers: [{nodeId, variable, description}], confidence: number }',
+        },
+        repo: {
+          type: 'string',
+          description: 'Repository name or path. Omit if only one repo is indexed.',
+        },
+      },
+      required: ['taint_path'],
     },
   },
 ];

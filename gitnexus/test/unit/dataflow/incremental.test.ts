@@ -1,7 +1,7 @@
 /**
  * Unit tests for Incremental Data Flow Analysis
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import {
   detectChangedFunctions,
   getTransitiveDependencies,
@@ -163,18 +163,143 @@ describe('Incremental Analysis', () => {
     });
   });
 
-  describe('detectChangedFunctions (mocked git)', async () => {
-    it('should return empty arrays when no git changes', async () => {
+  describe('detectChangedFunctions (mocked git)', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('should throw error when git fails', async () => {
       const { execFileSync } = await import('node:child_process');
       vi.mocked(execFileSync).mockImplementation(() => {
         throw new Error('Not a git repo');
       });
 
-      const result = detectChangedFunctions('/fake/path', graph);
+      await expect(detectChangedFunctions('/fake/path', graph)).rejects.toThrow(
+        'Git diff failed: Not a git repo at /fake/path',
+      );
+    });
+
+    it('should return empty arrays when no git changes', async () => {
+      const { execFileSync } = await import('node:child_process');
+      // Empty git output means no changes
+      vi.mocked(execFileSync).mockReturnValue('');
+
+      const result = await detectChangedFunctions('/fake/path', graph);
 
       expect(result.changedFiles).toEqual([]);
       expect(result.affectedFunctions).toEqual([]);
       expect(result.callGraphChanged).toBe(false);
+    });
+
+    it('should include renamed files (R status)', async () => {
+      const { execFileSync } = await import('node:child_process');
+      // git diff --name-status format: R<score>\t<old>\t<new>
+      vi.mocked(execFileSync).mockReturnValue('R100\told/path.ts\tnew/path.ts\n');
+
+      const result = await detectChangedFunctions('/fake/path', graph);
+
+      expect(result.changedFiles).toContain('new/path.ts');
+      expect(result.changedFiles).not.toContain('old/path.ts');
+    });
+
+    it('should include modified files (M status)', async () => {
+      const { execFileSync } = await import('node:child_process');
+      vi.mocked(execFileSync).mockReturnValue('M\tsrc/utils/auth.ts\n');
+
+      const result = await detectChangedFunctions('/fake/path', graph);
+
+      expect(result.changedFiles).toContain('src/utils/auth.ts');
+    });
+
+    it('should include added files (A status)', async () => {
+      const { execFileSync } = await import('node:child_process');
+      vi.mocked(execFileSync).mockReturnValue('A\tnew/file.ts\n');
+
+      const result = await detectChangedFunctions('/fake/path', graph);
+
+      expect(result.changedFiles).toContain('new/file.ts');
+    });
+
+    it('should exclude deleted files (D status)', async () => {
+      const { execFileSync } = await import('node:child_process');
+      vi.mocked(execFileSync).mockReturnValue('D\tdeleted/file.ts\n');
+
+      const result = await detectChangedFunctions('/fake/path', graph);
+
+      expect(result.changedFiles).not.toContain('deleted/file.ts');
+    });
+  });
+
+  describe('path matching', () => {
+    it('should NOT match auth.ts with auth-helpers.ts', async () => {
+      const { execFileSync } = await import('node:child_process');
+      // Simulate git diff that changes auth-helpers.ts
+      vi.mocked(execFileSync).mockReturnValue('M\tsrc/utils/auth-helpers.ts\n');
+
+      // Add a function in auth.ts
+      graph.addNode({
+        id: 'Function:login',
+        label: 'Function',
+        properties: { name: 'login', filePath: 'src/utils/auth.ts' },
+      });
+
+      const result = await detectChangedFunctions('/fake/path', graph);
+
+      // auth.ts function should NOT be affected because we changed auth-helpers.ts
+      expect(result.affectedFunctions).not.toContain('Function:login');
+    });
+
+    it('should match exact file path', async () => {
+      const { execFileSync } = await import('node:child_process');
+      // Simulate git diff that changes auth.ts
+      vi.mocked(execFileSync).mockReturnValue('M\tsrc/utils/auth.ts\n');
+
+      // Add a function in auth.ts
+      graph.addNode({
+        id: 'Function:login',
+        label: 'Function',
+        properties: { name: 'login', filePath: 'src/utils/auth.ts' },
+      });
+
+      const result = await detectChangedFunctions('/fake/path', graph);
+
+      // auth.ts function SHOULD be affected
+      expect(result.affectedFunctions).toContain('Function:login');
+    });
+
+    it('should match file in parent directory when sibling file changes', async () => {
+      const { execFileSync } = await import('node:child_process');
+      // Simulate git diff that changes auth-helpers.ts in same directory as auth.ts
+      vi.mocked(execFileSync).mockReturnValue('M\tsrc/utils/auth-helpers.ts\n');
+
+      // Add a function in auth.ts
+      graph.addNode({
+        id: 'Function:login',
+        label: 'Function',
+        properties: { name: 'login', filePath: 'src/utils/auth.ts' },
+      });
+
+      const result = await detectChangedFunctions('/fake/path', graph);
+
+      // auth.ts should NOT be affected - only auth-helpers.ts changed
+      expect(result.affectedFunctions).not.toContain('Function:login');
+    });
+
+    it('should handle paths with backslashes (Windows)', async () => {
+      const { execFileSync } = await import('node:child_process');
+      // Windows format: status followed by tab, then path with backslashes
+      vi.mocked(execFileSync).mockReturnValue('M\tsrc\\utils\\auth.ts\n');
+
+      graph.addNode({
+        id: 'Function:login',
+        label: 'Function',
+        properties: { name: 'login', filePath: 'src/utils/auth.ts' },
+      });
+
+      const result = await detectChangedFunctions('/fake/path', graph);
+
+      // Should match despite backslash differences
+      expect(result.affectedFunctions).toContain('Function:login');
     });
   });
 });

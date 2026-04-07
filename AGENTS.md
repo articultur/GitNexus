@@ -63,14 +63,13 @@ Generic “core standards” playbooks are often long and stack-specific. For th
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **GitNexus** (3723 symbols, 9166 relationships, 223 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **GitNexus** (4252 symbols, 10124 relationships, 334 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
 ## Always Do
 
 - **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **For variable/data-flow tracing, MUST include relationTypes explicitly.** Default impact traversal is usage-based and excludes `DATA_FLOW`. Use `gitnexus_impact({target: "symbolName", direction: "upstream", relationTypes: ["CALLS", "IMPORTS", "EXTENDS", "IMPLEMENTS", "DATA_FLOW", "TAINTED", "SINK_REACHABLE"]})` when you need propagation paths.
 - **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
 - **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
 - When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
@@ -103,7 +102,6 @@ This project is indexed by GitNexus as **GitNexus** (3723 symbols, 9166 relation
 | `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
 | `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
 | `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| `impact` (data-flow) | Value propagation blast radius | `gitnexus_impact({target: "X", direction: "upstream", relationTypes: ["CALLS", "IMPORTS", "EXTENDS", "IMPLEMENTS", "DATA_FLOW", "TAINTED", "SINK_REACHABLE"]})` |
 | `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
 | `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
 | `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |

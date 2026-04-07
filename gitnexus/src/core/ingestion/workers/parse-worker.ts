@@ -111,6 +111,11 @@ import { detectFrameworkFromAST } from '../framework-detection.js';
 import { generateId } from '../../../lib/utils.js';
 import { preprocessImportPath } from '../import-processor.js';
 import { preprocessArktsContent } from '../languages/arkts-preprocess.js';
+import {
+  extractVueScript,
+  extractTemplateComponents,
+  isVueSetupTopLevel,
+} from '../vue-sfc-extractor.js';
 import type { NamedBinding } from '../named-bindings/types.js';
 import type { NodeLabel } from 'gitnexus-shared';
 import type { FieldInfo, FieldExtractorContext } from '../field-types.js';
@@ -333,6 +338,7 @@ const languageMap: Record<string, TreeSitterLanguage> = {
   ...(Dart ? { [SupportedLanguages.Dart]: Dart } : {}),
   ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
   ...(Objc ? { [SupportedLanguages.ObjectiveC]: Objc } : {}),
+  [SupportedLanguages.Vue]: TypeScript.typescript,
 };
 
 /**
@@ -369,6 +375,36 @@ const setLanguage = (language: SupportedLanguages, filePath: string): void => {
 const classIdCache = new Map<SyntaxNode, string | null>();
 const functionIdCache = new Map<SyntaxNode, string | null>();
 const exportCache = new Map<SyntaxNode, boolean>();
+
+/**
+ * Estimate nesting depth of a file by scanning for deep template/generic chains.
+ * C++ template nesting (e.g. `Foo<Bar<Baz<Qux>>>`) and TypeScript conditional types
+ * can produce ASTs thousands of levels deep that exhaust macOS's ~2MB C stack.
+ * Returns the maximum estimated nesting depth, capped at 1000.
+ */
+const estimateNestingDepth = (content: string): number => {
+  let maxDepth = 0;
+  let currentDepth = 0;
+  // Track depth by counting consecutive angle brackets, arrows, and parens
+  // that appear in template/generic positions (after identifiers or keywords)
+  let i = 0;
+  const len = content.length;
+  while (i < len) {
+    const ch = content[i];
+    if (ch === '<' || ch === '>' || ch === '(' || ch === ')' || ch === '{' || ch === '}') {
+      if (ch === '<' || ch === '{' || ch === '(') {
+        currentDepth++;
+        if (currentDepth > maxDepth) maxDepth = currentDepth;
+      } else {
+        currentDepth = Math.max(0, currentDepth - 1);
+      }
+    } else if (ch === '\n' || ch === ';') {
+      currentDepth = Math.max(0, currentDepth - 1);
+    }
+    i++;
+  }
+  return maxDepth;
+};
 
 const clearCaches = (): void => {
   classIdCache.clear();
@@ -450,7 +486,8 @@ function findClassNodeByQualifiedName(node: SyntaxNode): SyntaxNode | null {
   // namespace_definition blocks (the majority of production C++ uses namespaces).
   const root = node.tree.rootNode;
   const classTypes = new Set(['class_specifier', 'struct_specifier']);
-  const searchIn = (parent: SyntaxNode): SyntaxNode | null => {
+  const searchIn = (parent: SyntaxNode, depth = 0): SyntaxNode | null => {
+    if (depth > 200) return null; // Cap: C++ namespace nesting rarely exceeds this
     for (let i = 0; i < parent.namedChildCount; i++) {
       const child = parent.namedChild(i);
       if (!child) continue;
@@ -460,7 +497,7 @@ function findClassNodeByQualifiedName(node: SyntaxNode): SyntaxNode | null {
       }
       // Recurse into namespace blocks
       if (child.type === 'namespace_definition') {
-        const found = searchIn(child);
+        const found = searchIn(child, depth + 1);
         if (found) return found;
       }
     }
@@ -1388,16 +1425,28 @@ const processFileGroup = (
     // Skip files larger than the max tree-sitter buffer (32 MB)
     if (file.content.length > TREE_SITTER_MAX_BUFFER) continue;
 
+    // Vue SFC preprocessing: extract <script> block content
+    let parseContent = file.content;
+    let lineOffset = 0;
+    let isVueSetup = false;
+    if (language === SupportedLanguages.Vue) {
+      const extracted = extractVueScript(file.content);
+      if (!extracted) continue; // skip .vue files with no script block
+      parseContent = extracted.scriptContent;
+      lineOffset = extracted.lineOffset;
+      isVueSetup = extracted.isSetup;
+    }
+
     clearCaches(); // Reset memoization before each new file
 
     // OC headers contain NS_ASSUME_NONNULL_BEGIN / NS_ASSUME_NONNULL_END macros that
     // tree-sitter-objc grammar cannot parse — strip them so heritage queries match.
-    const parseContent =
+    parseContent =
       language === SupportedLanguages.ObjectiveC
-        ? stripNullabilityMacros(file.content)
+        ? stripNullabilityMacros(parseContent)
         : language === SupportedLanguages.ArkTS
-          ? preprocessArktsContent(file.content)
-          : file.content;
+          ? preprocessArktsContent(parseContent)
+          : parseContent;
 
     let tree;
     try {
@@ -1909,7 +1958,11 @@ const processFileGroup = (
       const nameNode = captureMap['name'];
       // Synthesize name for constructors without explicit @name capture (e.g. Swift init)
       if (!nameNode && nodeLabel !== 'Constructor') continue;
-      const nodeName = nameNode ? nameNode.text : 'init';
+      const rawNodeName = nameNode ? nameNode.text : 'init';
+      // descriptionExtractor returns the full selector for OC methods (e.g. "sd_colorAtPoint:")
+      // Use it as the indexed name so callers can search by the complete selector.
+      const description = provider.descriptionExtractor?.(nodeLabel, rawNodeName, captureMap);
+      const nodeName = description ?? rawNodeName;
       const definitionNode = getDefinitionNodeFromCaptures(captureMap);
       const startLine = definitionNode
         ? definitionNode.startPosition.row
@@ -1917,8 +1970,6 @@ const processFileGroup = (
           ? nameNode.startPosition.row
           : 0;
       const nodeId = generateId(nodeLabel, `${file.path}:${nodeName}`);
-
-      const description = provider.descriptionExtractor?.(nodeLabel, nodeName, captureMap);
 
       let frameworkHint = definitionNode
         ? detectFrameworkFromAST(language, (definitionNode.text || '').slice(0, 300))

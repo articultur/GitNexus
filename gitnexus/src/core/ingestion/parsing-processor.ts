@@ -1,5 +1,4 @@
 import type { GraphNode, GraphRelationship, NodeLabel } from 'gitnexus-shared';
-import { SupportedLanguages } from 'gitnexus-shared';
 import { KnowledgeGraph } from '../graph/types.js';
 import Parser from 'tree-sitter';
 import { loadParser, loadLanguage, isLanguageAvailable } from '../tree-sitter/parser-loader.js';
@@ -7,7 +6,8 @@ import { getProvider } from './languages/index.js';
 import { generateId } from '../../lib/utils.js';
 import { SymbolTable } from './symbol-table.js';
 import { ASTCache } from './ast-cache.js';
-import { getLanguageFromFilename } from 'gitnexus-shared';
+import { getLanguageFromFilename, SupportedLanguages } from 'gitnexus-shared';
+import { extractVueScript, isVueSetupTopLevel } from './vue-sfc-extractor.js';
 import { yieldToEventLoop } from './utils/event-loop.js';
 import {
   getDefinitionNodeFromCaptures,
@@ -147,26 +147,38 @@ const processParsingWithWorkers = async (
   const allTypeEnvBindings: FileTypeEnvBindings[] = [];
   for (const result of chunkResults) {
     for (const node of result.nodes) {
-      graph.addNode({
-        id: node.id,
-        label: node.label as NodeLabel,
-        properties: node.properties,
-      });
+      try {
+        graph.addNode({
+          id: node.id,
+          label: node.label as NodeLabel,
+          properties: node.properties,
+        });
+      } catch (err) {
+        console.warn(`  Warning: failed to add node ${node.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     for (const rel of result.relationships) {
-      graph.addRelationship(rel);
+      try {
+        graph.addRelationship(rel);
+      } catch (err) {
+        console.warn(`  Warning: failed to add relationship: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     for (const sym of result.symbols) {
-      symbolTable.add(sym.filePath, sym.name, sym.nodeId, sym.type, {
-        parameterCount: sym.parameterCount,
-        requiredParameterCount: sym.requiredParameterCount,
-        parameterTypes: sym.parameterTypes,
-        returnType: sym.returnType,
-        declaredType: sym.declaredType,
-        ownerId: sym.ownerId,
-      });
+      try {
+        symbolTable.add(sym.filePath, sym.name, sym.nodeId, sym.type, {
+          parameterCount: sym.parameterCount,
+          requiredParameterCount: sym.requiredParameterCount,
+          parameterTypes: sym.parameterTypes,
+          returnType: sym.returnType,
+          declaredType: sym.declaredType,
+          ownerId: sym.ownerId,
+        });
+      } catch (err) {
+        console.warn(`  Warning: failed to add symbol ${sym.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     allImports.push(...result.imports);
@@ -315,6 +327,18 @@ const processParsingSequential = async (
     // Skip files larger than the max tree-sitter buffer (32 MB)
     if (file.content.length > TREE_SITTER_MAX_BUFFER) continue;
 
+    // Vue SFC preprocessing: extract <script> block content
+    let parseContent = file.content;
+    let lineOffset = 0;
+    let isVueSetup = false;
+    if (language === SupportedLanguages.Vue) {
+      const extracted = extractVueScript(file.content);
+      if (!extracted) continue; // skip .vue files with no script block
+      parseContent = extracted.scriptContent;
+      lineOffset = extracted.lineOffset;
+      isVueSetup = extracted.isSetup;
+    }
+
     try {
       await loadLanguage(language, file.path);
     } catch {
@@ -323,14 +347,14 @@ const processParsingSequential = async (
 
     // OC headers contain NS_ASSUME_NONNULL_BEGIN / NS_ASSUME_NONNULL_END macros that
     // tree-sitter-objc grammar cannot parse — strip them so heritage queries match.
-    const parseContent =
+    parseContent =
       language === SupportedLanguages.ObjectiveC
         ? file.content
             .replace(/\bNS_ASSUME_NONNULL_BEGIN\b/g, '')
             .replace(/\bNS_ASSUME_NONNULL_END\b/g, '')
         : language === SupportedLanguages.ArkTS
           ? preprocessArktsContent(file.content)
-          : file.content;
+          : parseContent;
 
     let tree;
     try {
@@ -383,10 +407,10 @@ const processParsingSequential = async (
 
       const definitionNodeForRange = getDefinitionNodeFromCaptures(captureMap);
       const startLine = definitionNodeForRange
-        ? definitionNodeForRange.startPosition.row
+        ? definitionNodeForRange.startPosition.row + lineOffset
         : nameNode
-          ? nameNode.startPosition.row
-          : 0;
+          ? nameNode.startPosition.row + lineOffset
+          : lineOffset;
       const nodeId = generateId(nodeLabel, `${file.path}:${nodeName}`);
 
       const definitionNode = getDefinitionNodeFromCaptures(captureMap);
@@ -422,14 +446,21 @@ const processParsingSequential = async (
         properties: {
           name: nodeName,
           filePath: file.path,
-          startLine: definitionNodeForRange ? definitionNodeForRange.startPosition.row : startLine,
-          endLine: definitionNodeForRange ? definitionNodeForRange.endPosition.row : startLine,
+          startLine: definitionNodeForRange
+            ? definitionNodeForRange.startPosition.row + lineOffset
+            : startLine,
+          endLine: definitionNodeForRange
+            ? definitionNodeForRange.endPosition.row + lineOffset
+            : startLine,
           language: language,
-          isExported: cachedExportCheck(
-            provider.exportChecker,
-            nameNode || definitionNodeForRange,
-            nodeName,
-          ),
+          isExported:
+            language === SupportedLanguages.Vue && isVueSetup
+              ? isVueSetupTopLevel(nameNode || definitionNodeForRange)
+              : cachedExportCheck(
+                  provider.exportChecker,
+                  nameNode || definitionNodeForRange,
+                  nodeName,
+                ),
           ...(frameworkHint
             ? {
                 astFrameworkMultiplier: frameworkHint.entryPointMultiplier,
@@ -487,7 +518,7 @@ const processParsingSequential = async (
             }
           }
         }
-        // All 14 languages register a FieldExtractor — no fallback needed.
+        // All 15 tree-sitter languages register a FieldExtractor — no fallback needed.
       }
 
       // Apply field metadata to the graph node retroactively

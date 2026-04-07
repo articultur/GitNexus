@@ -165,7 +165,8 @@ describe('DFA Engine', () => {
       const result = analyzeForward(context);
       const sources = extractTaintSources(result);
 
-      expect(sources.some(s => s.includes('x'))).toBe(true);
+      // DEF-005 fix: extractTaintSources now reports actual source call nodes, not variables with TAINTED value
+      expect(sources.some(s => s.includes('userInput'))).toBe(true);
     });
   });
 

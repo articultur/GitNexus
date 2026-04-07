@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { glob } from 'glob';
+import { globIterate } from 'glob';
 import { createIgnoreFilter } from '../../config/ignore-service.js';
 
 export interface FileEntry {
@@ -21,7 +21,7 @@ export interface FilePath {
 
 const READ_CONCURRENCY = 32;
 
-/** Skip files larger than 512KB — they're usually generated/vendored and crash tree-sitter */
+/** Skip files larger than 512KB — deeply nested TypeScript/C++ can exhaust macOS ~2MB C stack */
 const MAX_FILE_SIZE = 512 * 1024;
 
 /**
@@ -34,37 +34,61 @@ export const walkRepositoryPaths = async (
 ): Promise<ScannedFile[]> => {
   const ignoreFilter = await createIgnoreFilter(repoPath);
 
-  const filtered = await glob('**/*', {
+  // Use globIterate (async generator) for streaming — yields files as found,
+  // rather than accumulating all 170K+ paths in memory before returning.
+  // This enables immediate stat processing and real progress reporting.
+  const globOptions = {
     cwd: repoPath,
     nodir: true,
     dot: false,
     ignore: ignoreFilter,
-  });
+  };
+
   const entries: ScannedFile[] = [];
   let processed = 0;
   let skippedLarge = 0;
 
-  for (let start = 0; start < filtered.length; start += READ_CONCURRENCY) {
-    const batch = filtered.slice(start, start + READ_CONCURRENCY);
-    const results = await Promise.allSettled(
-      batch.map(async (relativePath) => {
-        const fullPath = path.join(repoPath, relativePath);
-        const stat = await fs.stat(fullPath);
-        if (stat.size > MAX_FILE_SIZE) {
-          skippedLarge++;
+  // Buffer for concurrent stat processing
+  const pending: Promise<ScannedFile | null>[] = [];
+
+  for await (const relativePath of globIterate('**/*', globOptions)) {
+    pending.push(
+      (async () => {
+        try {
+          const fullPath = path.join(repoPath, relativePath);
+          const stat = await fs.stat(fullPath);
+          if (stat.size > MAX_FILE_SIZE) {
+            skippedLarge++;
+            return null;
+          }
+          return { path: relativePath.replace(/\\/g, '/'), size: stat.size };
+        } catch {
           return null;
         }
-        return { path: relativePath.replace(/\\/g, '/'), size: stat.size };
-      }),
+      })(),
     );
 
+    // Process stat results when buffer reaches concurrency limit
+    if (pending.length >= READ_CONCURRENCY) {
+      const results = await Promise.allSettled(pending.splice(0, READ_CONCURRENCY));
+      for (const result of results) {
+        processed++;
+        if (result.status === 'fulfilled' && result.value !== null) {
+          entries.push(result.value);
+          onProgress?.(processed, processed, result.value.path);
+        }
+      }
+    }
+  }
+
+  // Drain remaining pending stats
+  if (pending.length > 0) {
+    const results = await Promise.allSettled(pending);
     for (const result of results) {
       processed++;
       if (result.status === 'fulfilled' && result.value !== null) {
         entries.push(result.value);
-        onProgress?.(processed, filtered.length, result.value.path);
-      } else {
-        onProgress?.(processed, filtered.length, batch[results.indexOf(result)]);
+        onProgress?.(processed, processed, result.value.path);
       }
     }
   }

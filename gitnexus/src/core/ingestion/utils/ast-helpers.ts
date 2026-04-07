@@ -25,6 +25,7 @@ export const DEFINITION_CAPTURE_KEYS = [
   'definition.type',
   'definition.const',
   'definition.static',
+  'definition.global',
   'definition.typedef',
   'definition.macro',
   'definition.union',
@@ -227,6 +228,7 @@ export function getLabelFromCaptures(
   if (captureMap['definition.type']) return 'TypeAlias';
   if (captureMap['definition.const']) return 'Const';
   if (captureMap['definition.static']) return 'Static';
+  if (captureMap['definition.global']) return 'Variable';
   if (captureMap['definition.typedef']) return 'Typedef';
   if (captureMap['definition.macro']) return 'Macro';
   if (captureMap['definition.union']) return 'Union';
@@ -500,7 +502,8 @@ export const extractFunctionName = (
     if (!nameNode) {
       for (let i = 0; i < node.childCount; i++) {
         const c = node.child(i);
-        if (c?.type === 'property_identifier') {
+        // property_identifier: TypeScript/JS method names; identifier: OC method names
+        if (c?.type === 'property_identifier' || c?.type === 'identifier') {
           nameNode = c;
           break;
         }
@@ -886,10 +889,11 @@ export const extractMethodSignature = (node: SyntaxNode | null | undefined): Met
 // ============================================================================
 
 /** Walk an AST node depth-first, returning the first descendant with the given type. */
-export function findDescendant(node: SyntaxNode, type: string): SyntaxNode | null {
+export function findDescendant(node: SyntaxNode, type: string, depth = 0, maxDepth = 1000): SyntaxNode | null {
+  if (depth > maxDepth) return null;
   if (node.type === type) return node;
   for (const child of node.children ?? []) {
-    const found = findDescendant(child, type);
+    const found = findDescendant(child, type, depth + 1, maxDepth);
     if (found) return found;
   }
   return null;

@@ -127,7 +127,7 @@ function configureOllamaEmbedding(): void {
 const HEAP_MB = 8192;
 const HEAP_FLAG = `--max-old-space-size=${HEAP_MB}`;
 
-/** Re-exec the process with an 8GB heap if we're currently below that. */
+/** Re-exec the process with an 8GB heap and 16MB C stack if we're currently below that. */
 function ensureHeap(): boolean {
   const nodeOpts = process.env.NODE_OPTIONS || '';
   if (nodeOpts.includes('--max-old-space-size')) return false;
@@ -135,8 +135,15 @@ function ensureHeap(): boolean {
   const v8Heap = v8.getHeapStatistics().heap_size_limit;
   if (v8Heap >= HEAP_MB * 1024 * 1024 * 0.9) return false;
 
+  const stackSizeFlag = '--stack-size=16384';
+  // Build args without spread to avoid C stack exhaustion before Node starts
+  const args: string[] = [HEAP_FLAG, stackSizeFlag];
+  for (let i = 1; i < process.argv.length; i++) {
+    args.push(process.argv[i]);
+  }
+
   try {
-    execFileSync(process.execPath, [HEAP_FLAG, ...process.argv.slice(1)], {
+    execFileSync(process.execPath, args, {
       stdio: 'inherit',
       env: { ...process.env, NODE_OPTIONS: `${nodeOpts} ${HEAP_FLAG}`.trim() },
     });
@@ -431,7 +438,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     console.warn = origWarn;
     console.error = origError;
     bar.stop();
-    console.error(`\n  Analysis failed: ${err.message}\n`);
+    console.error(`\n  Analysis failed: ${err.stack ?? err.message}\n`);
     process.exitCode = 1;
     return;
   }

@@ -15,7 +15,7 @@ import {
   closeLbug,
   isLbugReady,
   isWriteQuery,
-} from '../core/lbug-adapter.js';
+} from '../../core/lbug/pool-adapter.js';
 export { isWriteQuery };
 // Embedding imports are lazy (dynamic import) to avoid loading onnxruntime-node
 // at MCP server startup — crashes on unsupported Node ABI versions (#89)
@@ -28,6 +28,8 @@ import {
 } from '../../storage/repo-manager.js';
 import { SupportedLanguages } from 'gitnexus-shared';
 import { isLanguageAvailable } from '../../core/tree-sitter/parser-loader.js';
+import { GroupService, type GroupToolPort } from '../../core/group/service.js';
+import { resolveLLMConfig, callLLM } from '../../core/wiki/llm-client.js';
 // AI context generation is CLI-only (gitnexus analyze)
 // import { generateAIContextFiles } from '../../cli/ai-context.js';
 
@@ -158,10 +160,34 @@ export const IMPACT_RELATION_CONFIDENCE: Readonly<Record<string, number>> = {
 const confidenceForRelType = (relType: string | undefined): number =>
   IMPACT_RELATION_CONFIDENCE[relType ?? ''] ?? 0.5;
 
+/** Filter and normalize relation types for impact analysis. Returns defaults if none survive. */
+const filterRelationTypes = (raw?: string[]): string[] => {
+  const filtered = raw && raw.length > 0
+    ? raw.filter((t) => VALID_RELATION_TYPES.has(t))
+    : [];
+  return filtered.length > 0 ? filtered : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
+};
+
 /** Structured error logging for query failures — replaces empty catch blocks */
 function logQueryError(context: string, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
   console.error(`GitNexus [${context}]: ${msg}`);
+}
+
+/** Shared params for impact analysis methods */
+interface ImpactParams {
+  target: string;
+  direction: 'upstream' | 'downstream';
+  maxDepth?: number;
+  relationTypes?: string[];
+  includeTests?: boolean;
+  minConfidence?: number;
+  /** When false, omit the `evidence` block from the response. Default: true */
+  include_evidence?: boolean;
+  /** When true, include source code content for each impacted symbol. */
+  include_content?: boolean;
+  /** File path to filter impact results to a specific file. */
+  file_path?: string;
 }
 
 export interface CodebaseContext {
@@ -219,6 +245,28 @@ export class LocalBackend {
   private initializedRepos: Set<string> = new Set();
   private reinitPromises: Map<string, Promise<void>> = new Map();
   private lastStalenessCheck: Map<string, number> = new Map();
+  private groupToolSvc: GroupService | null = null;
+
+  /**
+   * Cross-repo group tools (CLI). Shares logic with MCP `group_*` handlers.
+   */
+  getGroupService(): GroupService {
+    if (!this.groupToolSvc) {
+      const port: GroupToolPort = {
+        resolveRepo: (p) => this.resolveRepo(p),
+        impact: (r, p) => this.impact(r as RepoHandle, p),
+        query: (r, p) => this.query(r as RepoHandle, p),
+        impactByUid: (id, uid, d, o) => this.impactByUid(id, uid, d, o),
+      };
+      this.groupToolSvc = new GroupService(port);
+    }
+    return this.groupToolSvc;
+  }
+
+  /** Close all pooled LadybugDB connections (CLI one-shot; optional for long-lived MCP). */
+  async dispose(): Promise<void> {
+    await closeLbug();
+  }
 
   // ─── Initialization ──────────────────────────────────────────────
 
@@ -620,6 +668,10 @@ export class LocalBackend {
       return this.listRepos();
     }
 
+    if (method.startsWith('group_')) {
+      return this.handleGroupTool(method, params || {});
+    }
+
     // Resolve repo from optional param (re-reads registry on miss)
     const repo = await this.resolveRepo(params?.repo);
 
@@ -653,6 +705,10 @@ export class LocalBackend {
         return this.toolMap(repo, params);
       case 'api_impact':
         return this.apiImpact(repo, params);
+      case 'shortest_path':
+        return this.shortestPath(repo, params);
+      case 'get_code':
+        return this.getCode(repo, params);
       default:
         throw new Error(`Unknown tool: ${method}`);
     }
@@ -677,6 +733,7 @@ export class LocalBackend {
       limit?: number;
       max_symbols?: number;
       include_content?: boolean;
+      method?: string;
     },
   ): Promise<any> {
     if (!params.query?.trim()) {
@@ -689,16 +746,30 @@ export class LocalBackend {
     const maxSymbolsPerProcess = params.max_symbols || 10;
     const includeContent = params.include_content ?? false;
     const searchQuery = params.query.trim();
+    const method = params.method ?? 'hybrid';
 
-    // Step 1: Run hybrid search to get matching symbols
+    // Step 1: Run search based on method
     const searchLimit = processLimit * maxSymbolsPerProcess; // fetch enough raw results
-    const [bm25SearchResult, semanticResults] = await Promise.all([
-      this.bm25Search(repo, searchQuery, searchLimit),
-      this.semanticSearch(repo, searchQuery, searchLimit),
-    ]);
+    let bm25Results: any[] = [];
+    let semanticResults: any[] = [];
+    let ftsUsed = false;
 
-    const bm25Results = bm25SearchResult.results;
-    const ftsUsed = bm25SearchResult.ftsUsed;
+    if (method === 'fulltext' || method === 'bm25') {
+      const bm25SearchResult = await this.bm25Search(repo, searchQuery, searchLimit);
+      bm25Results = bm25SearchResult.results;
+      ftsUsed = bm25SearchResult.ftsUsed;
+    } else if (method === 'vector' || method === 'semantic') {
+      semanticResults = await this.semanticSearch(repo, searchQuery, searchLimit);
+    } else {
+      // hybrid (default)
+      const [bm25SearchResult, semResults] = await Promise.all([
+        this.bm25Search(repo, searchQuery, searchLimit),
+        this.semanticSearch(repo, searchQuery, searchLimit),
+      ]);
+      bm25Results = bm25SearchResult.results;
+      ftsUsed = bm25SearchResult.ftsUsed;
+      semanticResults = semResults;
+    }
 
     // Merge via reciprocal rank fusion
     const scoreMap = new Map<string, { score: number; data: any }>();
@@ -706,7 +777,7 @@ export class LocalBackend {
     for (let i = 0; i < bm25Results.length; i++) {
       const result = bm25Results[i];
       const key = result.nodeId || result.filePath;
-      const rrfScore = 1 / (60 + i);
+      const rrfScore = 1 / (20 + i);
       const existing = scoreMap.get(key);
       if (existing) {
         existing.score += rrfScore;
@@ -718,7 +789,7 @@ export class LocalBackend {
     for (let i = 0; i < semanticResults.length; i++) {
       const result = semanticResults[i];
       const key = result.nodeId || result.filePath;
-      const rrfScore = 1 / (60 + i);
+      const rrfScore = 1 / (20 + i);
       const existing = scoreMap.get(key);
       if (existing) {
         existing.score += rrfScore;
@@ -728,7 +799,15 @@ export class LocalBackend {
     }
 
     const merged = Array.from(scoreMap.entries())
-      .sort((a, b) => b[1].score - a[1].score)
+      .sort((a, b) => {
+        // Primary: higher RRF score first
+        const scoreDiff = b[1].score - a[1].score;
+        if (scoreDiff !== 0) return scoreDiff;
+        // Tiebreaker: non-test files rank above test files
+        const aIsTest = isTestFilePath(a[1].data.filePath || '');
+        const bIsTest = isTestFilePath(b[1].data.filePath || '');
+        return aIsTest === bIsTest ? 0 : aIsTest ? 1 : -1;
+      })
       .slice(0, searchLimit);
 
     // Step 2: For each match with a nodeId, trace to process(es)
@@ -965,7 +1044,8 @@ export class LocalBackend {
             bm25Score: bm25Result.score,
           });
         }
-      } catch {
+      } catch (e) {
+        logQueryError('bm25Search:symbol-lookup', e);
         const fileName = fullPath.split('/').pop() || fullPath;
         results.push({
           name: fileName,
@@ -1001,7 +1081,7 @@ export class LocalBackend {
           CAST(${queryVecStr} AS FLOAT[${dims}]), ${limit})
         YIELD node AS emb, distance
         WITH emb, distance
-        WHERE distance < 0.6
+        WHERE distance < 0.25
         RETURN emb.nodeId AS nodeId, distance
         ORDER BY distance
       `;
@@ -1041,7 +1121,9 @@ export class LocalBackend {
               endLine: label !== 'File' ? (nodeRow.endLine ?? nodeRow[3]) : undefined,
             });
           }
-        } catch {}
+        } catch (e) {
+          logQueryError('semanticSearch:node-lookup', e);
+        }
       }
 
       return results;
@@ -1180,14 +1262,15 @@ export class LocalBackend {
       try {
         // Fetch more raw communities than the display limit so aggregation has enough data
         const rawLimit = Math.max(limit * 5, 200);
-        const clusters = await executeQuery(
+        const clusters = await executeParameterized(
           repo.id,
           `
           MATCH (c:Community)
           RETURN c.id AS id, c.label AS label, c.heuristicLabel AS heuristicLabel, c.cohesion AS cohesion, c.symbolCount AS symbolCount
           ORDER BY c.symbolCount DESC
-          LIMIT ${rawLimit}
+          LIMIT $limit
         `,
+          { limit: rawLimit },
         );
         const rawClusters = clusters.map((c: any) => ({
           id: c.id || c[0],
@@ -1197,21 +1280,23 @@ export class LocalBackend {
           symbolCount: c.symbolCount || c[4],
         }));
         result.clusters = this.aggregateClusters(rawClusters).slice(0, limit);
-      } catch {
+      } catch (e) {
+        logQueryError('overview:clusters', e);
         result.clusters = [];
       }
     }
 
     if (params.showProcesses !== false) {
       try {
-        const processes = await executeQuery(
+        const processes = await executeParameterized(
           repo.id,
           `
           MATCH (p:Process)
           RETURN p.id AS id, p.label AS label, p.heuristicLabel AS heuristicLabel, p.processType AS processType, p.stepCount AS stepCount
           ORDER BY p.stepCount DESC
-          LIMIT ${limit}
+          LIMIT $limit
         `,
+          { limit },
         );
         result.processes = processes.map((p: any) => ({
           id: p.id || p[0],
@@ -1220,7 +1305,8 @@ export class LocalBackend {
           processType: p.processType || p[3],
           stepCount: p.stepCount || p[4],
         }));
-      } catch {
+      } catch (e) {
+        logQueryError('overview:processes', e);
         result.processes = [];
       }
     }
@@ -1266,30 +1352,47 @@ export class LocalBackend {
         { uid },
       );
     } else {
-      const isQualified = name!.includes('/') || name!.includes(':');
+      // Support dot-separated "Class.method" syntax for disambiguation (like ContactUtil.getDisplayName)
+      const dotIdx = name!.lastIndexOf('.');
+      const parentClassName = dotIdx > 0 ? name!.substring(0, dotIdx) : undefined;
+      const baseName = dotIdx > 0 ? name!.substring(dotIdx + 1) : name!;
 
-      let whereClause: string;
+      let query: string;
       let queryParams: Record<string, any>;
-      if (file_path) {
-        whereClause = `WHERE n.name = $symName AND n.filePath CONTAINS $filePath`;
+
+      if (parentClassName) {
+        // Resolve via Class membership edge — matches both Method (Java) and Function (Kotlin) nodes.
+        // LadybugDB stores HAS_METHOD/HAS_PROPERTY as r.type on CodeRelation edges.
+        // Use two MATCHes with OR to avoid the IN-list bug on relationship properties.
+        query = `
+          MATCH (parent:\`Class\`)-[r:CodeRelation]->(n)
+          WHERE parent.name = $parentClassName AND n.name = $baseName AND r.type = 'HAS_METHOD'
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
+          LIMIT 10
+        UNION ALL
+          MATCH (parent:\`Class\`)-[r:CodeRelation]->(n)
+          WHERE parent.name = $parentClassName AND n.name = $baseName AND r.type = 'HAS_PROPERTY'
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
+          LIMIT 10
+        `;
+        queryParams = { parentClassName, baseName };
+      } else if (file_path) {
+        query = `
+          MATCH (n) WHERE n.name = $symName AND n.filePath CONTAINS $filePath
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
+          LIMIT 10
+        `;
         queryParams = { symName: name!, filePath: file_path };
-      } else if (isQualified) {
-        whereClause = `WHERE n.id = $symName OR n.name = $symName`;
-        queryParams = { symName: name! };
       } else {
-        whereClause = `WHERE n.name = $symName`;
+        query = `
+          MATCH (n) WHERE n.name = $symName
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
+          LIMIT 10
+        `;
         queryParams = { symName: name! };
       }
 
-      symbols = await executeParameterized(
-        repo.id,
-        `
-        MATCH (n) ${whereClause}
-        RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
-        LIMIT 10
-      `,
-        queryParams,
-      );
+      symbols = await executeParameterized(repo.id, query, queryParams);
     }
 
     if (symbols.length === 0) {
@@ -1396,8 +1499,8 @@ export class LocalBackend {
           { symId },
         );
         isClassLike = typeCheck.length > 0;
-      } catch {
-        /* not a Class/Interface node */
+      } catch (e) {
+        logQueryError('context:class-type-check', e);
       }
     } else if (!isClassLike) {
       isClassLike = symRawType === 'Class' || symRawType === 'Interface';
@@ -2073,16 +2176,7 @@ export class LocalBackend {
 
   private async impact(
     repo: RepoHandle,
-    params: {
-      target: string;
-      direction: 'upstream' | 'downstream';
-      maxDepth?: number;
-      relationTypes?: string[];
-      includeTests?: boolean;
-      minConfidence?: number;
-      /** When false, omit the `evidence` block from the response. Default: true */
-      include_evidence?: boolean;
-    },
+    params: ImpactParams,
   ): Promise<any> {
     try {
       return await this._impactImpl(repo, params);
@@ -2101,32 +2195,17 @@ export class LocalBackend {
 
   private async _impactImpl(
     repo: RepoHandle,
-    params: {
-      target: string;
-      direction: 'upstream' | 'downstream';
-      maxDepth?: number;
-      relationTypes?: string[];
-      includeTests?: boolean;
-      minConfidence?: number;
-      include_evidence?: boolean;
-    },
+    params: ImpactParams,
   ): Promise<any> {
     await this.ensureInitialized(repo.id);
 
     const { target, direction } = params;
     const include_evidence = params.include_evidence ?? true;
     const maxDepth = params.maxDepth || 3;
-    const rawRelTypes =
-      params.relationTypes && params.relationTypes.length > 0
-        ? params.relationTypes.filter((t) => VALID_RELATION_TYPES.has(t))
-        : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
-    const relationTypes =
-      rawRelTypes.length > 0 ? rawRelTypes : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
+    const relationTypes = filterRelationTypes(params.relationTypes);
     const includeTests = params.includeTests ?? false;
     const minConfidence = params.minConfidence ?? 0;
-
-    const relTypeFilter = relationTypes.map((t) => `'${t}'`).join(', ');
-    const confidenceFilter = minConfidence > 0 ? ` AND r.confidence >= ${minConfidence}` : '';
+    const include_content = params.include_content ?? false;
 
     // Resolve target by name, preferring Class/Interface over Constructor
     // (fix #480: Java class and constructor share the same name).
@@ -2136,7 +2215,43 @@ export class LocalBackend {
     let sym: any = null;
     let symType = '';
 
+    // Support dot-separated "Class.method" syntax for disambiguation
+    let targetName = target;
+    let parentClassName: string | undefined;
+    const dotIdx = target.lastIndexOf('.');
+    if (dotIdx > 0) {
+      parentClassName = target.substring(0, dotIdx);
+      targetName = target.substring(dotIdx + 1);
+    }
+
+    // Try exact ID match first (handles "Method:SDWebImage/.../dataTask" style IDs)
+    const isQualified = target.includes('/') || target.includes(':');
+    if (isQualified) {
+      try {
+        const idRows = await executeParameterized(repo.id,
+          `MATCH (n {id: $target}) RETURN n.id AS id, n.name AS name, n.filePath AS filePath LIMIT 1`,
+          { target }
+        );
+        if (idRows.length > 0) {
+          sym = idRows[0];
+        }
+      } catch (e) {
+        logQueryError('impact:target-resolution-id', e);
+      }
+    }
+
     try {
+      // Build the UNION ALL query; optionally add a HAS_METHOD arm for
+      // "Class.method" disambiguation when parentClassName is provided.
+      const methodArm =
+        parentClassName
+          ? `
+        UNION ALL
+        MATCH (parent:\`Class\`)-[r:CodeRelation]->(n)
+        WHERE parent.name = $parentClassName AND n.name = $targetName AND r.type = 'HAS_METHOD'
+        RETURN n.id AS id, n.name AS name, n.filePath AS filePath, 0 AS priority LIMIT 1`
+          : '';
+
       const rows = await executeParameterized(
         repo.id,
         `
@@ -2154,8 +2269,9 @@ export class LocalBackend {
         UNION ALL
         MATCH (n:\`Constructor\`) WHERE n.name = $targetName
         RETURN n.id AS id, n.name AS name, n.filePath AS filePath, 4 AS priority LIMIT 1
+        ${methodArm}
       `,
-        { targetName: target },
+        { targetName, parentClassName },
       ).catch(() => []);
 
       if (rows.length > 0) {
@@ -2167,8 +2283,9 @@ export class LocalBackend {
         const priorityToLabel = ['Class', 'Interface', 'Function', 'Method', 'Constructor'];
         symType = priorityToLabel[best.priority ?? best[3]] ?? '';
       }
-    } catch {
-      /* fall through to unlabeled match */
+    } catch (e) {
+      // Log the real error before falling through to unlabeled match
+      logQueryError('impact:target-resolution-labeled', e);
     }
 
     // Fall back to unlabeled match for any other node type
@@ -2181,12 +2298,44 @@ export class LocalBackend {
         RETURN n.id AS id, n.name AS name, n.filePath AS filePath
         LIMIT 1
       `,
-        { targetName: target },
+        { targetName },
       );
       if (rows.length > 0) sym = rows[0];
     }
 
     if (!sym) return { error: `Target '${target}' not found` };
+
+    return this._runImpactBFS(repo, sym, symType, direction, {
+      maxDepth,
+      relationTypes,
+      includeTests,
+      minConfidence,
+      include_evidence,
+      include_content,
+      file_path: params.file_path,
+    });
+  }
+
+  /**
+   * Shared BFS traversal for impact analysis (name-resolved or UID-resolved symbol).
+   */
+  private async _runImpactBFS(
+    repo: RepoHandle,
+    sym: any,
+    symType: string,
+    direction: 'upstream' | 'downstream',
+    opts: {
+      maxDepth: number;
+      relationTypes: string[];
+      includeTests: boolean;
+      minConfidence: number;
+      include_evidence: boolean;
+      include_content: boolean;
+      file_path?: string;
+    },
+  ): Promise<any> {
+    const { maxDepth, relationTypes, includeTests, minConfidence, include_evidence, include_content, file_path } = opts;
+    const effectiveMinConf = minConfidence > 0 ? minConfidence : 0;
 
     const symId = sym.id || sym[0];
 
@@ -2250,15 +2399,28 @@ export class LocalBackend {
     for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
       const nextFrontier: string[] = [];
 
-      // Batch frontier nodes into a single Cypher query per depth level
-      const idList = frontier.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
-      const query =
+      // Build r.type filter using OR chain instead of `IN` — LadybugDB has a bug where
+      // `r.type IN ['CALLS']` with `caller.filePath` in SELECT drops same-file edges.
+      const relTypeFilter = relationTypes.map(t => `r.type = '${t}'`).join(' OR ');
+
+      // Optional file_path filter — applied to the target node (n for upstream, callee for downstream)
+      const filePathCondition = file_path
+        ? ` AND (n.filePath CONTAINS $filePath OR caller.filePath CONTAINS $filePath)`
+        : '';
+
+      // Batch frontier nodes into a single parameterized Cypher query per depth level
+      const baseQuery =
         direction === 'upstream'
-          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN [${idList}] AND r.type IN [${relTypeFilter}]${confidenceFilter} RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`
-          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN [${idList}] AND r.type IN [${relTypeFilter}]${confidenceFilter} RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`;
+          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN $ids AND (${relTypeFilter}) AND r.confidence >= $minConf${filePathCondition} RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`
+          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN $ids AND (${relTypeFilter}) AND r.confidence >= $minConf RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`;
 
       try {
-        const related = await executeQuery(repo.id, query);
+        const related = await executeParameterized(repo.id, baseQuery, {
+          ids: frontier,
+          relTypes: relationTypes,
+          minConf: effectiveMinConf,
+          ...(file_path ? { filePath: file_path } : {}),
+        });
 
         for (const rel of related) {
           const relId = rel.id || rel[1];
@@ -2561,6 +2723,30 @@ export class LocalBackend {
       });
     }
 
+    // Batch-fetch source content for impacted symbols when requested
+    let contentMap = new Map<string, string>();
+    if (include_content && impacted.length > 0) {
+      const maxContentItems = Math.min(impacted.length, 1000);
+      for (let i = 0; i < maxContentItems; i += 100) {
+        const chunkIds = impacted.slice(i, Math.min(i + 100, maxContentItems)).map((it: any) => String(it.id ?? ''));
+        try {
+          const contentRows = await executeParameterized(
+            repo.id,
+            `MATCH (n) WHERE n.id IN $ids AND n.content IS NOT NULL
+             RETURN n.id AS id, n.content AS content`,
+            { ids: chunkIds },
+          ).catch(() => []);
+          for (const row of contentRows) {
+            const id = row.id ?? row[0];
+            const content = row.content ?? row[1];
+            if (id && content) contentMap.set(String(id), content);
+          }
+        } catch (e) {
+          logQueryError('impact:content-fetch', e);
+        }
+      }
+    }
+
     // Risk scoring
     const processCount = affectedProcesses.length;
     const moduleCount = affectedModules.length;
@@ -2613,11 +2799,118 @@ export class LocalBackend {
               name: item.name,
               filePath: item.filePath,
               type: item.type,
+              ...(include_content && contentMap.has(String(item.id)) && { content: contentMap.get(String(item.id)) }),
             },
           })),
         },
       }),
     };
+  }
+
+  /**
+   * UID-based impact for cross-repo fan-out. Same result shape as `impact`.
+   * Returns null if the repo is unknown, the UID is missing, or analysis fails.
+   */
+  async impactByUid(
+    repoId: string,
+    uid: string,
+    direction: string,
+    opts: {
+      maxDepth: number;
+      relationTypes: string[];
+      minConfidence: number;
+      includeTests: boolean;
+      include_evidence: boolean;
+      include_content?: boolean;
+    },
+  ): Promise<any | null> {
+    try {
+      await this.refreshRepos();
+      await this.ensureInitialized(repoId);
+    } catch (e) {
+      logQueryError('impactByUid:init', e);
+      return null;
+    }
+
+    const repo = this.repos.get(repoId);
+    if (!repo) return null;
+
+    const dir: 'upstream' | 'downstream' = direction === 'downstream' ? 'downstream' : 'upstream';
+
+    let rows: any[];
+    try {
+      rows = await executeParameterized(
+        repoId,
+        `MATCH (n) WHERE n.id = $uid
+         RETURN n.id AS id, n.name AS name, n.filePath AS filePath, labels(n)[0] AS type
+         LIMIT 1`,
+        { uid },
+      );
+    } catch (e) {
+      logQueryError('impactByUid:uid-lookup', e);
+      return null;
+    }
+    if (!rows?.length) return null;
+
+    const sym = rows[0];
+    const labelRaw = sym.type ?? sym[3];
+    const symType =
+      typeof labelRaw === 'string' && labelRaw.trim().length > 0 ? labelRaw.trim() : '';
+
+    const relationTypes = filterRelationTypes(opts.relationTypes);
+
+    try {
+      return await this._runImpactBFS(repo, sym, symType, dir, {
+        maxDepth: opts.maxDepth,
+        relationTypes,
+        includeTests: opts.includeTests ?? false,
+        minConfidence: opts.minConfidence,
+        include_evidence: opts.include_evidence ?? true,
+        include_content: opts.include_content ?? false,
+      });
+    } catch (e) {
+      logQueryError('impactByUid:bfs', e);
+      return null;
+    }
+  }
+
+  private handleGroupTool(method: string, params: Record<string, unknown>): Promise<unknown> {
+    switch (method) {
+      case 'group_list':
+        return this.groupList(params);
+      case 'group_sync':
+        return this.groupSync(params);
+      case 'group_contracts':
+        return this.groupContracts(params);
+      case 'group_query':
+        return this.groupQuery(params);
+      case 'group_status':
+        return this.groupStatus(params);
+      default:
+        throw new Error(`Unknown group tool: ${method}`);
+    }
+  }
+
+  private async groupList(params: Record<string, unknown>): Promise<unknown> {
+    return this.getGroupService().groupList(params);
+  }
+
+  private async groupSync(params: Record<string, unknown>): Promise<unknown> {
+    return this.getGroupService().groupSync(params);
+  }
+
+  private async groupContracts(params: Record<string, unknown>): Promise<unknown> {
+    return this.getGroupService().groupContracts(params);
+  }
+
+  private async groupQuery(params: Record<string, unknown>): Promise<unknown> {
+    await this.refreshRepos();
+    return this.getGroupService().groupQuery(params);
+  }
+
+  private async groupStatus(params: Record<string, unknown>): Promise<unknown> {
+    await this.refreshRepos();
+    return this.getGroupService().groupStatus(params);
   }
 
   /**
@@ -2762,8 +3055,8 @@ export class LocalBackend {
         }
         list.push(name);
       }
-    } catch {
-      /* no ENTRY_POINT_OF edges yet */
+    } catch (e) {
+      logQueryError('fetchLinkedFlowsBatch', e);
     }
     return result;
   }
@@ -2923,6 +3216,204 @@ export class LocalBackend {
       }),
       total: rows.length,
     };
+  }
+
+  /**
+   * Shortest path between two nodes via BFS on CodeRelation edges.
+   */
+  private async shortestPath(
+    repo: RepoHandle,
+    params: {
+      source_id: string;
+      target_id: string;
+      max_hops?: number;
+      relation_types?: string[];
+    },
+  ): Promise<any> {
+    await this.ensureInitialized(repo.id);
+
+    const { source_id, target_id, max_hops = 5, relation_types } = params;
+
+    if (!source_id || !target_id) {
+      return { error: 'source_id and target_id are required.' };
+    }
+
+    const relTypes = relation_types && relation_types.length > 0
+      ? relation_types
+      : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES', 'DATA_FLOW'];
+
+    type BFSEntry = { nodeId: string; path: string[]; edges: { sourceId: string; targetId: string; type: string; confidence: number | null }[] };
+    const visited = new Set<string>();
+    const queue: BFSEntry[] = [];
+
+    queue.push({ nodeId: source_id, path: [source_id], edges: [] });
+    visited.add(source_id);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+
+      if (current.path.length > max_hops) continue;
+
+      if (current.nodeId === target_id) {
+        const nodeDetails = await this.resolvePathNodes(repo.id, current.path);
+        return {
+          nodes: nodeDetails,
+          edges: current.edges,
+          hop_count: current.path.length - 1,
+        };
+      }
+
+      const expandQuery = `
+        MATCH (n {id: $nodeId})-[r:CodeRelation]->(target)
+        WHERE r.type IN $relTypes AND NOT target.id IN $visited
+        RETURN target.id AS targetId, r.type AS relType, r.confidence AS confidence
+      `;
+
+      try {
+        const rows = await executeParameterized(
+          repo.id,
+          expandQuery,
+          { nodeId: current.nodeId, relTypes, visited: Array.from(visited) },
+        );
+
+        for (const row of rows) {
+          const nextId: string = row.targetId ?? row[0];
+          if (visited.has(nextId)) continue;
+          visited.add(nextId);
+
+          queue.push({
+            nodeId: nextId,
+            path: [...current.path, nextId],
+            edges: [...current.edges, {
+              sourceId: current.nodeId,
+              targetId: nextId,
+              type: row.relType ?? row[1],
+              confidence: row.confidence ?? row[2] ?? null,
+            }],
+          });
+        }
+      } catch (e) {
+        logQueryError('shortestPath:expand', e);
+      }
+    }
+
+    return {
+      nodes: [],
+      edges: [],
+      hop_count: -1,
+      message: `No path found between ${source_id} and ${target_id} within ${max_hops} hops.`,
+    };
+  }
+
+  private async resolvePathNodes(repoId: string, nodeIds: string[]): Promise<any[]> {
+    const results: any[] = [];
+    for (const nodeId of nodeIds) {
+      const label = nodeId.includes(':') ? nodeId.split(':')[0] : 'Unknown';
+      if (!VALID_NODE_LABELS.has(label)) continue;
+      try {
+        const rows = await executeParameterized(
+          repoId,
+          `MATCH (n:\`${label}\` {id: $nodeId}) RETURN n.id AS id, n.name AS name, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine LIMIT 1`,
+          { nodeId },
+        );
+        if (rows.length > 0) {
+          const r = rows[0];
+          results.push({
+            uid: r.id ?? r[0],
+            name: r.name ?? r[1],
+            kind: label,
+            filePath: r.filePath ?? r[2],
+            startLine: r.startLine ?? r[3] ?? null,
+            endLine: r.endLine ?? r[4] ?? null,
+          });
+        }
+      } catch (e) {
+        logQueryError('resolvePathNodes', e);
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Standalone get_code tool — retrieve source code from a node's file span.
+   */
+  private async getCode(
+    repo: RepoHandle,
+    params: {
+      uid?: string;
+      name?: string;
+      file_path?: string;
+    },
+  ): Promise<any> {
+    await this.ensureInitialized(repo.id);
+
+    const { uid, name, file_path } = params;
+
+    if (!uid && !name) {
+      return { error: 'uid or name parameter is required.' };
+    }
+
+    if (uid) {
+      const label = uid.includes(':') ? uid.split(':')[0] : 'Unknown';
+      if (!VALID_NODE_LABELS.has(label)) {
+        return { error: `Invalid UID format: unknown label "${label}"` };
+      }
+      try {
+        const rows = await executeParameterized(
+          repo.id,
+          `MATCH (n:\`${label}\` {id: $uid}) RETURN n.id AS id, n.name AS name, labels(n)[0] AS kind, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine, n.content AS content LIMIT 1`,
+          { uid },
+        );
+        if (rows.length === 0) {
+          return { error: `Node ${uid} not found` };
+        }
+        const r = rows[0];
+        return {
+          uid: r.id ?? r[0],
+          name: r.name ?? r[1],
+          kind: r.kind ?? label,
+          filePath: r.filePath ?? r[3],
+          startLine: r.startLine ?? r[4],
+          endLine: r.endLine ?? r[5],
+          content: r.content ?? r[6] ?? null,
+        };
+      } catch (e) {
+        logQueryError('getCode:uid-lookup', e);
+        return { error: `Failed to fetch node: ${e instanceof Error ? e.message : String(e)}` };
+      }
+    }
+
+    let whereClause = 'WHERE n.name = $symName';
+    const queryParams: Record<string, string> = { symName: name };
+
+    if (file_path) {
+      whereClause += ' AND n.filePath CONTAINS $filePath';
+      queryParams.filePath = file_path;
+    }
+
+    try {
+      const rows = await executeParameterized(
+        repo.id,
+        `MATCH (n) ${whereClause} RETURN n.id AS id, n.name AS name, labels(n)[0] AS kind, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine, n.content AS content LIMIT 1`,
+        queryParams,
+      );
+      if (rows.length === 0) {
+        return { error: `No symbol found matching "${name}"${file_path ? ` in ${file_path}` : ''}` };
+      }
+      const r = rows[0];
+      return {
+        uid: r.id ?? r[0],
+        name: r.name ?? r[1],
+        kind: r.kind ?? r[2],
+        filePath: r.filePath ?? r[3],
+        startLine: r.startLine ?? r[4],
+        endLine: r.endLine ?? r[5],
+        content: r.content ?? r[6] ?? null,
+      };
+    } catch (e) {
+      logQueryError('getCode:name-lookup', e);
+      return { error: `Failed to fetch symbol: ${e instanceof Error ? e.message : String(e)}` };
+    }
   }
 
   private async apiImpact(
@@ -3251,6 +3742,76 @@ export class LocalBackend {
     };
   }
 
+
+  /**
+   * explain_dataflow tool — LLM-powered explanation of a TaintPath.
+   * Accepts a JSON-string taint_path and returns a plain English vulnerability explanation.
+   */
+  private async explainDataflow(
+    _repo: RepoHandle,
+    params: { taint_path: string },
+  ): Promise<{ explanation: string; raw?: string }> {
+    let taintPath: any;
+    try {
+      taintPath = JSON.parse(params.taint_path);
+    } catch {
+      return { explanation: 'Invalid taint_path JSON. Expected: { source, sink, path, sanitizers, confidence }' };
+    }
+
+    const { source, sink, path = [], sanitizers = [], confidence = 0 } = taintPath;
+
+    const pathSteps = path
+      .map((s: any) => `  - ${s.from} --[${s.operation}]--> ${s.to}`)
+      .join('\n');
+
+    const sanitizerList = sanitizers.length
+      ? sanitizers
+          .map((s: any) => `  - ${s.variable} at ${s.nodeId}: ${s.description}`)
+          .join('\n')
+      : '  (none)';
+
+    const prompt = `You are a security expert explaining a data flow vulnerability.
+
+## Source (untrusted input)
+- Node: ${source?.nodeId ?? '?'}
+- Variable: ${source?.variable ?? '?'}
+- Kind: ${source?.kind ?? '?'}
+- Description: ${source?.description ?? '?'}
+
+## Sink (harmful destination)
+- Node: ${sink?.nodeId ?? '?'}
+- Variable: ${sink?.variable ?? '?'}
+- Kind: ${sink?.kind ?? '?'}
+- Description: ${sink?.description ?? '?'}
+
+## Propagation path
+${pathSteps || '  (path unavailable)'}
+
+## Sanitizers on path
+${sanitizerList}
+
+## Confidence
+${confidence}
+
+Please explain in plain English:
+1. What the vulnerability is and how it works
+2. What an attacker could do (attack scenario)
+3. How to fix or mitigate it
+
+Be concise — 3-5 sentences maximum.`;
+
+    try {
+      const config = await resolveLLMConfig({ maxTokens: 500 });
+      const result = await callLLM(prompt, config);
+      return { explanation: result.content };
+    } catch (err) {
+      return {
+        explanation:
+          'LLM explanation unavailable. Check that an API key is configured (GITNEXUS_API_KEY or OPENAI_API_KEY).',
+        raw: String(err),
+      };
+    }
+  }
   async disconnect(): Promise<void> {
     await closeLbug(); // close all connections
     // Note: we intentionally do NOT call disposeEmbedder() here.

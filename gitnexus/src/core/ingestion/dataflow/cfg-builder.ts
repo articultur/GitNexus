@@ -28,12 +28,16 @@ interface WalkState {
   nodes: StmtNode[];
   edges: Array<{ from: string; to: string; type: CFGEdgeType }>;
   nextBlockNumber: number;
+  /** Per-call node counter for unique IDs (eliminates global mutable state). */
+  nodeCounter: number;
   /** Stack of active loop header ids — used to resolve BREAK / CONTINUE. */
   loopStack: string[];
   /** Stack of active try-block entry ids — used to resolve THROW routing. */
   tryStack: string[];
   /** id of the node added for the last sequential statement (fall-through target). */
   lastSeqId: string | null;
+  /** Generate a unique node ID for this CFG walk. */
+  freshId(): string;
 }
 
 // ── Language-agnostic statement-type node type sets ───────────────────────────
@@ -122,9 +126,6 @@ const SKIP_TYPES = new Set([
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-let _nodeCounter = 0;
-const freshId = () => `cfg-n${_nodeCounter++}`;
-
 const isNamed = (n: SyntaxNode) => n.isNamed;
 
 const isComment = (n: SyntaxNode) =>
@@ -186,7 +187,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
 
   // ── Terminal statements ──────────────────────────────────────────────────────
   if (t === 'return_statement') {
-    const id = freshId();
+    const id = state.freshId();
     state.nodes.push({ id, node, basicBlock: [node.text.trim()], blockNumber: state.nextBlockNumber++ });
     // Emit fall-through edge from previous sequential statement
     if (state.lastSeqId !== null) {
@@ -198,7 +199,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
   }
 
   if (t === 'throw_statement') {
-    const id = freshId();
+    const id = state.freshId();
     state.nodes.push({ id, node, basicBlock: [node.text.trim()], blockNumber: state.nextBlockNumber++ });
     if (state.lastSeqId !== null) {
       state.edges.push({ from: state.lastSeqId, to: id, type: 'NEXT' });
@@ -213,7 +214,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
   }
 
   if (t === 'break_statement') {
-    const id = freshId();
+    const id = state.freshId();
     state.nodes.push({ id, node, basicBlock: [node.text.trim()], blockNumber: state.nextBlockNumber++ });
     if (state.lastSeqId !== null) {
       state.edges.push({ from: state.lastSeqId, to: id, type: 'NEXT' });
@@ -227,7 +228,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
   }
 
   if (t === 'continue_statement') {
-    const id = freshId();
+    const id = state.freshId();
     state.nodes.push({ id, node, basicBlock: [node.text.trim()], blockNumber: state.nextBlockNumber++ });
     if (state.lastSeqId !== null) {
       state.edges.push({ from: state.lastSeqId, to: id, type: 'NEXT' });
@@ -242,7 +243,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
 
   // ── If / conditional ────────────────────────────────────────────────────────
   if (t === 'if_statement' || t === 'conditional_expression') {
-    const id = freshId();
+    const id = state.freshId();
     const label = t === 'conditional_expression'
       ? `[ternary] ${node.text.trim()}`
       : node.text.trim().split('\n')[0];
@@ -269,7 +270,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
 
   // ── While loop ─────────────────────────────────────────────────────────────
   if (t === 'while_statement' || t === 'do_statement') {
-    const headerId = freshId();
+    const headerId = state.freshId();
     const headerLabel = node.text.trim().split('\n')[0];
     state.nodes.push({ id: headerId, node, basicBlock: [headerLabel], blockNumber: state.nextBlockNumber++ });
 
@@ -297,7 +298,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
 
   // ── For loop ───────────────────────────────────────────────────────────────
   if (t === 'for_statement' || t === 'for_in_statement' || t === 'for_of_statement') {
-    const headerId = freshId();
+    const headerId = state.freshId();
     const headerLabel = node.text.trim().split('\n')[0];
     state.nodes.push({ id: headerId, node, basicBlock: [headerLabel], blockNumber: state.nextBlockNumber++ });
 
@@ -323,7 +324,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
 
   // ── Switch ─────────────────────────────────────────────────────────────────
   if (t === 'switch_statement') {
-    const headerId = freshId();
+    const headerId = state.freshId();
     const headerLabel = `switch ${node.text.trim().split('\n')[0]}`;
     state.nodes.push({ id: headerId, node, basicBlock: [headerLabel], blockNumber: state.nextBlockNumber++ });
 
@@ -349,7 +350,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
 
   // ── Try / catch ────────────────────────────────────────────────────────────
   if (t === 'try_statement') {
-    const tryId = freshId();
+    const tryId = state.freshId();
     state.nodes.push({ id: tryId, node, basicBlock: ['try'], blockNumber: state.nextBlockNumber++ });
 
     if (state.lastSeqId !== null) {
@@ -365,14 +366,13 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
     // Catch clause(s)
     const catchNodes = getNamedChildren(node, 'catch_clause', 'except_clause');
     for (const catchNode of catchNodes) {
-      const catchId = freshId();
+      const catchId = s.freshId();
       s.nodes.push({ id: catchId, node: catchNode, basicBlock: [catchNode.text.trim().split('\n')[0]], blockNumber: s.nextBlockNumber++ });
       s.edges.push({ from: tryId, to: catchId, type: 'CATCH' });
-      // THROW edges from try body to this catch
-      for (const n of state.nodes) {
-        if (n.id !== tryId) {
-          const prevNode = state.nodes[state.nodes.findIndex(x => x.id === n.id) - 1];
-          // mark THROW edges at throw statements already added during walk
+      // THROW edges from throw statements in try body to this catch
+      for (const n of s.nodes) {
+        if (n.node.type === 'throw_statement') {
+          s.edges.push({ from: n.id, to: catchId, type: 'THROW' });
         }
       }
       s.edges.push({ from: tryId, to: catchId, type: 'CATCH' });
@@ -385,7 +385,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
     // Finally clause
     const finallyNode = getNamedChild(node, 'finally_clause');
     if (finallyNode) {
-      const finId = freshId();
+      const finId = s.freshId();
       s.nodes.push({ id: finId, node: finallyNode, basicBlock: ['finally'], blockNumber: s.nextBlockNumber++ });
       s.edges.push({ from: tryId, to: finId, type: 'NEXT' });
       s.lastSeqId = finId;
@@ -401,7 +401,7 @@ function walkNode(node: SyntaxNode, state: WalkState): WalkState {
     // Skip nodes that are purely structural (already handled above)
     if (isContainer(node) && !isStatementNode(node)) return walkChildren(node, state);
 
-    const id = freshId();
+    const id = state.freshId();
     state.nodes.push({ id, node, basicBlock: [node.text.trim()], blockNumber: state.nextBlockNumber++ });
 
     if (state.lastSeqId !== null) {
@@ -461,8 +461,9 @@ function collectIfBranches(ifNode: SyntaxNode): string[] {
     const cons = getNamedChild(node, 'consequence', 'block', 'statement_block');
     if (cons) {
       const state: WalkState = {
-        nodes: [], edges: [], nextBlockNumber: 0,
+        nodes: [], edges: [], nextBlockNumber: 0, nodeCounter: 0,
         loopStack: [], tryStack: [], lastSeqId: null,
+        freshId() { return ''; },
       };
       const s = walkChildren(cons, state);
       if (s.nodes.length > 0) ids.push(s.nodes[0].id);
@@ -473,8 +474,9 @@ function collectIfBranches(ifNode: SyntaxNode): string[] {
       const alt = getNamedChild(node, 'body');
       if (alt) {
         const state: WalkState = {
-          nodes: [], edges: [], nextBlockNumber: 0,
+          nodes: [], edges: [], nextBlockNumber: 0, nodeCounter: 0,
           loopStack: [], tryStack: [], lastSeqId: null,
+          freshId() { return ''; },
         };
         const s = walkChildren(alt, state);
         if (s.nodes.length > 0) ids.push(s.nodes[0].id);
@@ -490,8 +492,9 @@ function collectIfBranches(ifNode: SyntaxNode): string[] {
       } else {
         // Plain else block
         const state: WalkState = {
-          nodes: [], edges: [], nextBlockNumber: 0,
+          nodes: [], edges: [], nextBlockNumber: 0, nodeCounter: 0,
           loopStack: [], tryStack: [], lastSeqId: null,
+          freshId() { return ''; },
         };
         const s = walkChildren(elseNode, state);
         if (s.nodes.length > 0) ids.push(s.nodes[0].id);
@@ -513,11 +516,11 @@ function collectSwitchCases(switchNode: SyntaxNode, state: WalkState): string[] 
 
   for (const child of body.namedChildren) {
     if (child.type === 'switch_case') {
-      const blockId = freshId();
+      const blockId = state.freshId();
       state.nodes.push({ id: blockId, node: child, basicBlock: [child.text.trim().split('\n')[0]], blockNumber: state.nextBlockNumber++ });
       ids.push(blockId);
     } else if (child.type === 'default_case') {
-      const blockId = freshId();
+      const blockId = state.freshId();
       state.nodes.push({ id: blockId, node: child, basicBlock: ['default:'], blockNumber: state.nextBlockNumber++ });
       state.edges.push({ from: state.nodes[state.nodes.length - 2]?.id ?? blockId, to: blockId, type: 'SWITCH_DEFAULT' });
       ids.push(blockId);
@@ -649,8 +652,6 @@ export function buildCFG(
   language: SupportedLanguages,
   functionId?: string,
 ): CFGResult {
-  _nodeCounter = 0;
-
   // Resolve functionId from the tree root if not provided.
   const fid = functionId ?? extractFunctionId(tree.rootNode, language) ?? 'anonymous';
 
@@ -658,9 +659,13 @@ export function buildCFG(
     nodes: [],
     edges: [],
     nextBlockNumber: 0,
+    nodeCounter: 0,
     loopStack: [],
     tryStack: [],
     lastSeqId: null,
+    freshId() {
+      return `cfg-n${this.nodeCounter++}`;
+    },
   };
 
   const s = walkNode(tree.rootNode, state);
@@ -688,6 +693,7 @@ export function buildCFG(
       successors: [...new Set(succs)],
       blockNumber: n.blockNumber,
       statementType,
+      astNode: n.node,
     };
   });
 

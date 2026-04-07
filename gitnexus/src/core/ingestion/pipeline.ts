@@ -882,11 +882,13 @@ async function runChunkedParseAndResolve(
             );
           }
         }
-        deferredWorkerCalls.push(...chunkWorkerData.calls);
-        deferredWorkerHeritage.push(...chunkWorkerData.heritage);
-        deferredConstructorBindings.push(...chunkWorkerData.constructorBindings);
+        // Use a loop instead of spread to avoid stack overflow on huge arrays
+        // (VSCode can have 100K+ calls per chunk; push(...array) overflows JS stack)
+        for (const call of chunkWorkerData.calls) deferredWorkerCalls.push(call);
+        for (const h of chunkWorkerData.heritage) deferredWorkerHeritage.push(h);
+        for (const cb of chunkWorkerData.constructorBindings) deferredConstructorBindings.push(cb);
         if (chunkWorkerData.assignments?.length) {
-          deferredAssignments.push(...chunkWorkerData.assignments);
+          for (const a of chunkWorkerData.assignments) deferredAssignments.push(a);
         }
 
         // Heritage + Routes — calls deferred until all chunks have contributed heritage
