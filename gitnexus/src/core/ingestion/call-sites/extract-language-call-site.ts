@@ -27,6 +27,25 @@ export function extractParsedCallSite(
         };
       }
       return null;
+    case SupportedLanguages.ObjectiveC:
+      if (callNode.type === 'message_expression') {
+        // The OC tree-sitter query `method: (identifier) @call.name` captures ONLY
+        // the FIRST selector keyword identifier. Multi-arg selectors like
+        // "canRequestImageForURL:options:context:" produce ONE match per keyword,
+        // but @call.name only captures the first one.
+        // So we just return the first identifier we find.
+        const methodField = callNode.childForFieldName('method');
+        const receiverField = callNode.childForFieldName('receiver');
+        if (methodField?.type === 'identifier') {
+          // Store WITHOUT trailing colon, matching definition naming.
+          return {
+            calledName: methodField.text,
+            callForm: 'member',
+            ...(receiverField ? { receiverName: receiverField.text } : {}),
+          };
+        }
+      }
+      return null;
     default:
       return null;
   }
