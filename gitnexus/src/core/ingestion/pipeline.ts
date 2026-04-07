@@ -57,7 +57,7 @@ import {
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
 import { processProcesses } from './process-processor.js';
-import { processDataflow, type DataflowOptions } from './dataflow/index.js';
+import { processDataflow, processCFG, type DataflowOptions } from './dataflow/index.js';
 import { createResolutionContext } from './resolution-context.js';
 import { createASTCache } from './ast-cache.js';
 import { type PipelineProgress, getLanguageFromFilename } from 'gitnexus-shared';
@@ -1715,6 +1715,18 @@ export const runPipelineFromRepo = async (
           });
         },
       );
+    }
+
+    // ── Phase 12 (CFG): CFG Construction ────────────────────────────────
+    if (options?.dataflow && options.dataflow.mode !== 'off') {
+      await processCFG(graph, (message, progress) => {
+        onProgress({
+          phase: 'dataflow',
+          percent: Math.round(progress),
+          message,
+          stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
+        });
+      });
     }
 
     onProgress({
