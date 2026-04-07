@@ -57,6 +57,7 @@ import {
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
 import { processProcesses } from './process-processor.js';
+import { processDataflow, type DataflowOptions } from './dataflow/index.js';
 import { createResolutionContext } from './resolution-context.js';
 import { createASTCache } from './ast-cache.js';
 import { type PipelineProgress, getLanguageFromFilename } from 'gitnexus-shared';
@@ -484,10 +485,8 @@ async function runCrossFileBindingPropagation(
 export interface PipelineOptions {
   /** Skip MRO, community detection, and process extraction for faster test runs. */
   skipGraphPhases?: boolean;
-  /** Override max processes for graph analysis (default: auto, capped at 1000) */
-  maxProcesses?: number;
-  /** Force sequential parsing (no worker pool). Useful for testing the sequential path. */
-  skipWorkers?: boolean;
+  /** Dataflow analysis options (Phase 12) */
+  dataflow?: Partial<DataflowOptions>;
 }
 
 // ── Extracted pipeline phases ──────────────────────────────────────────────
@@ -645,7 +644,6 @@ async function runChunkedParseAndResolve(
   repoPath: string,
   pipelineStart: number,
   onProgress: ProgressFn,
-  options?: PipelineOptions,
 ): Promise<{
   exportedTypeMap: ExportedTypeMap;
   allFetchCalls: ExtractedFetchCall[];
@@ -724,10 +722,7 @@ async function runChunkedParseAndResolve(
 
   // Create worker pool once, reuse across chunks
   let workerPool: WorkerPool | undefined;
-  if (
-    !options?.skipWorkers &&
-    (totalParseable >= MIN_FILES_FOR_WORKERS || totalBytes >= MIN_BYTES_FOR_WORKERS)
-  ) {
+  if (totalParseable >= MIN_FILES_FOR_WORKERS || totalBytes >= MIN_BYTES_FOR_WORKERS) {
     try {
       let workerUrl = new URL('./workers/parse-worker.js', import.meta.url);
       // When running under vitest, import.meta.url points to src/ where no .js exists.
@@ -885,13 +880,11 @@ async function runChunkedParseAndResolve(
             );
           }
         }
-        // Use a loop instead of spread to avoid stack overflow on huge arrays
-        // (VSCode can have 100K+ calls per chunk; push(...array) overflows JS stack)
-        for (const call of chunkWorkerData.calls) deferredWorkerCalls.push(call);
-        for (const h of chunkWorkerData.heritage) deferredWorkerHeritage.push(h);
-        for (const cb of chunkWorkerData.constructorBindings) deferredConstructorBindings.push(cb);
+        deferredWorkerCalls.push(...chunkWorkerData.calls);
+        deferredWorkerHeritage.push(...chunkWorkerData.heritage);
+        deferredConstructorBindings.push(...chunkWorkerData.constructorBindings);
         if (chunkWorkerData.assignments?.length) {
-          for (const a of chunkWorkerData.assignments) deferredAssignments.push(a);
+          deferredAssignments.push(...chunkWorkerData.assignments);
         }
 
         // Heritage + Routes — calls deferred until all chunks have contributed heritage
@@ -926,23 +919,23 @@ async function runChunkedParseAndResolve(
         ]);
         // Collect TypeEnv file-scope bindings for exported type enrichment
         if (chunkWorkerData.typeEnvBindings?.length) {
-          for (const _item of chunkWorkerData.typeEnvBindings) workerTypeEnvBindings.push(_item);
+          workerTypeEnvBindings.push(...chunkWorkerData.typeEnvBindings);
         }
         // Collect fetch() calls for Next.js route matching
         if (chunkWorkerData.fetchCalls?.length) {
-          for (const _item of chunkWorkerData.fetchCalls) allFetchCalls.push(_item);
+          allFetchCalls.push(...chunkWorkerData.fetchCalls);
         }
         if (chunkWorkerData.routes?.length) {
-          for (const _item of chunkWorkerData.routes) allExtractedRoutes.push(_item);
+          allExtractedRoutes.push(...chunkWorkerData.routes);
         }
         if (chunkWorkerData.decoratorRoutes?.length) {
-          for (const _item of chunkWorkerData.decoratorRoutes) allDecoratorRoutes.push(_item);
+          allDecoratorRoutes.push(...chunkWorkerData.decoratorRoutes);
         }
         if (chunkWorkerData.toolDefs?.length) {
-          for (const _item of chunkWorkerData.toolDefs) allToolDefs.push(_item);
+          allToolDefs.push(...chunkWorkerData.toolDefs);
         }
         if (chunkWorkerData.ormQueries?.length) {
-          for (const _item of chunkWorkerData.ormQueries) allORMQueries.push(_item);
+          allORMQueries.push(...chunkWorkerData.ormQueries);
         }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
@@ -1031,7 +1024,7 @@ async function runChunkedParseAndResolve(
     // Extract fetch() calls for Next.js route matching (sequential path)
     const chunkFetchCalls = await extractFetchCallsFromFiles(chunkFiles, astCache);
     if (chunkFetchCalls.length > 0) {
-      for (const _item of chunkFetchCalls) allFetchCalls.push(_item);
+      allFetchCalls.push(...chunkFetchCalls);
     }
     // Extract ORM queries (sequential path)
     for (const f of chunkFiles) {
@@ -1117,7 +1110,7 @@ async function runChunkedParseAndResolve(
  * Post-parse graph analysis: MRO, community detection, process extraction.
  *
  * @reads  graph (all nodes and relationships from parse + resolve phases)
- * @writes graph (Community nodes, Process nodes, MEMBER_OF edges, STEP_IN_PROCESS edges, METHOD_OVERRIDES edges)
+ * @writes graph (Community nodes, Process nodes, MEMBER_OF edges, STEP_IN_PROCESS edges, OVERRIDES edges)
  */
 async function runGraphAnalysisPhases(
   graph: ReturnType<typeof createKnowledgeGraph>,
@@ -1125,7 +1118,6 @@ async function runGraphAnalysisPhases(
   onProgress: ProgressFn,
   routeRegistry?: Map<string, { filePath: string; source: string }>,
   toolDefs?: { name: string; filePath: string; description: string }[],
-  maxProcessesOverride?: number,
 ): Promise<{
   communityResult: Awaited<ReturnType<typeof processCommunities>>;
   processResult: Awaited<ReturnType<typeof processProcesses>>;
@@ -1141,7 +1133,7 @@ async function runGraphAnalysisPhases(
   const mroResult = computeMRO(graph);
   if (isDev && mroResult.entries.length > 0) {
     console.log(
-      `🔀 MRO: ${mroResult.entries.length} classes analyzed, ${mroResult.ambiguityCount} ambiguities, ${mroResult.overrideEdges} METHOD_OVERRIDES, ${mroResult.methodImplementsEdges} METHOD_IMPLEMENTS`,
+      `🔀 MRO: ${mroResult.entries.length} classes analyzed, ${mroResult.ambiguityCount} ambiguities found, ${mroResult.overrideEdges} OVERRIDES edges`,
     );
   }
 
@@ -1206,9 +1198,7 @@ async function runGraphAnalysisPhases(
   graph.forEachNode((n) => {
     if (n.label !== 'File') symbolCount++;
   });
-  const baseMaxProcesses = Math.max(20, Math.round(symbolCount / 10));
-  const hardCap = 1000;
-  const dynamicMaxProcesses = Math.max(20, Math.min(hardCap, baseMaxProcesses));
+  const dynamicMaxProcesses = Math.max(20, Math.min(300, Math.round(symbolCount / 10)));
 
   const processResult = await processProcesses(
     graph,
@@ -1222,7 +1212,7 @@ async function runGraphAnalysisPhases(
         stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
       });
     },
-    { maxProcesses: maxProcessesOverride ?? dynamicMaxProcesses, minSteps: 3 },
+    { maxProcesses: dynamicMaxProcesses, minSteps: 3 },
   );
 
   if (isDev) {
@@ -1369,7 +1359,6 @@ export const runPipelineFromRepo = async (
       repoPath,
       pipelineStart,
       onProgress,
-      options,
     );
 
     // ── Phase 3.5: Route Registry (Next.js + PHP + Laravel + decorators) ──
@@ -1705,10 +1694,27 @@ export const runPipelineFromRepo = async (
         onProgress,
         routeRegistry,
         toolDefs,
-        options?.maxProcesses,
       );
       communityResult = graphResults.communityResult;
       processResult = graphResults.processResult;
+    }
+
+    // ── Phase 12: Dataflow Analysis ─────────────────────────────────────
+    if (options?.dataflow && options.dataflow.mode !== 'off') {
+      await processDataflow(
+        graph,
+        ctx,
+        communityResult?.memberships ?? [],
+        options.dataflow,
+        (message, progress) => {
+          onProgress({
+            phase: 'dataflow',
+            percent: Math.round(progress),
+            message,
+            stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
+          });
+        },
+      );
     }
 
     onProgress({
