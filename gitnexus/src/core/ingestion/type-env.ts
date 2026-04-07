@@ -1061,9 +1061,7 @@ export const buildTypeEnv = (
     }
   };
 
-  // Iterative walk using explicit stack to avoid stack overflow on deeply nested ASTs.
-  const walkStack: Array<{ node: SyntaxNode; scope: string }> = [];
-  const processNode = (node: SyntaxNode, currentScope: string): void => {
+  const walk = (node: SyntaxNode, currentScope: string): void => {
     // Fast skip: subtrees that can never contain type-relevant nodes (leaf-like literals).
     if (SKIP_SUBTREE_TYPES.has(node.type)) return;
 
@@ -1180,19 +1178,14 @@ export const buildTypeEnv = (
       }
     }
 
-    // Push children onto stack (right-to-left for left-to-right processing)
-    for (let i = node.childCount - 1; i >= 0; i--) {
+    // Recurse into children
+    for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
-      if (child) walkStack.push({ node: child, scope });
+      if (child) walk(child, scope);
     }
   };
 
-  // Seed stack with root and process iteratively
-  walkStack.push({ node: tree.rootNode, scope: FILE_SCOPE });
-  while (walkStack.length > 0) {
-    const item = walkStack.pop()!;
-    processNode(item.node, item.scope);
-  }
+  walk(tree.rootNode, FILE_SCOPE);
 
   // Phase 14: Seed cross-file bindings from upstream files AFTER walk
   // (local declarations from walk() take precedence — first-writer-wins)

@@ -1,9 +1,7 @@
 /**
- * Objective-C and Objective-C++ language providers.
+ * Objective-C language provider.
  *
- * Both use the same tree-sitter-objc grammar (Obj-C grammar is a superset that
- * also handles C++/Objective-C++ via #ifdef __OBJC__ guards in headers).
- *
+ * Both .m and .mm files use the tree-sitter-objc grammar.
  * Import semantics are wildcard (via #import, which is semantically equivalent
  * to #include with header guard deduplication).
  *
@@ -61,37 +59,14 @@ const OBJC_BUILT_INS: ReadonlySet<string> = new Set([
   'NSParameterAssert',
   'typeof',
   'sizeof',
-  'NULL',
-  'nil',
   'Class',
   'SEL',
   'IMP',
   'Method',
   'Ivar',
-  'objc_property_t',
   'Protocol',
-  'object_getClass',
-  'class_getName',
-  'class_getSuperclass',
-  'class_addMethod',
-  'class_replaceMethod',
-  'method_getName',
-  'method_getImplementation',
-  'sel_getName',
-  'sel_registerName',
   'objc_msgSend',
   'objc_msgSendSuper',
-  'objc_storeStrong',
-  'objc_loadWeak',
-  'objc_initWeak',
-  'objc_destroyWeak',
-  'CFArray',
-  'CFDictionary',
-  'CFString',
-  'CFNumber',
-  'CFBoolean',
-  'kCFBooleanTrue',
-  'kCFBooleanFalse',
 ]);
 
 /** Label override for OC: skip function_definition captures inside @interface/@implementation/@protocol
@@ -104,13 +79,7 @@ const objcLabelOverride: NonNullable<LanguageProvider['labelOverride']> = (
   return isObjcInsideContainer(functionNode) ? null : defaultLabel;
 };
 
-/** Extract full OC method selector name from the method declaration node.
- * OC method selectors consist of multiple keyword parts: "sizeOfView:css:attribute:".
- * The AST node structure for `- (CGSize)sizeOfView:(id)view css:(NSDictionary *)c`
- * is a flat sequence: method_type | identifier (selector) | method_parameter |
- * identifier (selector) | method_parameter | ...
- * Selector keyword identifiers are those followed by a ':' token in the child list.
- * Returns undefined to leave nodeName unchanged (pipeline uses @name capture). */
+/** Extract full OC method selector name from the method declaration node. */
 const objcDescriptionExtractor: NonNullable<LanguageProvider['descriptionExtractor']> = (
   nodeLabel,
   _nodeName,
@@ -120,11 +89,6 @@ const objcDescriptionExtractor: NonNullable<LanguageProvider['descriptionExtract
   const defNode = captureMap['definition.method'];
   if (!defNode) return undefined;
 
-  // Collect all selector keyword identifiers from the method children.
-  // In OC grammar, method_declaration children are a flat sequence:
-  //   "-" | method_type | identifier (sel) | method_parameter | identifier (sel) | method_parameter | ...
-  // The ":" colon lives INSIDE method_parameter as its first child.
-  // A selector keyword identifier is one whose nextSibling is method_parameter (or ";")
   const parts: string[] = [];
   let child: SyntaxNode | null = defNode.firstChild;
   while (child) {
@@ -137,13 +101,7 @@ const objcDescriptionExtractor: NonNullable<LanguageProvider['descriptionExtract
     child = child.nextSibling;
   }
 
-  // If no selector parts found (unary method with no ':'), return undefined
   if (parts.length === 0) return undefined;
-  // Note: The OC tree-sitter query only captures the FIRST selector keyword
-  // as @call.name (each selector keyword is a separate identifier node).
-  // So for consistency, we also store only the first keyword.
-  // Full selector reconstruction from @definition.method captures is possible
-  // but won't match call sites since they only have the first keyword.
   return parts[0];
 };
 

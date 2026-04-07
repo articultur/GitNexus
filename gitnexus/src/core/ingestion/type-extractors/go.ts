@@ -16,7 +16,6 @@ import {
   methodToTypeArgPosition,
   type TypeArgPosition,
 } from './shared.js';
-import { goTaintConfig } from './taint.js';
 
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set([
   'var_declaration',
@@ -520,5 +519,4 @@ export const typeConfig: LanguageTypeConfig = {
   scanConstructorBinding,
   extractForLoopBinding,
   extractPendingAssignment,
-  taintConfig: goTaintConfig,
 };

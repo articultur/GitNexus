@@ -180,19 +180,12 @@ export const cCppExportChecker: ExportChecker = (node, _name) => {
   let cur: SyntaxNode | null = node;
   while (cur) {
     if (cur.type === 'function_definition' || cur.type === 'declaration') {
-      // Check for 'static' AND 'inline' as direct child nodes.
-      // In C99/C++, 'static inline' means internal linkage (not exported).
-      // 'static' alone = internal linkage (not exported).
-      // 'inline' alone = external linkage (exported).
-      let hasStatic = false;
-      let hasInline = false;
+      // Check for 'static' storage class specifier as a direct child node.
+      // This avoids reading the full function text (which can be very large).
       for (let i = 0; i < cur.childCount; i++) {
         const child = cur.child(i);
-        if (child?.type === 'storage_class_specifier' && child.text === 'static') hasStatic = true;
-        if (child?.type === 'type_qualifier' && child.text === 'inline') hasInline = true;
+        if (child?.type === 'storage_class_specifier' && child.text === 'static') return false;
       }
-      // static + inline (together) OR static alone = internal linkage
-      if (hasStatic) return false;
     }
     // C++ anonymous namespace: namespace_definition with no name child = internal linkage
     if (cur.type === 'namespace_definition') {

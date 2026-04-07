@@ -163,34 +163,18 @@ gitnexus status                  # Show index status for current repo
 gitnexus clean                   # Delete index for current repo
 gitnexus clean --all --force     # Delete all indexes
 gitnexus wiki [path]             # Generate LLM-powered docs from knowledge graph
-gitnexus wiki --model <model>    # Wiki with custom LLM model (default: minimax/minimax-m2.5)
+gitnexus wiki --model <model>    # Wiki with custom LLM model (default: gpt-4o-mini)
+
+# Repository groups (multi-repo / monorepo service tracking)
+gitnexus group create <name>     # Create a repository group
+gitnexus group add <name> <repo> # Add a repo to a group
+gitnexus group remove <name> <repo> # Remove a repo from a group
+gitnexus group list [name]       # List groups, or show one group's config
+gitnexus group sync <name>       # Extract contracts and match across repos/services
+gitnexus group contracts <name>  # Inspect extracted contracts and cross-links
+gitnexus group query <name> <q>  # Search execution flows across all repos in a group
+gitnexus group status <name>     # Check staleness of repos in a group
 ```
-
-## Dataflow Analysis
-
-Use dataflow modes during indexing to enable variable-level flow edges in the graph.
-
-```bash
-# Base variable-level flow extraction (recommended default)
-gitnexus analyze --dataflow base
-
-# Full mode for deepest flow extraction (slower)
-gitnexus analyze --dataflow full
-```
-
-Available modes:
-
-- `off` - disable dataflow analysis
-- `base` - conservative variable-level propagation
-- `full` - maximum extraction depth and detail (includes path-sensitive analysis)
-
-Once indexed with dataflow enabled, include flow edges in impact analysis:
-
-```bash
-gitnexus impact MySymbol --data-flow
-```
-
-If a repository was indexed without dataflow, rerun `analyze` with `--dataflow <mode>` to add `DATA_FLOW` edges.
 
 ## Remote Embeddings
 
@@ -212,14 +196,13 @@ GitNexus supports indexing multiple repositories. Each `gitnexus analyze` regist
 
 ## Supported Languages
 
-TypeScript, JavaScript, ArkTS (ETS), Python, Java, C, C++, C#, Go, Rust, PHP, Kotlin, Swift, Ruby
+TypeScript, JavaScript, Python, Java, C, C++, C#, Go, Rust, PHP, Kotlin, Swift, Ruby
 
 ### Language Feature Matrix
 
 | Language | Imports | Named Bindings | Exports | Heritage | Type Annotations | Constructor Inference | Config | Frameworks | Entry Points |
 |----------|---------|----------------|---------|----------|-----------------|---------------------|--------|------------|-------------|
 | TypeScript | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| ArkTS (ETS) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | △ | △ |
 | JavaScript | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ |
 | Python | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Java | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |

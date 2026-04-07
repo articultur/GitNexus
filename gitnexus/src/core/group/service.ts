@@ -28,7 +28,6 @@ export interface GroupToolPort {
       relationTypes?: string[];
       includeTests?: boolean;
       minConfidence?: number;
-      include_evidence?: boolean;
     },
   ): Promise<unknown>;
   query(
@@ -51,7 +50,8 @@ export interface GroupToolPort {
       relationTypes: string[];
       minConfidence: number;
       includeTests: boolean;
-      include_evidence: boolean;
+      include_evidence?: boolean;
+      include_content?: boolean;
     },
   ): Promise<unknown | null>;
 }

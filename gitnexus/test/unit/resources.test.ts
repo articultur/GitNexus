@@ -28,36 +28,6 @@ function createMockBackend(overrides: Partial<Record<string, any>> = {}): any {
       },
     ),
     getContext: vi.fn().mockReturnValue(overrides.context ?? null),
-    queryRepoOverview: vi.fn().mockResolvedValue(
-      overrides.overview ??
-        (overrides.context
-          ? {
-              context: overrides.context,
-              maintainability: {
-                fileImportCycles: 1,
-                oversizedSymbols: 2,
-                crossModuleEdges: 3,
-                hotspots: {
-                  incoming: [{ name: 'login', filePath: 'src/auth.ts', count: 4 }],
-                  outgoing: [{ name: 'login', filePath: 'src/auth.ts', count: 2 }],
-                },
-              },
-              coverage: {
-                parserCoverage: { available: 3, total: 4 },
-                analysisConfidence: 'medium',
-                languages: [
-                  {
-                    language: 'typescript',
-                    parserMode: 'tree-sitter',
-                    parserAvailable: true,
-                    status: 'available',
-                  },
-                ],
-                blindSpots: ['Variable-level data flow is not yet modeled end-to-end.'],
-              },
-            }
-          : null),
-    ),
     queryClusters: vi.fn().mockResolvedValue(overrides.clusters ?? { clusters: [] }),
     queryProcesses: vi.fn().mockResolvedValue(overrides.processes ?? { processes: [] }),
     queryClusterDetail: vi
@@ -189,12 +159,8 @@ describe('readResource', () => {
 
     const result = await readResource('gitnexus://repo/test-project/context', backend);
     expect(backend.resolveRepo).toHaveBeenCalledWith('test-project');
-    expect(backend.queryRepoOverview).toHaveBeenCalledWith('test-project');
     expect(result).toContain('test-project');
     expect(result).toContain('files: 10');
-    expect(result).toContain('maintainability:');
-    expect(result).toContain('analysis_coverage:');
-    expect(result).toContain('parser_coverage: 3/4');
   });
 
   it('returns error when context has no codebase loaded', async () => {

@@ -9,7 +9,7 @@
  */
 
 import path from 'path';
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync } from 'child_process';
 import v8 from 'v8';
 import cliProgress from 'cli-progress';
 import { closeLbug } from '../core/lbug/lbug-adapter.js';
@@ -18,116 +18,10 @@ import { getGitRoot, hasGitDir } from '../storage/git.js';
 import { runFullAnalysis } from '../core/run-analyze.js';
 import fs from 'fs/promises';
 
-const OLLAMA_DEFAULT_URL = 'http://localhost:11434';
-const OLLAMA_DEFAULT_API = 'http://localhost:11434/v1';
-const OLLAMA_DEFAULT_MODEL = 'snowflake-arctic-embed:xs';
-const OLLAMA_EMBEDDING_DIMS = 384;
-
-/**
- * Check if Ollama binary is installed (exists in PATH).
- */
-function isOllamaInstalled(): boolean {
-  try {
-    execFileSync('ollama', ['--version'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if Ollama server is running and has a compatible embedding model.
- */
-async function checkOllamaRunning(): Promise<boolean> {
-  // If user already configured HTTP embedding, respect their choice
-  if (process.env.GITNEXUS_EMBEDDING_URL) return false;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    const resp = await fetch(`${OLLAMA_DEFAULT_URL}/api/tags`, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (!resp.ok) return false;
-
-    // Check if the embedding model is available
-    const data = (await resp.json()) as { models?: Array<{ name?: string }> };
-    const models = data.models ?? [];
-    const hasModel = models.some((m) => m.name?.startsWith('snowflake-arctic-embed'));
-    return hasModel;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Attempt to start Ollama server in the background.
- * Returns true if startup appears successful (server responds within 5s).
- */
-async function tryStartOllama(): Promise<boolean> {
-  if (!isOllamaInstalled()) return false;
-
-  try {
-    // Start ollama serve in background, detached
-    spawn('ollama', ['serve'], {
-      stdio: 'ignore',
-      detached: true,
-      shell: true,
-    }).unref();
-
-    // Wait up to 5s for server to come up
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      try {
-        const resp = await fetch(`${OLLAMA_DEFAULT_URL}/api/tags`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        if (resp.ok) return true;
-      } catch {
-        // not ready yet
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Ensure Ollama is running with the embedding model.
- * If installed but not running, tries to start it.
- * Returns true if Ollama is ready.
- */
-async function ensureOllamaAvailable(): Promise<boolean> {
-  if (await checkOllamaRunning()) return true;
-
-  // Not running — try to start it
-  if (isOllamaInstalled()) {
-    console.log('  🔄 Ollama not running, starting it...\n');
-    const started = await tryStartOllama();
-    if (started) {
-      console.log('  ✅ Ollama started successfully\n');
-      return true;
-    }
-    console.log('  ⚠️  Failed to start Ollama automatically\n');
-  }
-
-  return false;
-}
-
-/**
- * Configure Ollama as the embedding backend.
- */
-function configureOllamaEmbedding(): void {
-  process.env.GITNEXUS_EMBEDDING_URL = OLLAMA_DEFAULT_API;
-  process.env.GITNEXUS_EMBEDDING_MODEL = OLLAMA_DEFAULT_MODEL;
-  process.env.GITNEXUS_EMBEDDING_DIMS = String(OLLAMA_EMBEDDING_DIMS);
-  console.log('  🔄 Using Ollama for embeddings\n');
-}
-
 const HEAP_MB = 8192;
 const HEAP_FLAG = `--max-old-space-size=${HEAP_MB}`;
 
-/** Re-exec the process with an 8GB heap and 16MB C stack if we're currently below that. */
+/** Re-exec the process with an 8GB heap if we're currently below that. */
 function ensureHeap(): boolean {
   const nodeOpts = process.env.NODE_OPTIONS || '';
   if (nodeOpts.includes('--max-old-space-size')) return false;
@@ -135,15 +29,8 @@ function ensureHeap(): boolean {
   const v8Heap = v8.getHeapStatistics().heap_size_limit;
   if (v8Heap >= HEAP_MB * 1024 * 1024 * 0.9) return false;
 
-  const stackSizeFlag = '--stack-size=16384';
-  // Build args without spread to avoid C stack exhaustion before Node starts
-  const args: string[] = [HEAP_FLAG, stackSizeFlag];
-  for (let i = 1; i < process.argv.length; i++) {
-    args.push(process.argv[i]);
-  }
-
   try {
-    execFileSync(process.execPath, args, {
+    execFileSync(process.execPath, [HEAP_FLAG, ...process.argv.slice(1)], {
       stdio: 'inherit',
       env: { ...process.env, NODE_OPTIONS: `${nodeOpts} ${HEAP_FLAG}`.trim() },
     });
@@ -162,8 +49,6 @@ export interface AnalyzeOptions {
   skipAgentsMd?: boolean;
   /** Index the folder even when no .git directory is present. */
   skipGit?: boolean;
-  /** Dataflow analysis mode: off, basic, context, path, full */
-  dataflow?: string;
 }
 
 export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOptions) => {
@@ -283,64 +168,23 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
 
   const t0 = Date.now();
 
-  // ── Ollama fallback for embeddings ───────────────────────────────
-  const ollamaAvailable = await ensureOllamaAvailable();
-
-  // If embeddings requested but HuggingFace access failed, show Ollama install guide
-  if (options?.embeddings && !ollamaAvailable) {
-    console.log(
-      '  ⚠️  Embedding model download from HuggingFace failed\n' +
-        '  Install Ollama to enable local embeddings:\n\n' +
-        '    1. curl -fsSL https://ollama.com/install.sh | sh\n' +
-        '    2. ollama pull snowflake-arctic-embed:xs\n' +
-        '    3. (optional) ollama serve  # auto-started if not running\n' +
-        '    4. npx gitnexus analyze --embeddings\n',
-    );
-  }
-
   // ── Run shared analysis orchestrator ───────────────────────────────
-  let ollamaFallbackAttempted = false;
-
-  const runWithFallback = async (): Promise<any> => {
-    try {
-      return await runFullAnalysis(
-        repoPath,
-        {
-          force: options?.force || options?.skills,
-          embeddings: options?.embeddings,
-          skipGit: options?.skipGit,
-          skipAgentsMd: options?.skipAgentsMd,
-        },
-        {
-          onProgress: (_phase, percent, message) => {
-            updateBar(percent, message);
-          },
-          onLog: barLog,
-        },
-      );
-    } catch (err: any) {
-      const isHFetchError =
-        options?.embeddings &&
-        (err.message?.includes('fetch failed') ||
-          err.message?.includes('ENOTFOUND') ||
-          err.message?.includes('ETIMEDOUT') ||
-          err.message?.includes('EPERM') ||
-          err.message?.includes('rate limit')) &&
-        ollamaAvailable &&
-        !ollamaFallbackAttempted;
-
-      if (isHFetchError) {
-        // HuggingFace download failed, Ollama is available — retry with Ollama
-        configureOllamaEmbedding();
-        ollamaFallbackAttempted = true;
-        return runWithFallback();
-      }
-      throw err;
-    }
-  };
-
   try {
-    const result = await runWithFallback();
+    const result = await runFullAnalysis(
+      repoPath,
+      {
+        force: options?.force || options?.skills,
+        embeddings: options?.embeddings,
+        skipGit: options?.skipGit,
+        skipAgentsMd: options?.skipAgentsMd,
+      },
+      {
+        onProgress: (_phase, percent, message) => {
+          updateBar(percent, message);
+        },
+        onLog: barLog,
+      },
+    );
 
     if (result.alreadyUpToDate) {
       clearInterval(elapsedTimer);
@@ -438,7 +282,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     console.warn = origWarn;
     console.error = origError;
     bar.stop();
-    console.error(`\n  Analysis failed: ${err.stack ?? err.message}\n`);
+    console.error(`\n  Analysis failed: ${err.message}\n`);
     process.exitCode = 1;
     return;
   }

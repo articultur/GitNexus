@@ -324,12 +324,6 @@ export function computeMRO(graph: KnowledgeGraph): MROResult {
       .map((id) => graph.getNode(id)?.properties.name)
       .filter((n): n is string => n !== undefined);
 
-    // Store the full linearized ancestor chain on the node for efficient MRO queries.
-    // (Protocol nodes in OC are labeled as Interface)
-    if (classNode.label === 'Class' || classNode.label === 'Interface') {
-      classNode.properties.ancestors = mroNames;
-    }
-
     // Collect methods from all ancestors, grouped by method name
     const methodsByName = new Map<string, MethodDef[]>();
     for (const ancestorId of mroOrder) {

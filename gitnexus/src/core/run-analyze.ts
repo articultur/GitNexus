@@ -12,7 +12,6 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { runPipelineFromRepo } from './ingestion/pipeline.js';
-import { parseDataflowOptions } from './ingestion/dataflow/index.js';
 import {
   initLbug,
   loadGraphToLbug,
@@ -49,10 +48,6 @@ export interface AnalyzeOptions {
   skipGit?: boolean;
   /** Skip AGENTS.md and CLAUDE.md gitnexus block updates. */
   skipAgentsMd?: boolean;
-  /** Dataflow analysis mode: off, basic, context, path, full */
-  dataflow?: string;
-  /** Override max processes for graph analysis (default: auto, capped at 1000) */
-  maxProcesses?: number;
 }
 
 export interface AnalyzeResult {
@@ -127,17 +122,7 @@ export async function runFullAnalysis(
   const existingMeta = await loadMeta(storagePath);
 
   // ── Early-return: already up to date ──────────────────────────────
-  // Embeddings mode changed (e.g., first time with --embeddings) → must rebuild
-  const hadEmbeddings = (existingMeta?.stats?.embeddings ?? 0) > 0;
-  const needsEmbeddings = !!options.embeddings;
-  const embeddingsChanged = needsEmbeddings !== hadEmbeddings;
-
-  if (
-    existingMeta &&
-    !options.force &&
-    existingMeta.lastCommit === currentCommit &&
-    !embeddingsChanged
-  ) {
+  if (existingMeta && !options.force && existingMeta.lastCommit === currentCommit) {
     // Non-git folders have currentCommit = '' — always rebuild since we can't detect changes
     if (currentCommit !== '') {
       return {
@@ -171,30 +156,23 @@ export async function runFullAnalysis(
   }
 
   // ── Phase 1: Full Pipeline (0–60%) ────────────────────────────────
-  const dataflowOptions = parseDataflowOptions({ dataflow: options.dataflow ?? 'base' } as Record<string, unknown>);
-  const pipelineResult = await runPipelineFromRepo(
-    repoPath,
-    (p) => {
-      const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
-      const scaled = Math.round(p.percent * 0.6);
-      progress(p.phase, scaled, phaseLabel);
-    },
-    {
-      dataflow: dataflowOptions,
-      maxProcesses: options.maxProcesses,
-    },
-  );
+  const pipelineResult = await runPipelineFromRepo(repoPath, (p) => {
+    const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
+    const scaled = Math.round(p.percent * 0.6);
+    progress(p.phase, scaled, phaseLabel);
+  });
 
   // ── Phase 2: LadybugDB (60–85%) ──────────────────────────────────
   progress('lbug', 60, 'Loading into LadybugDB...');
 
   await closeLbug();
-  // Delete entire lbug directory to ensure corrupted state is fully reset
-  const lbugDir = path.join(storagePath, 'lbug');
-  try {
-    await fs.rm(lbugDir, { recursive: true, force: true });
-  } catch {
-    /* swallow */
+  const lbugFiles = [lbugPath, `${lbugPath}.wal`, `${lbugPath}.lock`];
+  for (const f of lbugFiles) {
+    try {
+      await fs.rm(f, { recursive: true, force: true });
+    } catch {
+      /* swallow */
+    }
   }
 
   await initLbug(lbugPath);
@@ -215,12 +193,12 @@ export async function runFullAnalysis(
 
     try {
       await createFTSIndex('File', 'file_fts', ['name', 'content']);
-      await createFTSIndex('Function', 'function_fts', ['name']);
-      await createFTSIndex('Class', 'class_fts', ['name']);
-      await createFTSIndex('Method', 'method_fts', ['name']);
-      await createFTSIndex('Interface', 'interface_fts', ['name']);
-    } catch (err) {
-      console.warn('GitNexus: FTS index creation failed (search will be unavailable):', err?.message);
+      await createFTSIndex('Function', 'function_fts', ['name', 'content']);
+      await createFTSIndex('Class', 'class_fts', ['name', 'content']);
+      await createFTSIndex('Method', 'method_fts', ['name', 'content']);
+      await createFTSIndex('Interface', 'interface_fts', ['name', 'content']);
+    } catch {
+      // Non-fatal — FTS is best-effort
     }
 
     // ── Phase 3.5: Re-insert cached embeddings ────────────────────────

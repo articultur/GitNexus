@@ -24,7 +24,6 @@ import {
   methodToTypeArgPosition,
   type TypeArgPosition,
 } from './shared.js';
-import { typescriptTaintConfig } from './taint.js';
 
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set([
   'lexical_declaration',
@@ -708,5 +707,4 @@ export const typeConfig: LanguageTypeConfig = {
   extractPendingAssignment,
   extractPatternBinding,
   inferLiteralType: inferTsLiteralType,
-  taintConfig: typescriptTaintConfig,
 };

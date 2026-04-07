@@ -28,7 +28,6 @@ program
   .option('--skip-agents-md', 'Skip updating the gitnexus section in AGENTS.md and CLAUDE.md')
   .option('--skip-git', 'Index a folder without requiring a .git directory')
   .option('-v, --verbose', 'Enable verbose ingestion warnings (default: false)')
-  .option('--dataflow <mode>', 'Dataflow analysis mode: off, base, full (default: base)')
   .addHelpText(
     'after',
     '\nEnvironment variables:\n  GITNEXUS_NO_GITIGNORE=1  Skip .gitignore parsing (still reads .gitnexusignore)',
@@ -131,11 +130,8 @@ program
   .description('Blast radius analysis: what breaks if you change a symbol')
   .option('-d, --direction <dir>', 'upstream (dependants) or downstream (dependencies)', 'upstream')
   .option('-r, --repo <name>', 'Target repository')
-  .option('-f, --file <path>', 'File path to filter impact results')
   .option('--depth <n>', 'Max relationship depth (default: 3)')
   .option('--include-tests', 'Include test files in results')
-  .option('--data-flow', 'Include DATA_FLOW edges in analysis (requires --dataflow during indexing)')
-  .option('--content', 'Include source code for impacted symbols')
   .action(createLazyAction(() => import('./tool.js'), 'impactCommand'));
 
 program
@@ -143,15 +139,6 @@ program
   .description('Execute raw Cypher query against the knowledge graph')
   .option('-r, --repo <name>', 'Target repository')
   .action(createLazyAction(() => import('./tool.js'), 'cypherCommand'));
-
-program
-  .command('detect_changes')
-  .description('Map git diff to affected symbols and execution flows')
-  .option('--scope <scope>', 'What to analyze: unstaged (default), staged, all, compare')
-  .option('--base-ref <ref>', 'Branch/commit for "compare" scope (e.g., main)')
-  .option('-r, --repo <name>', 'Target repository')
-  .option('--no-evidence', 'Omit evidence block from output')
-  .action(createLazyAction(() => import('./tool.js'), 'detectChangesCommand'));
 
 // ─── Eval Server (persistent daemon for SWE-bench) ─────────────────
 

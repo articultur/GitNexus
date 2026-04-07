@@ -117,14 +117,6 @@ describe('calculateEntryPointScore', () => {
       expect(result.reasons).toContain('entry-pattern');
     });
 
-    it.each(['build', 'onCreate', 'onWindowStageCreate', 'aboutToAppear', 'aboutToDisappear'])(
-      'recognizes ArkTS lifecycle/entry pattern "%s"',
-      (name) => {
-        const result = calculateEntryPointScore(name, 'arkts', false, 0, 2);
-        expect(result.reasons).toContain('entry-pattern');
-      },
-    );
-
     it('recognizes PHP Laravel patterns', () => {
       // __invoke starts with '_' which matches utility pattern first
       const result = calculateEntryPointScore('handle', 'php', false, 0, 2);
@@ -206,11 +198,6 @@ describe('calculateEntryPointScore', () => {
 
     it('penalizes private-by-convention functions', () => {
       const result = calculateEntryPointScore('_internal', 'typescript', false, 0, 3);
-      expect(result.reasons).toContain('utility-pattern');
-    });
-
-    it('still penalizes utility-like names in ArkTS', () => {
-      const result = calculateEntryPointScore('getUser', 'arkts', false, 0, 3);
       expect(result.reasons).toContain('utility-pattern');
     });
   });

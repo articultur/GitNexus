@@ -30,18 +30,11 @@ try {
   Kotlin = _require('tree-sitter-kotlin');
 } catch {}
 
-// tree-sitter-objc is an optionalDependency — may not be installed
-let Objc: any = null;
-try {
-  Objc = _require('tree-sitter-objc');
-} catch {}
-
 let parser: Parser | null = null;
 
 const languageMap: Record<string, any> = {
   [SupportedLanguages.JavaScript]: JavaScript,
   [SupportedLanguages.TypeScript]: TypeScript.typescript,
-  [SupportedLanguages.ArkTS]: TypeScript.typescript,
   [`${SupportedLanguages.TypeScript}:tsx`]: TypeScript.tsx,
   [SupportedLanguages.Python]: Python,
   [SupportedLanguages.Java]: Java,
@@ -56,7 +49,6 @@ const languageMap: Record<string, any> = {
   [SupportedLanguages.Vue]: TypeScript.typescript,
   ...(Dart ? { [SupportedLanguages.Dart]: Dart } : {}),
   ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
-  ...(Objc ? { [SupportedLanguages.ObjectiveC]: Objc } : {}),
 };
 
 export const isLanguageAvailable = (language: SupportedLanguages): boolean =>

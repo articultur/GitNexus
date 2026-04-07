@@ -389,14 +389,6 @@ export const C_QUERIES = `
 (enum_specifier name: (type_identifier) @name) @definition.enum
 (type_definition declarator: (type_identifier) @name) @definition.typedef
 
-; Global / file-scope variables — declarations NOT inside a function body.
-; Matches: int g_counter; extern char* g_name; static int s_flag;
-; Excludes: local variables inside function_definition (handled separately by type extractors).
-; Uses anchor @ after declaration to exclude child matches that are function signatures.
-(declaration
-  declarator: [(identifier) (pointer_declarator) (reference_declarator)]
-  @name) @definition.global
-
 ; Macros
 (preproc_function_def name: (identifier) @name) @definition.macro
 (preproc_def name: (identifier) @name) @definition.macro
@@ -474,14 +466,6 @@ export const CPP_QUERIES = `
 ; Typedefs and unions (common in C-style headers and mixed C/C++ code)
 (type_definition declarator: (type_identifier) @name) @definition.typedef
 (union_specifier name: (type_identifier) @name) @definition.union
-
-; Global / file-scope variables — declarations NOT inside a function body.
-; Matches: int g_counter; extern char* g_name; static int s_flag;
-; Excludes: local variables inside function_definition (handled separately by type extractors).
-; Excludes: member fields inside class/struct bodies (field_declaration is handled above).
-(declaration
-  declarator: [(identifier) (pointer_declarator) (reference_declarator)]
-  @name) @definition.global
 
 ; Macros
 (preproc_function_def name: (identifier) @name) @definition.macro
@@ -1190,29 +1174,22 @@ export const DART_QUERIES = `
       (type_identifier) @heritage.trait))) @heritage
 `;
 
-// Objective-C queries - works with tree-sitter-objc
 export const OBJECTIVEC_QUERIES = `
 ; ── Class Interface (@interface Foo) ──────────────────────────────────────────
-; Anchored on ':' token to distinguish from superclass identifier in @interface Foo : Bar
 (class_interface
   (identifier) @name
   (":") @colon) @definition.class
 
-; ── Class Interface without superclass (@interface Foo <Bar>) ──────────────────
-; No ':' → identifier is the class name
 (class_interface
   (identifier) @name) @definition.class
 
 ; ── Heritage: class extends (e.g., @interface Foo : Bar) ─────────────────────
-; Note: uses @heritage.class (not @name) so heritage-processor.js creates EXTENDS edge
 (class_interface
   (identifier) @heritage.class
   (":") @colon
   (identifier) @heritage.extends) @heritage
 
 ; ── Heritage: protocol conformance (e.g., @interface Foo : Bar <Baz>) ──────────
-; Also matches @interface Foo <Baz> (no superclass, just protocol)
-; Uses @heritage.implements so heritage-processor.js creates IMPLEMENTS edges
 (class_interface
   (identifier) @heritage.class
   (parameterized_arguments
@@ -1233,20 +1210,6 @@ export const OBJECTIVEC_QUERIES = `
   (protocol_reference_list
     (identifier) @heritage.extends)) @heritage
 
-; ── Instance Variables (inside @interface or @implementation body) ───────────
-; NSString *name;
-(instance_variable
-  (struct_declaration
-    (struct_declarator
-      (pointer_declarator
-        (identifier) @name)))) @definition.property
-
-; int age;
-(instance_variable
-  (struct_declaration
-    (struct_declarator
-      (identifier) @name))) @definition.property
-
 ; ── Property Declaration (@property) ────────────────────────────────────────
 (property_declaration
   (struct_declaration
@@ -1260,8 +1223,6 @@ export const OBJECTIVEC_QUERIES = `
       (identifier) @name))) @definition.property
 
 ; ── OC Methods in @interface (declarations) ─────────────────────────────────
-; @name captures the first selector keyword (Unary: "alloc"; Multi-arg: "sizeOfView").
-; @definition_node lets descriptionExtractor reconstruct the full selector "sizeOfView:css:".
 (method_declaration
   (method_type)
   (identifier) @name) @definition.method
@@ -1286,27 +1247,8 @@ export const OBJECTIVEC_QUERIES = `
 
 import { SupportedLanguages } from 'gitnexus-shared';
 
-// ArkTS queries — superset of TypeScript queries with ArkUI-specific additions:
-//  1. Bare decorator capture: @Entry, @Component, @State, @Prop, @Link, @Builder, @Observed
-//     (TypeScript query only captures called-form decorators like @Component())
-//  2. @Watch decorator with a string argument (e.g. @Watch('count'))
-export const ARKTS_QUERIES =
-  TYPESCRIPT_QUERIES +
-  `
-; ArkTS bare decorators (without call parens): @Entry, @Component, @State, @Prop, etc.
-(decorator
-  (identifier) @decorator.name) @decorator
-
-; ArkTS @Watch('propName') — string-arg decorator with identifier
-(decorator
-  (call_expression
-    function: (identifier) @decorator.name
-    arguments: (arguments (string (string_fragment) @decorator.arg)?))) @decorator
-`;
-
 export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
   [SupportedLanguages.TypeScript]: TYPESCRIPT_QUERIES,
-  [SupportedLanguages.ArkTS]: ARKTS_QUERIES,
   [SupportedLanguages.JavaScript]: JAVASCRIPT_QUERIES,
   [SupportedLanguages.Python]: PYTHON_QUERIES,
   [SupportedLanguages.Java]: JAVA_QUERIES,
@@ -1322,5 +1264,21 @@ export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
   [SupportedLanguages.Dart]: DART_QUERIES,
   [SupportedLanguages.Vue]: TYPESCRIPT_QUERIES, // Vue <script> blocks are parsed as TypeScript
   [SupportedLanguages.Cobol]: '', // Standalone regex processor — no tree-sitter queries
+  [SupportedLanguages.ArkTS]: TYPESCRIPT_QUERIES, // ArkTS uses TypeScript grammar
   [SupportedLanguages.ObjectiveC]: OBJECTIVEC_QUERIES,
 };
+
+// ArkTS queries — TypeScript queries plus ArkUI-specific decorator captures.
+export const ARKTS_QUERIES =
+  TYPESCRIPT_QUERIES +
+  `
+; ArkTS bare decorators (without call parens): @Entry, @Component, @State, @Prop, etc.
+(decorator
+  (identifier) @decorator.name) @decorator
+
+; ArkTS @Watch('propName') — string-arg decorator with identifier
+(decorator
+  (call_expression
+    function: (identifier) @decorator.name
+    arguments: (arguments (string (string_fragment) @decorator.arg)?))) @decorator
+`;

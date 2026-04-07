@@ -113,11 +113,8 @@ export async function impactCommand(
   options?: {
     direction?: string;
     repo?: string;
-    file?: string;
     depth?: string;
     includeTests?: boolean;
-    dataFlow?: boolean;
-    content?: boolean;
   },
 ): Promise<void> {
   if (!target?.trim()) {
@@ -127,18 +124,12 @@ export async function impactCommand(
 
   try {
     const backend = await getBackend();
-    const relationTypes = options?.dataFlow
-      ? ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'DATA_FLOW', 'TAINTED', 'SINK_REACHABLE']
-      : undefined;
     const result = await backend.callTool('impact', {
       target,
       direction: options?.direction || 'upstream',
       maxDepth: options?.depth ? parseInt(options.depth, 10) : undefined,
       includeTests: options?.includeTests ?? false,
-      include_content: options?.content ?? false,
       repo: options?.repo,
-      file_path: options?.file,
-      ...(relationTypes ? { relationTypes } : {}),
     });
     output(result);
   } catch (err: unknown) {
@@ -172,56 +163,4 @@ export async function cypherCommand(
     repo: options?.repo,
   });
   output(result);
-}
-
-export async function detectChangesCommand(options: {
-  scope?: string;
-  baseRef?: string;
-  repo?: string;
-  evidence?: boolean;
-}): Promise<void> {
-  const backend = await getBackend();
-  const result = await backend.callTool('detect_changes', {
-    scope: options?.scope || 'unstaged',
-    base_ref: options?.baseRef,
-    repo: options?.repo,
-    include_evidence: options?.evidence ?? true,
-  });
-  output(formatDetectChangesResult(result));
-}
-
-function formatDetectChangesResult(result: any): string {
-  if (result.error) return `Error: ${result.error}`;
-
-  const summary = result.summary || {};
-  const lines: string[] = [];
-
-  if (summary.changed_count === 0) {
-    return 'No changes detected.';
-  }
-
-  lines.push(`Changes: ${summary.changed_files || 0} files, ${summary.changed_count || 0} symbols`);
-  lines.push(`Affected processes: ${summary.affected_count || 0}`);
-  lines.push(`Risk level: ${summary.risk_level || 'unknown'}\n`);
-
-  const changed = result.changed_symbols || [];
-  if (changed.length > 0) {
-    lines.push(`Changed symbols:`);
-    for (const s of changed.slice(0, 15)) {
-      lines.push(`  ${s.type} ${s.name} → ${s.filePath}`);
-    }
-    if (changed.length > 15) lines.push(`  ... and ${changed.length - 15} more`);
-    lines.push('');
-  }
-
-  const affected = result.affected_processes || [];
-  if (affected.length > 0) {
-    lines.push(`Affected execution flows:`);
-    for (const p of affected.slice(0, 10)) {
-      const steps = (p.changed_steps || []).map((s: any) => s.symbol).join(', ');
-      lines.push(`  • ${p.name} (${p.step_count} steps) — changed: ${steps}`);
-    }
-  }
-
-  return lines.join('\n').trim();
 }

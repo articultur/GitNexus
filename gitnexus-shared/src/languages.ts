@@ -19,9 +19,11 @@ export enum SupportedLanguages {
   Kotlin = 'kotlin',
   Swift = 'swift',
   Dart = 'dart',
-  ArkTS = 'arkts',
   Vue = 'vue',
   /** Standalone regex processor — no tree-sitter, no LanguageProvider. */
   Cobol = 'cobol',
+  /** ArkTS — Huawei HarmonyOS extension of TypeScript, parsed via TypeScript grammar. */
+  ArkTS = 'arkts',
+  /** Objective-C — parsed via tree-sitter-objc grammar. */
   ObjectiveC = 'objectivec',
 }

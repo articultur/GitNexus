@@ -17,7 +17,6 @@ import {
   extractElementTypeFromString,
   resolveIterableElementType,
 } from './shared.js';
-import { swiftTaintConfig } from './taint.js';
 
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set([
   'property_declaration',
@@ -515,5 +514,4 @@ export const typeConfig: LanguageTypeConfig = {
   scanConstructorBinding,
   extractPendingAssignment,
   extractForLoopBinding,
-  taintConfig: swiftTaintConfig,
 };

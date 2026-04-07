@@ -22,7 +22,6 @@ import {
   extractElementTypeFromString,
   type TypeArgPosition,
 } from './shared.js';
-import { rustTaintConfig } from './taint.js';
 
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set(['let_declaration', 'let_condition']);
 
@@ -531,5 +530,4 @@ export const typeConfig: LanguageTypeConfig = {
   extractForLoopBinding,
   extractPendingAssignment,
   extractPatternBinding,
-  taintConfig: rustTaintConfig,
 };

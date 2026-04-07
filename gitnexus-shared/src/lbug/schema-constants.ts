@@ -66,12 +66,6 @@ export const REL_TYPES = [
   'ENTRY_POINT_OF',
   'WRAPS',
   'QUERIES',
-  // Taint analysis edge types
-  'TAINTED',
-  'SANITIZER',
-  'SINK',
-  // Control flow edge type
-  'CFG_EDGE',
 ] as const;
 
 export type RelType = (typeof REL_TYPES)[number];

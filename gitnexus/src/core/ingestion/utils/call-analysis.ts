@@ -69,7 +69,6 @@ const MEMBER_ACCESS_NODE_TYPES = new Set([
   'navigation_suffix', // Kotlin/Swift: obj.method() — nameNode sits inside navigation_suffix
   'member_binding_expression', // C#: user?.Method() — null-conditional access
   'unconditional_assignable_selector', // Dart: obj.method() — nameNode inside selector > unconditional_assignable_selector
-  'message_expression', // Objective-C: [receiver method]
 ]);
 
 /**

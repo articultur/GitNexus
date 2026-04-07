@@ -24,22 +24,18 @@ function objcAccessSpecifier(node: SyntaxNode): FieldVisibility | undefined {
 }
 
 function extractFieldName(node: SyntaxNode): string | undefined {
-  // property_declaration > declarator:(field_identifier | pointer_declarator > field_identifier)
   const declarator = node.childForFieldName('declarator');
   if (declarator) {
     if (declarator.type === 'field_identifier') return declarator.text;
-    // pointer_declarator: *fieldName
     for (let i = 0; i < declarator.namedChildCount; i++) {
       const child = declarator.namedChild(i);
       if (child?.type === 'field_identifier') return child.text;
     }
     return declarator.text;
   }
-  // fallback: look for field_identifier anywhere
   for (let i = 0; i < node.namedChildCount; i++) {
     const child = node.namedChild(i);
     if (child?.type === 'field_identifier') return child.text;
-    // nested declarator
     const nested = child?.firstNamedChild;
     if (nested?.type === 'field_identifier') return nested.text;
   }
@@ -49,7 +45,6 @@ function extractFieldName(node: SyntaxNode): string | undefined {
 function extractFieldType(node: SyntaxNode): string | undefined {
   const typeNode = node.childForFieldName('type');
   if (typeNode) return extractSimpleTypeName(typeNode) ?? typeNode.text?.trim();
-  // fallback: first child that is a type node
   const first = node.firstNamedChild;
   if (
     first &&
@@ -63,7 +58,6 @@ function extractFieldType(node: SyntaxNode): string | undefined {
   return undefined;
 }
 
-// OC property attributes: @property (strong, nonatomic, readonly) etc.
 function hasObjcReadonly(node: SyntaxNode): boolean {
   let sibling = node.previousNamedSibling;
   while (sibling) {
@@ -84,8 +78,13 @@ export const objcConfig: FieldExtractionConfig = {
     'category_interface_declaration',
   ],
   fieldNodeTypes: ['property_declaration', 'instance_variable_declaration'],
-  bodyNodeTypes: ['class_interface_body', 'class_implementation_body', 'protocol_body', 'category_interface_body'],
-  defaultVisibility: 'private', // OC instance variables default to @private
+  bodyNodeTypes: [
+    'class_interface_body',
+    'class_implementation_body',
+    'protocol_body',
+    'category_interface_body',
+  ],
+  defaultVisibility: 'private',
 
   extractName: extractFieldName,
   extractType: extractFieldType,
@@ -93,7 +92,6 @@ export const objcConfig: FieldExtractionConfig = {
   extractVisibility(node) {
     const access = objcAccessSpecifier(node);
     if (access) return access;
-    // Instance variables default to @private inside @implementation
     return 'private';
   },
 

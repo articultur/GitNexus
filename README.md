@@ -188,56 +188,38 @@ args = ["-y", "gitnexus@latest", "mcp"]
 ### CLI Commands
 
 ```bash
-# Core commands
 gitnexus setup                   # Configure MCP for your editors (one-time)
 gitnexus analyze [path]          # Index a repository (or update stale index)
 gitnexus analyze --force         # Force full re-index
-gitnexus analyze --dataflow <mode>  # Dataflow mode: off, basic, context, path, full (default: basic)
-gitnexus analyze --skip-git      # Index folders without a .git directory
 gitnexus analyze --skills        # Generate repo-specific skill files from detected communities
+gitnexus analyze --skip-embeddings  # Skip embedding generation (faster)
 gitnexus analyze --skip-agents-md  # Preserve custom AGENTS.md/CLAUDE.md gitnexus section edits
 gitnexus analyze --embeddings    # Enable embedding generation (slower, better search)
 gitnexus analyze --verbose       # Log skipped files when parsers are unavailable
 gitnexus mcp                     # Start MCP server (stdio) — serves all indexed repos
 gitnexus serve                   # Start local HTTP server (multi-repo) for web UI connection
-gitnexus index [path]            # Register an existing .gitnexus/ folder (no re-analysis)
 gitnexus list                    # List all indexed repositories
 gitnexus status                  # Show index status for current repo
 gitnexus clean                   # Delete index for current repo
 gitnexus clean --all --force     # Delete all indexes
-gitnexus impact <target> --data-flow  # Include DATA_FLOW edges in blast radius analysis
 gitnexus wiki [path]             # Generate repository wiki from knowledge graph
-gitnexus wiki --provider <provider>  # LLM provider: openai or cursor
-gitnexus wiki --model <model>    # Wiki with custom LLM model (default: minimax/minimax-m2.5)
+gitnexus wiki --model <model>    # Wiki with custom LLM model (default: gpt-4o-mini)
 gitnexus wiki --base-url <url>   # Wiki with custom LLM API base URL
-gitnexus wiki --api-key <key>    # LLM API key (saved to ~/.gitnexus/config.json)
-gitnexus wiki --reasoning-model  # Enable reasoning-model mode for compatible deployments
-gitnexus wiki --concurrency <n>  # Parallel LLM calls (default: 3)
-gitnexus wiki --gist             # Publish wiki as a public GitHub Gist after generation
-gitnexus wiki --review          # Stop after grouping to review module structure
 
-# Group commands (cross-repo analysis)
-gitnexus group create <name>     # Create a new repository group
-gitnexus group add <group> <path> <repo>  # Add repo to a group
-gitnexus group remove <group> <path>       # Remove repo from a group
-gitnexus group list [name]       # List all groups or details of one
-gitnexus group status <name>     # Check staleness of group and repos
-gitnexus group sync <name>       # Build Contract Registry for cross-repo links
-gitnexus group query <name> <query>  # Search execution flows across all repos in group
-gitnexus group contracts <name>   # Inspect contracts and cross-links
-
-# Evaluation
-gitnexus eval-server             # Start HTTP server for SWE-bench evaluation
-
-# Direct tool commands (no MCP overhead)
-gitnexus query <query>          # Search execution flows related to a concept
-gitnexus context [name]          # 360-degree view of a code symbol
-gitnexus cypher <query>         # Execute raw Cypher query
+# Repository groups (multi-repo / monorepo service tracking)
+gitnexus group create <name>     # Create a repository group
+gitnexus group add <name> <repo> # Add a repo to a group
+gitnexus group remove <name> <repo> # Remove a repo from a group
+gitnexus group list [name]       # List groups, or show one group's config
+gitnexus group sync <name>       # Extract contracts and match across repos/services
+gitnexus group contracts <name>  # Inspect extracted contracts and cross-links
+gitnexus group query <name> <q>  # Search execution flows across all repos in a group
+gitnexus group status <name>     # Check staleness of repos in a group
 ```
 
 ### What Your AI Agent Gets
 
-**14 tools** exposed via MCP:
+**16 tools** exposed via MCP (11 per-repo + 5 group):
 
 | Tool               | What It Does                                                      | `repo` Param |
 | ------------------ | ----------------------------------------------------------------- | -------------- |
@@ -248,15 +230,11 @@ gitnexus cypher <query>         # Execute raw Cypher query
 | `detect_changes` | Git-diff impact — maps changed lines to affected processes       | Optional       |
 | `rename`         | Multi-file coordinated rename with graph + text search            | Optional       |
 | `cypher`         | Raw Cypher graph queries                                          | Optional       |
-| `route_map`      | Show API route mappings: handlers, middleware chains, consumers    | Optional       |
-| `shape_check`    | Check API response shapes vs consumer property accesses           | Optional       |
-| `api_impact`     | Pre-change impact report for an API route handler                 | Optional       |
-| `tool_map`       | Show MCP/RPC tool definitions and handler files                   | Optional       |
 | `group_list`     | List configured repository groups                                 | —             |
-| `group_sync`     | Rebuild Contract Registry for cross-repo links                    | —             |
-| `group_contracts`| Inspect contracts and cross-links across repos                    | —             |
-| `group_query`    | Search execution flows across all repos in a group                 | —             |
-| `group_status`   | Check index staleness across all repos in a group                | —             |
+| `group_sync`     | Extract contracts and match across repos/services                 | —             |
+| `group_contracts`| Inspect extracted contracts and cross-links                       | —             |
+| `group_query`    | Search execution flows across all repos in a group                | —             |
+| `group_status`   | Check staleness of repos in a group                               | —             |
 
 > When only one repo is indexed, the `repo` parameter is optional. With multiple repos, specify which one: `query({query: "auth", repo: "my-app"})`.
 
@@ -424,7 +402,6 @@ GitNexus builds a complete knowledge graph of your codebase through a multi-phas
 | Language | Imports | Named Bindings | Exports | Heritage | Type Annotations | Constructor Inference | Config | Frameworks | Entry Points |
 |----------|---------|----------------|---------|----------|-----------------|---------------------|--------|------------|-------------|
 | TypeScript | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| ArkTS (ETS) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |
 | JavaScript | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ |
 | Python | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Java | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |
@@ -438,11 +415,6 @@ GitNexus builds a complete knowledge graph of your codebase through a multi-phas
 | C | — | — | ✓ | — | ✓ | ✓ | — | ✓ | ✓ |
 | C++ | — | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |
 | Dart | ✓ | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |
-| Vue | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Objective-C | ✓ | — | ✓ | ✓ | ✓ | ✓ | — | — | ✓ |
-| COBOL | — | — | ✓ | — | — | — | — | — | ✓ |
-
-> **ArkTS (ETS)** support is at MVP + Phase B scope. Core parsing and type inference work; advanced HarmonyOS-specific features (ability calls, region queries) are ongoing.
 
 **Imports** — cross-file import resolution · **Named Bindings** — `import { X as Y }` / re-export tracking · **Exports** — public/exported symbol detection · **Heritage** — class inheritance, interfaces, mixins · **Type Annotations** — explicit type extraction for receiver resolution · **Constructor Inference** — infer receiver type from constructor calls (`self`/`this` resolution included for all languages) · **Config** — language toolchain config parsing (tsconfig, go.mod, etc.) · **Frameworks** — AST-based framework pattern detection · **Entry Points** — entry point scoring heuristics
 
@@ -466,9 +438,7 @@ UPSTREAM (what depends on this):
     authRouter [IMPORTS] -> src/routes/auth.ts
 ```
 
-Options: `maxDepth`, `minConfidence`, `relationTypes` (`CALLS`, `IMPORTS`, `EXTENDS`, `IMPLEMENTS`, `DATA_FLOW`, `TAINTED`, `SINK_REACHABLE`), `includeTests`
-
-Note: `impact` traversal excludes `DATA_FLOW` by default. To include variable/data-flow edges, pass `relationTypes` with `DATA_FLOW` (and optionally `TAINTED` / `SINK_REACHABLE`) or use CLI `gitnexus impact <target> --data-flow`.
+Options: `maxDepth`, `minConfidence`, `relationTypes` (`CALLS`, `IMPORTS`, `EXTENDS`, `IMPLEMENTS`), `includeTests`
 
 ### Process-Grouped Search
 

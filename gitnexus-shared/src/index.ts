@@ -18,7 +18,7 @@ export type { NodeTableName, RelType } from './lbug/schema-constants.js';
 
 // Language support
 export { SupportedLanguages } from './languages.js';
-export { getLanguageFromFilename, getSyntaxLanguageFromFilename, detectOCHeaderLanguage } from './language-detection.js';
+export { getLanguageFromFilename, getSyntaxLanguageFromFilename } from './language-detection.js';
 
 // Pipeline progress
 export type { PipelinePhase, PipelineProgress } from './pipeline.js';

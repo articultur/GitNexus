@@ -106,7 +106,7 @@ describe('isWriteQuery', () => {
 
 describe('VALID_RELATION_TYPES', () => {
   it('contains all expected relation types', () => {
-    expect(VALID_RELATION_TYPES.size).toBe(20);
+    expect(VALID_RELATION_TYPES.size).toBe(15);
     for (const t of [
       'CALLS',
       'IMPORTS',
@@ -123,13 +123,6 @@ describe('VALID_RELATION_TYPES', () => {
       'HANDLES_TOOL',
       'ENTRY_POINT_OF',
       'WRAPS',
-      'DATA_FLOW',
-      'TAINTED',
-      'SINK_REACHABLE',
-      'PROPAGATES',
-      'RETURNS',
-      'SANITIZES',
-      'ALIASES',
     ]) {
       expect(VALID_RELATION_TYPES.has(t)).toBe(true);
     }

@@ -7,7 +7,6 @@
  *  2. Build gitnexus (tsc)
  *  3. Copy gitnexus-shared/dist → dist/_shared
  *  4. Rewrite bare 'gitnexus-shared' specifiers → relative paths
- *  5. Copy tree-sitter-graph DSL files to dist
  */
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -27,19 +26,6 @@ execSync('npx tsc', { cwd: SHARED_ROOT, stdio: 'inherit' });
 // ── 2. Build gitnexus ──────────────────────────────────────────────
 console.log('[build] compiling gitnexus…');
 execSync('npx tsc', { cwd: ROOT, stdio: 'inherit' });
-
-// ── 2b. Copy DSL files ────────────────────────────────────────────
-const DSL_SRC = path.join(ROOT, 'src', 'core', 'ingestion', 'dataflow', 'dsl');
-const DSL_DEST = path.join(DIST, 'core', 'ingestion', 'dataflow', 'dsl');
-console.log('[build] copying DSL files…');
-if (fs.existsSync(DSL_SRC)) {
-  fs.mkdirSync(DSL_DEST, { recursive: true });
-  for (const f of fs.readdirSync(DSL_SRC)) {
-    if (f.endsWith('.sg')) {
-      fs.copyFileSync(path.join(DSL_SRC, f), path.join(DSL_DEST, f));
-    }
-  }
-}
 
 // ── 3. Copy shared dist ────────────────────────────────────────────
 console.log('[build] copying shared module into dist/_shared…');

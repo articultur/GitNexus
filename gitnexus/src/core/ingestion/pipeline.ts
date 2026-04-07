@@ -57,7 +57,6 @@ import {
 import { computeMRO } from './mro-processor.js';
 import { processCommunities } from './community-processor.js';
 import { processProcesses } from './process-processor.js';
-import { processDataflow, processCFG, type DataflowOptions } from './dataflow/index.js';
 import { createResolutionContext } from './resolution-context.js';
 import { createASTCache } from './ast-cache.js';
 import { type PipelineProgress, getLanguageFromFilename } from 'gitnexus-shared';
@@ -485,8 +484,6 @@ async function runCrossFileBindingPropagation(
 export interface PipelineOptions {
   /** Skip MRO, community detection, and process extraction for faster test runs. */
   skipGraphPhases?: boolean;
-  /** Dataflow analysis options (Phase 12) */
-  dataflow?: Partial<DataflowOptions>;
   /** Override max processes for graph analysis (default: auto, capped at 1000) */
   maxProcesses?: number;
   /** Force sequential parsing (no worker pool). Useful for testing the sequential path. */
@@ -1712,36 +1709,6 @@ export const runPipelineFromRepo = async (
       );
       communityResult = graphResults.communityResult;
       processResult = graphResults.processResult;
-    }
-
-    // ── Phase 12: Dataflow Analysis ─────────────────────────────────────
-    if (options?.dataflow && options.dataflow.mode !== 'off') {
-      await processDataflow(
-        graph,
-        ctx,
-        communityResult?.memberships ?? [],
-        options.dataflow,
-        (message, progress) => {
-          onProgress({
-            phase: 'dataflow',
-            percent: Math.round(progress),
-            message,
-            stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
-          });
-        },
-      );
-    }
-
-    // ── Phase 12 (CFG): CFG Construction ────────────────────────────────
-    if (options?.dataflow && options.dataflow.mode !== 'off') {
-      await processCFG(graph, (message, progress) => {
-        onProgress({
-          phase: 'dataflow',
-          percent: Math.round(progress),
-          message,
-          stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
-        });
-      });
     }
 
     onProgress({

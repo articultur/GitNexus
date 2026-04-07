@@ -2891,7 +2891,7 @@ export class LocalBackend {
       relationTypes: string[];
       minConfidence: number;
       includeTests: boolean;
-      include_evidence: boolean;
+      include_evidence?: boolean;
       include_content?: boolean;
     },
   ): Promise<any | null> {

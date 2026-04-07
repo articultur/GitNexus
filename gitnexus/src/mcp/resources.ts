@@ -198,8 +198,7 @@ async function getContextResource(backend: LocalBackend, repoName?: string): Pro
   // Resolve repo
   const repo = await backend.resolveRepo(repoName);
   const repoId = repo.name.toLowerCase();
-  const overview = await backend.queryRepoOverview(repoName).catch(() => null);
-  const context = overview?.context || backend.getContext(repoId) || backend.getContext();
+  const context = backend.getContext(repoId) || backend.getContext();
 
   if (!context) {
     return 'error: No codebase loaded. Run: gitnexus analyze';
@@ -224,48 +223,6 @@ async function getContextResource(backend: LocalBackend, repoName?: string): Pro
   lines.push(`  files: ${context.stats.fileCount}`);
   lines.push(`  symbols: ${context.stats.functionCount}`);
   lines.push(`  processes: ${context.stats.processCount}`);
-  if (overview) {
-    lines.push(`  clusters: ${context.stats.communityCount}`);
-  }
-  if (overview) {
-    lines.push('');
-    lines.push('maintainability:');
-    lines.push(`  file_import_cycles: ${overview.maintainability.fileImportCycles}`);
-    lines.push(`  oversized_symbols: ${overview.maintainability.oversizedSymbols}`);
-    lines.push(`  cross_module_edges: ${overview.maintainability.crossModuleEdges}`);
-    lines.push('  hotspots:');
-    lines.push('    incoming:');
-    for (const item of overview.maintainability.hotspots.incoming.slice(0, 3)) {
-      lines.push(`      - name: ${item.name}`);
-      lines.push(`        file: ${item.filePath}`);
-      lines.push(`        count: ${item.count}`);
-    }
-    lines.push('    outgoing:');
-    for (const item of overview.maintainability.hotspots.outgoing.slice(0, 3)) {
-      lines.push(`      - name: ${item.name}`);
-      lines.push(`        file: ${item.filePath}`);
-      lines.push(`        count: ${item.count}`);
-    }
-    lines.push('');
-    lines.push('analysis_coverage:');
-    lines.push(
-      `  parser_coverage: ${overview.coverage.parserCoverage.available}/${overview.coverage.parserCoverage.total}`,
-    );
-    lines.push(`  confidence: ${overview.coverage.analysisConfidence}`);
-    lines.push('  languages:');
-    for (const language of overview.coverage.languages) {
-      lines.push(`    - language: ${language.language}`);
-      lines.push(`      parser_mode: ${language.parserMode}`);
-      lines.push(`      status: ${language.status}`);
-      if (language.note) {
-        lines.push(`      note: ${language.note}`);
-      }
-    }
-    lines.push('  blind_spots:');
-    for (const blindSpot of overview.coverage.blindSpots) {
-      lines.push(`    - ${blindSpot}`);
-    }
-  }
   lines.push('');
   lines.push('tools_available:');
   lines.push('  - query: Process-grouped code intelligence (execution flows related to a concept)');

@@ -19,7 +19,6 @@ import {
   methodToTypeArgPosition,
   type TypeArgPosition,
 } from './shared.js';
-import { cTaintConfig } from './taint.js';
 
 const DECLARATION_NODE_TYPES: ReadonlySet<string> = new Set(['declaration']);
 
@@ -559,5 +558,4 @@ export const typeConfig: LanguageTypeConfig = {
   inferLiteralType,
   detectConstructorType: detectCppConstructorType,
   unwrapDeclaredType: unwrapCppDeclaredType,
-  taintConfig: cTaintConfig,
 };

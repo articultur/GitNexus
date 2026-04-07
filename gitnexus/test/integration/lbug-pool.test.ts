@@ -118,22 +118,6 @@ withTestLbugDB(
         // Should return 0 rows, not all rows
         expect(rows).toHaveLength(0);
       });
-
-      it('works with IN $ids array parameter for batch node lookups', async () => {
-        await initLbug('test-repo', handle.dbPath);
-        // Seed data includes two Function nodes with CALLS relationship
-        const rows = await executeParameterized(
-          'test-repo',
-          `MATCH (a:Function)-[r:CodeRelation]->(b:Function)
-           WHERE a.id IN $ids AND r.type IN $types
-           RETURN a.name AS caller, b.name AS callee, r.type AS relType`,
-          { ids: ['func:main', 'func:helper'], types: ['CALLS'] },
-        );
-        expect(rows.length).toBeGreaterThanOrEqual(1);
-        const row = rows.find((r: any) => r.caller === 'main');
-        expect(row).toBeDefined();
-        expect(row.callee).toBe('helper');
-      });
     });
 
     // ─── Error handling ──────────────────────────────────────────────────

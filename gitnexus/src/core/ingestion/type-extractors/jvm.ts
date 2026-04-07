@@ -21,7 +21,6 @@ import {
   extractElementTypeFromString,
   type TypeArgPosition,
 } from './shared.js';
-import { javaTaintConfig, kotlinTaintConfig } from './taint.js';
 
 // ── Java ──────────────────────────────────────────────────────────────────
 
@@ -357,7 +356,6 @@ export const javaTypeConfig: LanguageTypeConfig = {
   extractPendingAssignment: extractJavaPendingAssignment,
   extractPatternBinding: extractJavaPatternBinding,
   inferLiteralType: inferJvmLiteralType,
-  taintConfig: javaTaintConfig,
 };
 
 // ── Kotlin ────────────────────────────────────────────────────────────────
@@ -877,5 +875,4 @@ export const kotlinTypeConfig: LanguageTypeConfig = {
   extractPatternBinding: extractKotlinPatternBinding,
   inferLiteralType: inferJvmLiteralType,
   detectConstructorType: detectKotlinConstructorType,
-  taintConfig: kotlinTaintConfig,
 };

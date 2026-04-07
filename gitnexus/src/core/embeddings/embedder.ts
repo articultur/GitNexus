@@ -359,6 +359,5 @@ export const disposeEmbedder = async (): Promise<void> => {
     }
     embedderInstance = null;
     initPromise = null;
-    currentDevice = null;
   }
 };

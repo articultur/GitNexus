@@ -23,9 +23,9 @@ import { phpProvider } from './php.js';
 import { rubyProvider } from './ruby.js';
 import { swiftProvider } from './swift.js';
 import { dartProvider } from './dart.js';
-import { arktsProvider } from './arkts.js';
 import { vueProvider } from './vue.js';
 import { cobolProvider } from './cobol.js';
+import { arktsProvider } from './arkts.js';
 import { objectiveCProvider } from './objective-c.js';
 
 export const providers = {
@@ -43,9 +43,9 @@ export const providers = {
   [SupportedLanguages.Ruby]: rubyProvider,
   [SupportedLanguages.Swift]: swiftProvider,
   [SupportedLanguages.Dart]: dartProvider,
-  [SupportedLanguages.ArkTS]: arktsProvider,
   [SupportedLanguages.Vue]: vueProvider,
   [SupportedLanguages.Cobol]: cobolProvider,
+  [SupportedLanguages.ArkTS]: arktsProvider,
   [SupportedLanguages.ObjectiveC]: objectiveCProvider,
 } satisfies Record<SupportedLanguages, LanguageProvider>;
 

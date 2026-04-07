@@ -32,7 +32,6 @@ import {
   resolveIterableElementType,
 } from './shared.js';
 import { findChild } from '../utils/ast-helpers.js';
-import { dartTaintConfig } from './taint.js';
 
 // ── Node types ──────────────────────────────────────────────────────────
 
@@ -413,5 +412,4 @@ export const typeConfig: LanguageTypeConfig = {
   extractPendingAssignment: extractDartPendingAssignment,
   inferLiteralType: inferDartLiteralType,
   detectConstructorType: detectDartConstructorType,
-  taintConfig: dartTaintConfig,
 };
