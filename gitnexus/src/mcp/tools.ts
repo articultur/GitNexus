@@ -82,7 +82,8 @@ Hybrid ranking: BM25 keyword + semantic vector search, ranked by Reciprocal Rank
         },
         method: {
           type: 'string',
-          description: 'Search method: "hybrid" (default, BM25+vector RRF), "fulltext" (BM25 only), "vector" (semantic only), "semantic" (alias for vector)',
+          description:
+            'Search method: "hybrid" (default, BM25+vector RRF), "fulltext" (BM25 only), "vector" (semantic only), "semantic" (alias for vector)',
           enum: ['hybrid', 'fulltext', 'vector', 'semantic'],
           default: 'hybrid',
         },
@@ -173,7 +174,7 @@ SCHEMA:
 - Nodes: File, Folder, Function, Class, Interface, Method, CodeElement, Community, Process, Route, Tool
 - Multi-language nodes (use backticks): \`Struct\`, \`Enum\`, \`Trait\`, \`Impl\`, etc.
 - All edges via single CodeRelation table with 'type' property
-- Edge types: CONTAINS, DEFINES, CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, ACCESSES, OVERRIDES, MEMBER_OF, STEP_IN_PROCESS, HANDLES_ROUTE, FETCHES, HANDLES_TOOL, ENTRY_POINT_OF, CFG_EDGE
+- Edge types: CONTAINS, DEFINES, CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, ACCESSES, OVERRIDES, METHOD_OVERRIDES, METHOD_IMPLEMENTS, MEMBER_OF, STEP_IN_PROCESS, HANDLES_ROUTE, FETCHES, HANDLES_TOOL, ENTRY_POINT_OF, CFG_EDGE
 - Edge properties: type (STRING), confidence (DOUBLE), reason (STRING), step (INT32)
 
 EXAMPLES:
@@ -196,7 +197,7 @@ EXAMPLES:
   MATCH (f:Function)-[r:CodeRelation {type: 'ACCESSES', reason: 'write'}]->(p:Property) WHERE p.name = "address" RETURN f.name, f.filePath
 
 • Find method overrides (MRO resolution):
-  MATCH (winner:Method)-[r:CodeRelation {type: 'OVERRIDES'}]->(loser:Method) RETURN winner.name, winner.filePath, loser.filePath, r.reason
+  MATCH (winner:Method)-[r:CodeRelation {type: 'METHOD_OVERRIDES'}]->(loser:Method) RETURN winner.name, winner.filePath, loser.filePath, r.reason
 
 • Detect diamond inheritance:
   MATCH (d:Class)-[:CodeRelation {type: 'EXTENDS'}]->(b1), (d)-[:CodeRelation {type: 'EXTENDS'}]->(b2), (b1)-[:CodeRelation {type: 'EXTENDS'}]->(a), (b2)-[:CodeRelation {type: 'EXTENDS'}]->(a) WHERE b1 <> b2 RETURN d.name, b1.name, b2.name, a.name
@@ -339,7 +340,7 @@ Depth groups:
 
 TIP: Default traversal uses CALLS/IMPORTS/EXTENDS/IMPLEMENTS. For class members, include HAS_METHOD and HAS_PROPERTY in relationTypes. For field access analysis, include ACCESSES in relationTypes. For data-flow analysis (requires --dataflow during indexing), include TAINTED, SINK_REACHABLE, or DATA_FLOW in relationTypes to trace value propagation through variables.
 
-EdgeType: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, OVERRIDES, ACCESSES, DATA_FLOW, TAINTED, SINK_REACHABLE, PROPAGATES, RETURNS, SANITIZES, ALIASES, CFG_EDGE
+EdgeType: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, OVERRIDES, METHOD_OVERRIDES, METHOD_IMPLEMENTS, ACCESSES, DATA_FLOW, TAINTED, SINK_REACHABLE, PROPAGATES, RETURNS, SANITIZES, ALIASES, CFG_EDGE
 Confidence: 1.0 = certain, <0.8 = fuzzy match`,
     inputSchema: {
       type: 'object',
@@ -358,7 +359,7 @@ Confidence: 1.0 = certain, <0.8 = fuzzy match`,
           type: 'array',
           items: { type: 'string' },
           description:
-            'Filter: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, OVERRIDES, ACCESSES, DATA_FLOW (default: usage-based, ACCESSES and DATA_FLOW excluded by default)',
+            'Filter: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, OVERRIDES, METHOD_OVERRIDES, METHOD_IMPLEMENTS, ACCESSES, DATA_FLOW (default: usage-based, ACCESSES and DATA_FLOW excluded by default)',
         },
         includeTests: { type: 'boolean', description: 'Include test files (default: false)' },
         minConfidence: { type: 'number', description: 'Minimum confidence 0-1 (default: 0.7)' },

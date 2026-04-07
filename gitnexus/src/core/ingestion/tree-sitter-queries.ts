@@ -11,6 +11,9 @@ export const TYPESCRIPT_QUERIES = `
 (class_declaration
   name: (type_identifier) @name) @definition.class
 
+(abstract_class_declaration
+  name: (type_identifier) @name) @definition.class
+
 (interface_declaration
   name: (type_identifier) @name) @definition.interface
 
@@ -648,6 +651,7 @@ export const CSHARP_QUERIES = `
 export const RUST_QUERIES = `
 ; Functions & Items
 (function_item name: (identifier) @name) @definition.function
+(function_signature_item name: (identifier) @name) @definition.function
 (struct_item name: (type_identifier) @name) @definition.struct
 (enum_item name: (type_identifier) @name) @definition.enum
 (trait_item name: (type_identifier) @name) @definition.trait
@@ -1136,6 +1140,13 @@ export const DART_QUERIES = `
 ; ── Calls: in variable assignments (var x = getUser()) ──────────────────────
 (initialized_variable_definition
   value: (identifier) @call.name
+  (selector (argument_part))) @call
+
+; ── Calls: member calls in variable assignments (var x = obj.method()) ──────
+(initialized_variable_definition
+  (selector
+    (unconditional_assignable_selector
+      (identifier) @call.name))
   (selector (argument_part))) @call
 
 ; ── Re-exports (export 'foo.dart') ───────────────────────────────────────────

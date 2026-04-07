@@ -12,7 +12,7 @@
 
 import type { SyntaxNode } from '../utils/ast-helpers.js';
 import type { NodeLabel } from 'gitnexus-shared';
-import { FUNCTION_NODE_TYPES, extractFunctionName } from '../utils/ast-helpers.js';
+import { FUNCTION_NODE_TYPES } from '../utils/ast-helpers.js';
 import { SupportedLanguages } from 'gitnexus-shared';
 import { defineLanguage } from '../language-provider.js';
 import { typeConfig as dartConfig } from '../type-extractors/dart.js';
@@ -21,6 +21,8 @@ import { resolveDartImport } from '../import-resolvers/dart.js';
 import { DART_QUERIES } from '../tree-sitter-queries.js';
 import { createFieldExtractor } from '../field-extractors/generic.js';
 import { dartConfig as dartFieldConfig } from '../field-extractors/configs/dart.js';
+import { createMethodExtractor } from '../method-extractors/generic.js';
+import { dartMethodConfig } from '../method-extractors/configs/dart.js';
 
 /**
  * Resolve the enclosing function from a `function_body` node by looking at its
@@ -28,8 +30,8 @@ import { dartConfig as dartFieldConfig } from '../field-extractors/configs/dart.
  * function_body are siblings under program or class_body, unlike most languages
  * where the function declaration wraps both.
  *
- * Delegates name extraction to the shared `extractFunctionName` which already
- * handles Dart's function_signature and method_signature node types.
+ * Extracts the function name inline — Dart uses function_signature and
+ * method_signature (which wraps function_signature) as its FUNCTION_NODE_TYPES.
  */
 const dartEnclosingFunctionFinder = (
   node: SyntaxNode,
@@ -37,7 +39,21 @@ const dartEnclosingFunctionFinder = (
   if (node.type !== 'function_body') return null;
   const prev = node.previousSibling;
   if (!prev || !FUNCTION_NODE_TYPES.has(prev.type)) return null;
-  const { funcName, label } = extractFunctionName(prev);
+
+  // method_signature wraps function_signature — unwrap to reach the name
+  let target = prev;
+  let label: NodeLabel = 'Function';
+  if (prev.type === 'method_signature') {
+    label = 'Method';
+    for (let i = 0; i < prev.childCount; i++) {
+      const c = prev.child(i);
+      if (c?.type === 'function_signature') {
+        target = c;
+        break;
+      }
+    }
+  }
+  const funcName = target.childForFieldName?.('name')?.text ?? null;
   return funcName ? { funcName, label } : null;
 };
 
@@ -75,6 +91,7 @@ export const dartProvider = defineLanguage({
   importResolver: resolveDartImport,
   importSemantics: 'wildcard',
   fieldExtractor: createFieldExtractor(dartFieldConfig),
+  methodExtractor: createMethodExtractor(dartMethodConfig),
   enclosingFunctionFinder: dartEnclosingFunctionFinder,
   builtInNames: BUILT_INS,
 });

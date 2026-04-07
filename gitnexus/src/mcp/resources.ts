@@ -379,10 +379,10 @@ additional_node_types: "Multi-language: Struct, Enum, Macro, Typedef, Union, Nam
 
 node_properties:
   common: "name (STRING), filePath (STRING), startLine (INT32), endLine (INT32)"
-  Method: "parameterCount (INT32), returnType (STRING), isVariadic (BOOL)"
-  Function: "parameterCount (INT32), returnType (STRING), isVariadic (BOOL)"
+  Method: "parameterCount (INT32), returnType (STRING), isVariadic (BOOL), visibility (STRING), isStatic (BOOL), isAbstract (BOOL), isFinal (BOOL), isVirtual (BOOL), isOverride (BOOL), isAsync (BOOL), isPartial (BOOL), requiredParameterCount (INT32), parameterTypes (STRING[]), annotations (STRING[])"
+  Function: "parameterCount (INT32), returnType (STRING), isVariadic (BOOL), visibility (STRING), isStatic (BOOL), isAbstract (BOOL), isFinal (BOOL), isAsync (BOOL), parameterTypes (STRING[]), annotations (STRING[])"
   Property: "declaredType (STRING) — the field's type annotation (e.g., 'Address', 'City'). Used for field-access chain resolution."
-  Constructor: "parameterCount (INT32)"
+  Constructor: "parameterCount (INT32), visibility (STRING), isStatic (BOOL), parameterTypes (STRING[])"
   Community: "heuristicLabel (STRING), cohesion (DOUBLE), symbolCount (INT32), keywords (STRING[]), description (STRING), enrichedBy (STRING)"
   Process: "heuristicLabel (STRING), processType (STRING — 'intra_community' or 'cross_community'), stepCount (INT32), communities (STRING[]), entryPointId (STRING), terminalId (STRING)"
 
@@ -396,7 +396,8 @@ relationships:
   - HAS_METHOD: Class/Struct/Interface owns a Method
   - HAS_PROPERTY: Class/Struct/Interface owns a Property (field)
   - ACCESSES: Function/Method reads or writes a Property (reason: 'read' or 'write')
-  - OVERRIDES: Method overrides another Method (MRO)
+  - METHOD_OVERRIDES: Method overrides another Method (MRO)
+  - METHOD_IMPLEMENTS: ConcreteMethod implements InterfaceMethod (matched by name + parameterTypes)
   - MEMBER_OF: Symbol belongs to community
   - STEP_IN_PROCESS: Symbol is step N in process
 

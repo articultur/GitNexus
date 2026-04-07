@@ -489,6 +489,8 @@ export interface PipelineOptions {
   dataflow?: Partial<DataflowOptions>;
   /** Override max processes for graph analysis (default: auto, capped at 1000) */
   maxProcesses?: number;
+  /** Force sequential parsing (no worker pool). Useful for testing the sequential path. */
+  skipWorkers?: boolean;
 }
 
 // ── Extracted pipeline phases ──────────────────────────────────────────────
@@ -646,6 +648,7 @@ async function runChunkedParseAndResolve(
   repoPath: string,
   pipelineStart: number,
   onProgress: ProgressFn,
+  options?: PipelineOptions,
 ): Promise<{
   exportedTypeMap: ExportedTypeMap;
   allFetchCalls: ExtractedFetchCall[];
@@ -724,7 +727,10 @@ async function runChunkedParseAndResolve(
 
   // Create worker pool once, reuse across chunks
   let workerPool: WorkerPool | undefined;
-  if (totalParseable >= MIN_FILES_FOR_WORKERS || totalBytes >= MIN_BYTES_FOR_WORKERS) {
+  if (
+    !options?.skipWorkers &&
+    (totalParseable >= MIN_FILES_FOR_WORKERS || totalBytes >= MIN_BYTES_FOR_WORKERS)
+  ) {
     try {
       let workerUrl = new URL('./workers/parse-worker.js', import.meta.url);
       // When running under vitest, import.meta.url points to src/ where no .js exists.
@@ -923,23 +929,23 @@ async function runChunkedParseAndResolve(
         ]);
         // Collect TypeEnv file-scope bindings for exported type enrichment
         if (chunkWorkerData.typeEnvBindings?.length) {
-          workerTypeEnvBindings.push(...chunkWorkerData.typeEnvBindings);
+          for (const _item of chunkWorkerData.typeEnvBindings) workerTypeEnvBindings.push(_item);
         }
         // Collect fetch() calls for Next.js route matching
         if (chunkWorkerData.fetchCalls?.length) {
-          allFetchCalls.push(...chunkWorkerData.fetchCalls);
+          for (const _item of chunkWorkerData.fetchCalls) allFetchCalls.push(_item);
         }
         if (chunkWorkerData.routes?.length) {
-          allExtractedRoutes.push(...chunkWorkerData.routes);
+          for (const _item of chunkWorkerData.routes) allExtractedRoutes.push(_item);
         }
         if (chunkWorkerData.decoratorRoutes?.length) {
-          allDecoratorRoutes.push(...chunkWorkerData.decoratorRoutes);
+          for (const _item of chunkWorkerData.decoratorRoutes) allDecoratorRoutes.push(_item);
         }
         if (chunkWorkerData.toolDefs?.length) {
-          allToolDefs.push(...chunkWorkerData.toolDefs);
+          for (const _item of chunkWorkerData.toolDefs) allToolDefs.push(_item);
         }
         if (chunkWorkerData.ormQueries?.length) {
-          allORMQueries.push(...chunkWorkerData.ormQueries);
+          for (const _item of chunkWorkerData.ormQueries) allORMQueries.push(_item);
         }
       } else {
         await processImports(graph, chunkFiles, astCache, ctx, undefined, repoPath, allPaths);
@@ -1028,7 +1034,7 @@ async function runChunkedParseAndResolve(
     // Extract fetch() calls for Next.js route matching (sequential path)
     const chunkFetchCalls = await extractFetchCallsFromFiles(chunkFiles, astCache);
     if (chunkFetchCalls.length > 0) {
-      allFetchCalls.push(...chunkFetchCalls);
+      for (const _item of chunkFetchCalls) allFetchCalls.push(_item);
     }
     // Extract ORM queries (sequential path)
     for (const f of chunkFiles) {
@@ -1114,7 +1120,7 @@ async function runChunkedParseAndResolve(
  * Post-parse graph analysis: MRO, community detection, process extraction.
  *
  * @reads  graph (all nodes and relationships from parse + resolve phases)
- * @writes graph (Community nodes, Process nodes, MEMBER_OF edges, STEP_IN_PROCESS edges, OVERRIDES edges)
+ * @writes graph (Community nodes, Process nodes, MEMBER_OF edges, STEP_IN_PROCESS edges, METHOD_OVERRIDES edges)
  */
 async function runGraphAnalysisPhases(
   graph: ReturnType<typeof createKnowledgeGraph>,
@@ -1138,7 +1144,7 @@ async function runGraphAnalysisPhases(
   const mroResult = computeMRO(graph);
   if (isDev && mroResult.entries.length > 0) {
     console.log(
-      `🔀 MRO: ${mroResult.entries.length} classes analyzed, ${mroResult.ambiguityCount} ambiguities found, ${mroResult.overrideEdges} OVERRIDES edges`,
+      `🔀 MRO: ${mroResult.entries.length} classes analyzed, ${mroResult.ambiguityCount} ambiguities, ${mroResult.overrideEdges} METHOD_OVERRIDES, ${mroResult.methodImplementsEdges} METHOD_IMPLEMENTS`,
     );
   }
 
@@ -1366,6 +1372,7 @@ export const runPipelineFromRepo = async (
       repoPath,
       pipelineStart,
       onProgress,
+      options,
     );
 
     // ── Phase 3.5: Route Registry (Next.js + PHP + Laravel + decorators) ──

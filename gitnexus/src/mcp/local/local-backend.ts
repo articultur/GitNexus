@@ -99,7 +99,9 @@ export const VALID_RELATION_TYPES = new Set([
   'IMPLEMENTS',
   'HAS_METHOD',
   'HAS_PROPERTY',
-  'OVERRIDES',
+  'METHOD_OVERRIDES',
+  'OVERRIDES', // Legacy alias — dual-read for pre-rename indexes
+  'METHOD_IMPLEMENTS',
   'ACCESSES',
   'HANDLES_ROUTE',
   'FETCHES',
@@ -127,7 +129,8 @@ export const VALID_RELATION_TYPES = new Set([
  *   CALLS / IMPORTS  – direct, strongly-typed references → 0.9
  *   EXTENDS          – class hierarchy, statically verifiable → 0.85
  *   IMPLEMENTS       – interface contract, statically verifiable → 0.85
- *   OVERRIDES        – method override, statically verifiable → 0.85
+ *   METHOD_OVERRIDES  – method override, statically verifiable → 0.85
+ *   METHOD_IMPLEMENTS – interface method implementation, statically verifiable → 0.85
  *   HAS_METHOD       – structural containment → 0.95
  *   HAS_PROPERTY     – structural containment → 0.95
  *   ACCESSES         – field read/write, may be indirect → 0.8
@@ -139,7 +142,8 @@ export const IMPACT_RELATION_CONFIDENCE: Readonly<Record<string, number>> = {
   IMPORTS: 0.9,
   EXTENDS: 0.85,
   IMPLEMENTS: 0.85,
-  OVERRIDES: 0.85,
+  METHOD_OVERRIDES: 0.85,
+  METHOD_IMPLEMENTS: 0.85,
   HAS_METHOD: 0.95,
   HAS_PROPERTY: 0.95,
   ACCESSES: 0.8,
@@ -162,9 +166,7 @@ const confidenceForRelType = (relType: string | undefined): number =>
 
 /** Filter and normalize relation types for impact analysis. Returns defaults if none survive. */
 const filterRelationTypes = (raw?: string[]): string[] => {
-  const filtered = raw && raw.length > 0
-    ? raw.filter((t) => VALID_RELATION_TYPES.has(t))
-    : [];
+  const filtered = raw && raw.length > 0 ? raw.filter((t) => VALID_RELATION_TYPES.has(t)) : [];
   return filtered.length > 0 ? filtered : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
 };
 
@@ -1468,7 +1470,7 @@ export class LocalBackend {
       repo.id,
       `
       MATCH (caller)-[r:CodeRelation]->(n {id: $symId})
-      WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES']
+      WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'METHOD_OVERRIDES', 'OVERRIDES', 'METHOD_IMPLEMENTS', 'ACCESSES']
       RETURN r.type AS relType, caller.id AS uid, caller.name AS name, caller.filePath AS filePath, labels(caller)[0] AS kind,
              r.confidence AS confidence, r.reason AS reason, caller.startLine AS startLine, caller.endLine AS endLine
       LIMIT 30
@@ -1561,7 +1563,7 @@ export class LocalBackend {
       repo.id,
       `
       MATCH (n {id: $symId})-[r:CodeRelation]->(target)
-      WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES']
+      WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'METHOD_OVERRIDES', 'OVERRIDES', 'METHOD_IMPLEMENTS', 'ACCESSES']
       RETURN r.type AS relType, target.id AS uid, target.name AS name, target.filePath AS filePath, labels(target)[0] AS kind,
              r.confidence AS confidence, r.reason AS reason, target.startLine AS startLine, target.endLine AS endLine
       LIMIT 30
@@ -1622,16 +1624,53 @@ export class LocalBackend {
       .map((row) => row.confidence)
       .filter((value): value is number => typeof value === 'number');
 
+    // Method/Function/Constructor enrichment: fetch method-specific properties
+    const symKind = isClassLike ? resolvedLabel || 'Class' : sym.type || sym[2];
+    const isMethodLike =
+      symKind === 'Method' || symKind === 'Function' || symKind === 'Constructor';
+    let methodMetadata: Record<string, unknown> | undefined;
+    if (isMethodLike) {
+      try {
+        const metaRows = await executeParameterized(
+          repo.id,
+          `
+          MATCH (n {id: $symId})
+          RETURN n.visibility AS visibility, n.isStatic AS isStatic, n.isAbstract AS isAbstract,
+                 n.isFinal AS isFinal, n.isVirtual AS isVirtual, n.isOverride AS isOverride,
+                 n.isAsync AS isAsync, n.isPartial AS isPartial, n.returnType AS returnType,
+                 n.parameterCount AS parameterCount, n.isVariadic AS isVariadic,
+                 n.requiredParameterCount AS requiredParameterCount,
+                 n.parameterTypes AS parameterTypes, n.annotations AS annotations
+          LIMIT 1
+        `,
+          { symId },
+        );
+        if (metaRows.length > 0) {
+          const row = metaRows[0];
+          const meta: Record<string, unknown> = {};
+          // Only include defined properties to distinguish "not applicable" from "not enriched"
+          for (const key of Object.keys(row)) {
+            const val = row[key];
+            if (val !== null && val !== undefined) meta[key] = val;
+          }
+          if (Object.keys(meta).length > 0) methodMetadata = meta;
+        }
+      } catch {
+        /* method metadata unavailable — omit silently */
+      }
+    }
+
     return {
       status: 'found',
       symbol: {
         uid: sym.id || sym[0],
         name: sym.name || sym[1],
-        kind: isClassLike ? resolvedLabel || 'Class' : sym.type || sym[2],
+        kind: symKind,
         filePath: sym.filePath || sym[3],
         startLine: sym.startLine || sym[4],
         endLine: sym.endLine || sym[5],
         ...(include_content && (sym.content || sym[6]) ? { content: sym.content || sym[6] } : {}),
+        ...(methodMetadata ? { methodMetadata } : {}),
       },
       incoming,
       outgoing,
@@ -2174,10 +2213,7 @@ export class LocalBackend {
     };
   }
 
-  private async impact(
-    repo: RepoHandle,
-    params: ImpactParams,
-  ): Promise<any> {
+  private async impact(repo: RepoHandle, params: ImpactParams): Promise<any> {
     try {
       return await this._impactImpl(repo, params);
     } catch (err: any) {
@@ -2193,16 +2229,40 @@ export class LocalBackend {
     }
   }
 
-  private async _impactImpl(
-    repo: RepoHandle,
-    params: ImpactParams,
-  ): Promise<any> {
+  private async _impactImpl(repo: RepoHandle, params: ImpactParams): Promise<any> {
     await this.ensureInitialized(repo.id);
 
     const { target, direction } = params;
     const include_evidence = params.include_evidence ?? true;
     const maxDepth = params.maxDepth || 3;
-    const relationTypes = filterRelationTypes(params.relationTypes);
+    // Map legacy relation type names before filtering (backward compat for OVERRIDES → METHOD_OVERRIDES)
+    const mappedRelTypes = params.relationTypes?.flatMap((t: string) =>
+      t === 'OVERRIDES' ? ['OVERRIDES', 'METHOD_OVERRIDES'] : [t],
+    );
+    const rawRelTypes =
+      mappedRelTypes && mappedRelTypes.length > 0
+        ? mappedRelTypes.filter((t: string) => VALID_RELATION_TYPES.has(t))
+        : [
+            'CALLS',
+            'IMPORTS',
+            'EXTENDS',
+            'IMPLEMENTS',
+            'METHOD_OVERRIDES',
+            'OVERRIDES',
+            'METHOD_IMPLEMENTS',
+          ];
+    const relationTypes =
+      rawRelTypes.length > 0
+        ? rawRelTypes
+        : [
+            'CALLS',
+            'IMPORTS',
+            'EXTENDS',
+            'IMPLEMENTS',
+            'METHOD_OVERRIDES',
+            'OVERRIDES',
+            'METHOD_IMPLEMENTS',
+          ];
     const includeTests = params.includeTests ?? false;
     const minConfidence = params.minConfidence ?? 0;
     const include_content = params.include_content ?? false;
@@ -2228,9 +2288,10 @@ export class LocalBackend {
     const isQualified = target.includes('/') || target.includes(':');
     if (isQualified) {
       try {
-        const idRows = await executeParameterized(repo.id,
+        const idRows = await executeParameterized(
+          repo.id,
           `MATCH (n {id: $target}) RETURN n.id AS id, n.name AS name, n.filePath AS filePath LIMIT 1`,
-          { target }
+          { target },
         );
         if (idRows.length > 0) {
           sym = idRows[0];
@@ -2243,14 +2304,13 @@ export class LocalBackend {
     try {
       // Build the UNION ALL query; optionally add a HAS_METHOD arm for
       // "Class.method" disambiguation when parentClassName is provided.
-      const methodArm =
-        parentClassName
-          ? `
+      const methodArm = parentClassName
+        ? `
         UNION ALL
         MATCH (parent:\`Class\`)-[r:CodeRelation]->(n)
         WHERE parent.name = $parentClassName AND n.name = $targetName AND r.type = 'HAS_METHOD'
         RETURN n.id AS id, n.name AS name, n.filePath AS filePath, 0 AS priority LIMIT 1`
-          : '';
+        : '';
 
       const rows = await executeParameterized(
         repo.id,
@@ -2334,7 +2394,15 @@ export class LocalBackend {
       file_path?: string;
     },
   ): Promise<any> {
-    const { maxDepth, relationTypes, includeTests, minConfidence, include_evidence, include_content, file_path } = opts;
+    const {
+      maxDepth,
+      relationTypes,
+      includeTests,
+      minConfidence,
+      include_evidence,
+      include_content,
+      file_path,
+    } = opts;
     const effectiveMinConf = minConfidence > 0 ? minConfidence : 0;
 
     const symId = sym.id || sym[0];
@@ -2401,7 +2469,7 @@ export class LocalBackend {
 
       // Build r.type filter using OR chain instead of `IN` — LadybugDB has a bug where
       // `r.type IN ['CALLS']` with `caller.filePath` in SELECT drops same-file edges.
-      const relTypeFilter = relationTypes.map(t => `r.type = '${t}'`).join(' OR ');
+      const relTypeFilter = relationTypes.map((t) => `r.type = '${t}'`).join(' OR ');
 
       // Optional file_path filter — applied to the target node (n for upstream, callee for downstream)
       const filePathCondition = file_path
@@ -2724,11 +2792,13 @@ export class LocalBackend {
     }
 
     // Batch-fetch source content for impacted symbols when requested
-    let contentMap = new Map<string, string>();
+    const contentMap = new Map<string, string>();
     if (include_content && impacted.length > 0) {
       const maxContentItems = Math.min(impacted.length, 1000);
       for (let i = 0; i < maxContentItems; i += 100) {
-        const chunkIds = impacted.slice(i, Math.min(i + 100, maxContentItems)).map((it: any) => String(it.id ?? ''));
+        const chunkIds = impacted
+          .slice(i, Math.min(i + 100, maxContentItems))
+          .map((it: any) => String(it.id ?? ''));
         try {
           const contentRows = await executeParameterized(
             repo.id,
@@ -2799,7 +2869,8 @@ export class LocalBackend {
               name: item.name,
               filePath: item.filePath,
               type: item.type,
-              ...(include_content && contentMap.has(String(item.id)) && { content: contentMap.get(String(item.id)) }),
+              ...(include_content &&
+                contentMap.has(String(item.id)) && { content: contentMap.get(String(item.id)) }),
             },
           })),
         },
@@ -2857,7 +2928,34 @@ export class LocalBackend {
     const symType =
       typeof labelRaw === 'string' && labelRaw.trim().length > 0 ? labelRaw.trim() : '';
 
-    const relationTypes = filterRelationTypes(opts.relationTypes);
+    // Map legacy relation type names (backward compat for OVERRIDES → METHOD_OVERRIDES)
+    const mappedRelTypes = opts.relationTypes?.flatMap((t: string) =>
+      t === 'OVERRIDES' ? ['OVERRIDES', 'METHOD_OVERRIDES'] : [t],
+    );
+    const rawRelTypes =
+      mappedRelTypes && mappedRelTypes.length > 0
+        ? mappedRelTypes.filter((t: string) => VALID_RELATION_TYPES.has(t))
+        : [
+            'CALLS',
+            'IMPORTS',
+            'EXTENDS',
+            'IMPLEMENTS',
+            'METHOD_OVERRIDES',
+            'OVERRIDES',
+            'METHOD_IMPLEMENTS',
+          ];
+    const relationTypes =
+      rawRelTypes.length > 0
+        ? rawRelTypes
+        : [
+            'CALLS',
+            'IMPORTS',
+            'EXTENDS',
+            'IMPLEMENTS',
+            'METHOD_OVERRIDES',
+            'OVERRIDES',
+            'METHOD_IMPLEMENTS',
+          ];
 
     try {
       return await this._runImpactBFS(repo, sym, symType, dir, {
@@ -3238,11 +3336,26 @@ export class LocalBackend {
       return { error: 'source_id and target_id are required.' };
     }
 
-    const relTypes = relation_types && relation_types.length > 0
-      ? relation_types
-      : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'OVERRIDES', 'ACCESSES', 'DATA_FLOW'];
+    const relTypes =
+      relation_types && relation_types.length > 0
+        ? relation_types
+        : [
+            'CALLS',
+            'IMPORTS',
+            'EXTENDS',
+            'IMPLEMENTS',
+            'HAS_METHOD',
+            'HAS_PROPERTY',
+            'OVERRIDES',
+            'ACCESSES',
+            'DATA_FLOW',
+          ];
 
-    type BFSEntry = { nodeId: string; path: string[]; edges: { sourceId: string; targetId: string; type: string; confidence: number | null }[] };
+    type BFSEntry = {
+      nodeId: string;
+      path: string[];
+      edges: { sourceId: string; targetId: string; type: string; confidence: number | null }[];
+    };
     const visited = new Set<string>();
     const queue: BFSEntry[] = [];
 
@@ -3270,11 +3383,11 @@ export class LocalBackend {
       `;
 
       try {
-        const rows = await executeParameterized(
-          repo.id,
-          expandQuery,
-          { nodeId: current.nodeId, relTypes, visited: Array.from(visited) },
-        );
+        const rows = await executeParameterized(repo.id, expandQuery, {
+          nodeId: current.nodeId,
+          relTypes,
+          visited: Array.from(visited),
+        });
 
         for (const row of rows) {
           const nextId: string = row.targetId ?? row[0];
@@ -3284,12 +3397,15 @@ export class LocalBackend {
           queue.push({
             nodeId: nextId,
             path: [...current.path, nextId],
-            edges: [...current.edges, {
-              sourceId: current.nodeId,
-              targetId: nextId,
-              type: row.relType ?? row[1],
-              confidence: row.confidence ?? row[2] ?? null,
-            }],
+            edges: [
+              ...current.edges,
+              {
+                sourceId: current.nodeId,
+                targetId: nextId,
+                type: row.relType ?? row[1],
+                confidence: row.confidence ?? row[2] ?? null,
+              },
+            ],
           });
         }
       } catch (e) {
@@ -3398,7 +3514,9 @@ export class LocalBackend {
         queryParams,
       );
       if (rows.length === 0) {
-        return { error: `No symbol found matching "${name}"${file_path ? ` in ${file_path}` : ''}` };
+        return {
+          error: `No symbol found matching "${name}"${file_path ? ` in ${file_path}` : ''}`,
+        };
       }
       const r = rows[0];
       return {
@@ -3742,7 +3860,6 @@ export class LocalBackend {
     };
   }
 
-
   /**
    * explain_dataflow tool — LLM-powered explanation of a TaintPath.
    * Accepts a JSON-string taint_path and returns a plain English vulnerability explanation.
@@ -3755,7 +3872,10 @@ export class LocalBackend {
     try {
       taintPath = JSON.parse(params.taint_path);
     } catch {
-      return { explanation: 'Invalid taint_path JSON. Expected: { source, sink, path, sanitizers, confidence }' };
+      return {
+        explanation:
+          'Invalid taint_path JSON. Expected: { source, sink, path, sanitizers, confidence }',
+      };
     }
 
     const { source, sink, path = [], sanitizers = [], confidence = 0 } = taintPath;
@@ -3765,9 +3885,7 @@ export class LocalBackend {
       .join('\n');
 
     const sanitizerList = sanitizers.length
-      ? sanitizers
-          .map((s: any) => `  - ${s.variable} at ${s.nodeId}: ${s.description}`)
-          .join('\n')
+      ? sanitizers.map((s: any) => `  - ${s.variable} at ${s.nodeId}: ${s.description}`).join('\n')
       : '  (none)';
 
     const prompt = `You are a security expert explaining a data flow vulnerability.

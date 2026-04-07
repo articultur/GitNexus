@@ -49,7 +49,9 @@ If always-on instructions grow, load deep conventions via conditional reads (e.g
 
 ## GitNexus rules
 
-GitNexus MCP rules are in the `<!-- gitnexus:start -->
+GitNexus MCP rules are in the `<!-- gitnexus:start -->` … `<!-- gitnexus:end -->`  block in **[AGENTS.md](AGENTS.md)** — load that section when working with MCP tools or the graph index.
+
+<!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **GitNexus** (4252 symbols, 10124 relationships, 334 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
@@ -149,4 +151,4 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
-<!-- gitnexus:end -->` block in **[AGENTS.md](AGENTS.md)** — load that section when working with MCP tools or the graph index.
+<!-- gitnexus:end -->
