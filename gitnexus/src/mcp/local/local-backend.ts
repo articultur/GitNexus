@@ -186,6 +186,8 @@ interface ImpactParams {
   include_evidence?: boolean;
   /** When true, include source code content for each impacted symbol. */
   include_content?: boolean;
+  /** File path to filter impact results to a specific file. */
+  file_path?: string;
 }
 
 export interface CodebaseContext {
@@ -1350,30 +1352,47 @@ export class LocalBackend {
         { uid },
       );
     } else {
-      const isQualified = name!.includes('/') || name!.includes(':');
+      // Support dot-separated "Class.method" syntax for disambiguation (like ContactUtil.getDisplayName)
+      const dotIdx = name!.lastIndexOf('.');
+      const parentClassName = dotIdx > 0 ? name!.substring(0, dotIdx) : undefined;
+      const baseName = dotIdx > 0 ? name!.substring(dotIdx + 1) : name!;
 
-      let whereClause: string;
+      let query: string;
       let queryParams: Record<string, any>;
-      if (file_path) {
-        whereClause = `WHERE n.name = $symName AND n.filePath CONTAINS $filePath`;
+
+      if (parentClassName) {
+        // Resolve via Class membership edge — matches both Method (Java) and Function (Kotlin) nodes.
+        // LadybugDB stores HAS_METHOD/HAS_PROPERTY as r.type on CodeRelation edges.
+        // Use two MATCHes with OR to avoid the IN-list bug on relationship properties.
+        query = `
+          MATCH (parent:\`Class\`)-[r:CodeRelation]->(n)
+          WHERE parent.name = $parentClassName AND n.name = $baseName AND r.type = 'HAS_METHOD'
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
+          LIMIT 10
+        UNION ALL
+          MATCH (parent:\`Class\`)-[r:CodeRelation]->(n)
+          WHERE parent.name = $parentClassName AND n.name = $baseName AND r.type = 'HAS_PROPERTY'
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
+          LIMIT 10
+        `;
+        queryParams = { parentClassName, baseName };
+      } else if (file_path) {
+        query = `
+          MATCH (n) WHERE n.name = $symName AND n.filePath CONTAINS $filePath
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
+          LIMIT 10
+        `;
         queryParams = { symName: name!, filePath: file_path };
-      } else if (isQualified) {
-        whereClause = `WHERE n.id = $symName OR n.name = $symName`;
-        queryParams = { symName: name! };
       } else {
-        whereClause = `WHERE n.name = $symName`;
+        query = `
+          MATCH (n) WHERE n.name = $symName
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
+          LIMIT 10
+        `;
         queryParams = { symName: name! };
       }
 
-      symbols = await executeParameterized(
-        repo.id,
-        `
-        MATCH (n) ${whereClause}
-        RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath, n.startLine AS startLine, n.endLine AS endLine${include_content ? ', n.content AS content' : ''}
-        LIMIT 10
-      `,
-        queryParams,
-      );
+      symbols = await executeParameterized(repo.id, query, queryParams);
     }
 
     if (symbols.length === 0) {
@@ -2228,8 +2247,8 @@ export class LocalBackend {
         parentClassName
           ? `
         UNION ALL
-        MATCH (parent:\`Class\`)-[:HAS_METHOD]->(n:\`Method\`)
-        WHERE parent.name = $parentClassName AND n.name = $targetName
+        MATCH (parent:\`Class\`)-[r:CodeRelation]->(n)
+        WHERE parent.name = $parentClassName AND n.name = $targetName AND r.type = 'HAS_METHOD'
         RETURN n.id AS id, n.name AS name, n.filePath AS filePath, 0 AS priority LIMIT 1`
           : '';
 
@@ -2293,6 +2312,7 @@ export class LocalBackend {
       minConfidence,
       include_evidence,
       include_content,
+      file_path: params.file_path,
     });
   }
 
@@ -2311,9 +2331,10 @@ export class LocalBackend {
       minConfidence: number;
       include_evidence: boolean;
       include_content: boolean;
+      file_path?: string;
     },
   ): Promise<any> {
-    const { maxDepth, relationTypes, includeTests, minConfidence, include_evidence, include_content } = opts;
+    const { maxDepth, relationTypes, includeTests, minConfidence, include_evidence, include_content, file_path } = opts;
     const effectiveMinConf = minConfidence > 0 ? minConfidence : 0;
 
     const symId = sym.id || sym[0];
@@ -2378,17 +2399,27 @@ export class LocalBackend {
     for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
       const nextFrontier: string[] = [];
 
+      // Build r.type filter using OR chain instead of `IN` — LadybugDB has a bug where
+      // `r.type IN ['CALLS']` with `caller.filePath` in SELECT drops same-file edges.
+      const relTypeFilter = relationTypes.map(t => `r.type = '${t}'`).join(' OR ');
+
+      // Optional file_path filter — applied to the target node (n for upstream, callee for downstream)
+      const filePathCondition = file_path
+        ? ` AND (n.filePath CONTAINS $filePath OR caller.filePath CONTAINS $filePath)`
+        : '';
+
       // Batch frontier nodes into a single parameterized Cypher query per depth level
       const baseQuery =
         direction === 'upstream'
-          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN $ids AND r.type IN $relTypes AND r.confidence >= $minConf RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`
-          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN $ids AND r.type IN $relTypes AND r.confidence >= $minConf RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`;
+          ? `MATCH (caller)-[r:CodeRelation]->(n) WHERE n.id IN $ids AND (${relTypeFilter}) AND r.confidence >= $minConf${filePathCondition} RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, caller.id AS id, caller.name AS name, labels(caller)[0] AS type, caller.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`
+          : `MATCH (n)-[r:CodeRelation]->(callee) WHERE n.id IN $ids AND (${relTypeFilter}) AND r.confidence >= $minConf RETURN n.id AS sourceId, n.name AS sourceName, n.filePath AS sourceFilePath, callee.id AS id, callee.name AS name, labels(callee)[0] AS type, callee.filePath AS filePath, r.type AS relType, r.confidence AS confidence, r.reason AS reason`;
 
       try {
         const related = await executeParameterized(repo.id, baseQuery, {
           ids: frontier,
           relTypes: relationTypes,
           minConf: effectiveMinConf,
+          ...(file_path ? { filePath: file_path } : {}),
         });
 
         for (const rel of related) {

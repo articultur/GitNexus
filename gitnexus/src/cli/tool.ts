@@ -113,6 +113,7 @@ export async function impactCommand(
   options?: {
     direction?: string;
     repo?: string;
+    file?: string;
     depth?: string;
     includeTests?: boolean;
     dataFlow?: boolean;
@@ -136,6 +137,7 @@ export async function impactCommand(
       includeTests: options?.includeTests ?? false,
       include_content: options?.content ?? false,
       repo: options?.repo,
+      file_path: options?.file,
       ...(relationTypes ? { relationTypes } : {}),
     });
     output(result);

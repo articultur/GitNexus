@@ -139,7 +139,12 @@ const objcDescriptionExtractor: NonNullable<LanguageProvider['descriptionExtract
 
   // If no selector parts found (unary method with no ':'), return undefined
   if (parts.length === 0) return undefined;
-  return parts.join(':') + ':';
+  // Note: The OC tree-sitter query only captures the FIRST selector keyword
+  // as @call.name (each selector keyword is a separate identifier node).
+  // So for consistency, we also store only the first keyword.
+  // Full selector reconstruction from @definition.method captures is possible
+  // but won't match call sites since they only have the first keyword.
+  return parts[0];
 };
 
 export const objectiveCProvider = defineLanguage({

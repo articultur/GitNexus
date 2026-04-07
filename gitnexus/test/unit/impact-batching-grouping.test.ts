@@ -65,7 +65,7 @@ describe('impact: batching and grouping', () => {
       const params = args[2] || {};
 
       // Depth traversal (parameterized BFS) — return 250 impacted nodes
-      if (query.includes('$ids') && query.includes('$relTypes')) {
+      if (query.includes('$ids') && query.includes('sourceId')) {
         const res: any[] = [];
         for (let i = 0; i < 250; i++) {
           res.push({
@@ -136,7 +136,7 @@ describe('impact: batching and grouping', () => {
       const query = typeof args[1] === 'string' ? args[1] : String(args[0] ?? '');
 
       // Depth traversal (parameterized BFS) — return 6 impacted nodes
-      if (query.includes('$ids') && query.includes('$relTypes')) {
+      if (query.includes('$ids') && query.includes('sourceId')) {
         const res: any[] = [];
         for (let i = 0; i < 6; i++) {
           res.push({
@@ -236,7 +236,7 @@ describe('impact: batching and grouping', () => {
       const params = args[2] || {};
 
       // Depth traversal (parameterized BFS) — return 500 impacted nodes
-      if (query.includes('$ids') && query.includes('$relTypes')) {
+      if (query.includes('$ids') && query.includes('sourceId')) {
         const res: any[] = [];
         for (let i = 0; i < 500; i++) {
           res.push({

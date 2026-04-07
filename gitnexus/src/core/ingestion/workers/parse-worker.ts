@@ -1958,7 +1958,11 @@ const processFileGroup = (
       const nameNode = captureMap['name'];
       // Synthesize name for constructors without explicit @name capture (e.g. Swift init)
       if (!nameNode && nodeLabel !== 'Constructor') continue;
-      const nodeName = nameNode ? nameNode.text : 'init';
+      const rawNodeName = nameNode ? nameNode.text : 'init';
+      // descriptionExtractor returns the full selector for OC methods (e.g. "sd_colorAtPoint:")
+      // Use it as the indexed name so callers can search by the complete selector.
+      const description = provider.descriptionExtractor?.(nodeLabel, rawNodeName, captureMap);
+      const nodeName = description ?? rawNodeName;
       const definitionNode = getDefinitionNodeFromCaptures(captureMap);
       const startLine = definitionNode
         ? definitionNode.startPosition.row
@@ -1966,8 +1970,6 @@ const processFileGroup = (
           ? nameNode.startPosition.row
           : 0;
       const nodeId = generateId(nodeLabel, `${file.path}:${nodeName}`);
-
-      const description = provider.descriptionExtractor?.(nodeLabel, nodeName, captureMap);
 
       let frameworkHint = definitionNode
         ? detectFrameworkFromAST(language, (definitionNode.text || '').slice(0, 300))
