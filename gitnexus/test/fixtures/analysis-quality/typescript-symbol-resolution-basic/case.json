@@ -1,0 +1,47 @@
+{
+  "id": "typescript-symbol-resolution-basic",
+  "language": "typescript",
+  "repoPath": ".",
+  "capabilities": [
+    "resolved_symbol",
+    "call_edge",
+    "import_edge"
+  ],
+  "assertions": {
+    "resolvedSymbols": [
+      {
+        "reference": {
+          "file": "src/app.ts",
+          "symbol": "add",
+          "lineContains": "return add(base, increment);"
+        },
+        "expectedDeclaration": {
+          "file": "src/math.ts",
+          "symbol": "add"
+        }
+      }
+    ],
+    "callEdges": [
+      {
+        "source": {
+          "file": "src/app.ts",
+          "symbol": "run"
+        },
+        "target": {
+          "file": "src/math.ts",
+          "symbol": "add"
+        }
+      }
+    ],
+    "importEdges": [
+      {
+        "sourceFile": "src/app.ts",
+        "targetFile": "src/math.ts"
+      }
+    ]
+  },
+  "notes": [
+    "Baseline case for P0 analysis-quality benchmark runner.",
+    "Designed to validate symbol resolution independently from agent workflows."
+  ]
+}

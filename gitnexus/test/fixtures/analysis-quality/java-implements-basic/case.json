@@ -1,0 +1,34 @@
+{
+  "id": "java-implements-basic",
+  "language": "java",
+  "repoPath": ".",
+  "capabilities": [
+    "import_edge",
+    "implements_edge"
+  ],
+  "assertions": {
+    "importEdges": [
+      {
+        "sourceFile": "src/impl/FriendlyGreeter.java",
+        "targetFile": "src/contracts/Greeter.java"
+      }
+    ],
+    "inheritsEdges": [
+      {
+        "child": {
+          "file": "src/impl/FriendlyGreeter.java",
+          "symbol": "FriendlyGreeter"
+        },
+        "parent": {
+          "file": "src/contracts/Greeter.java",
+          "symbol": "Greeter"
+        },
+        "edgeType": "IMPLEMENTS"
+      }
+    ]
+  },
+  "notes": [
+    "Validates that the pipeline emits IMPLEMENTS edges for Java interface implementation.",
+    "FriendlyGreeter implements Greeter — one IMPLEMENTS edge and one IMPORTS edge expected."
+  ]
+}

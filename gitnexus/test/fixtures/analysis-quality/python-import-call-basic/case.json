@@ -1,0 +1,45 @@
+{
+  "id": "python-import-call-basic",
+  "language": "python",
+  "repoPath": ".",
+  "capabilities": [
+    "import_edge",
+    "call_edge",
+    "resolved_symbol"
+  ],
+  "assertions": {
+    "importEdges": [
+      {
+        "sourceFile": "src/app.py",
+        "targetFile": "src/math_utils.py"
+      }
+    ],
+    "callEdges": [
+      {
+        "source": { "file": "src/app.py", "symbol": "run" },
+        "target": { "file": "src/math_utils.py", "symbol": "add" }
+      },
+      {
+        "source": { "file": "src/app.py", "symbol": "run" },
+        "target": { "file": "src/math_utils.py", "symbol": "multiply" }
+      }
+    ],
+    "resolvedSymbols": [
+      {
+        "reference": {
+          "file": "src/app.py",
+          "symbol": "add",
+          "lineContains": "total = add(base, increment)"
+        },
+        "expectedDeclaration": {
+          "file": "src/math_utils.py",
+          "symbol": "add"
+        }
+      }
+    ]
+  },
+  "notes": [
+    "Validates Python cross-file import and call edge resolution.",
+    "run → add and run → multiply are both expected CALLS edges."
+  ]
+}
