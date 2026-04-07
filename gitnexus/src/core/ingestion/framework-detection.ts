@@ -496,6 +496,34 @@ export function detectFrameworkFromPath(filePath: string): FrameworkHint | null 
     return { framework: 'flutter', entryPointMultiplier: 1.5, reason: 'flutter-widget' };
   }
 
+  // ========== ARKTS / HARMONYOS ==========
+
+  // Harmony app/ability entry files
+  if (
+    p.endsWith('/entryability.ets') ||
+    p.endsWith('/mainability.ets') ||
+    p.endsWith('/main.ets')
+  ) {
+    return { framework: 'harmony-arkui', entryPointMultiplier: 3.0, reason: 'arkts-entry-file' };
+  }
+
+  // ArkUI pages/components folders
+  if (
+    (p.includes('/src/main/ets/pages/') || p.includes('/src/main/ets/components/')) &&
+    p.endsWith('.ets')
+  ) {
+    return {
+      framework: 'harmony-arkui',
+      entryPointMultiplier: 2.5,
+      reason: 'arkts-page-component',
+    };
+  }
+
+  // Generic Harmony ETS source
+  if (p.includes('/src/main/ets/') && p.endsWith('.ets')) {
+    return { framework: 'harmony-arkui', entryPointMultiplier: 2.0, reason: 'arkts-source' };
+  }
+
   // ========== GENERIC PATTERNS ==========
 
   // Any language: index files in API folders
@@ -623,6 +651,24 @@ export const FRAMEWORK_AST_PATTERNS = {
   ],
   vapor: ['app.get', 'app.post', 'req.content.decode', 'Vapor'],
 
+  // Objective-C/Cocoa Touch
+  cocoaTouch: [
+    '@interface',
+    '@implementation',
+    '@protocol',
+    '@property',
+    'UIViewController',
+    'UIApplication',
+    'NSObject',
+    'alloc',
+    'initWith',
+    'ViewController',
+    '@synthesize',
+    '@dynamic',
+    '#import <UIKit',
+    '#import <Foundation',
+  ],
+
   // Ruby patterns (class-level macros in definition text)
   rails: [
     'ApplicationController',
@@ -650,6 +696,19 @@ export const FRAMEWORK_AST_PATTERNS = {
     'ConsumerWidget',
   ],
   riverpod: ['@riverpod', 'ref.watch', 'ref.read', 'AsyncNotifier', 'Notifier'],
+  harmonyArkui: [
+    '@Entry',
+    '@Component',
+    '@CustomDialog',
+    '@State',
+    '@Prop',
+    '@Link',
+    '@Builder',
+    'aboutToAppear',
+    'aboutToDisappear',
+    'build()',
+    'struct ',
+  ],
 };
 
 interface AstFrameworkPatternConfig {
@@ -891,10 +950,25 @@ export const AST_FRAMEWORK_PATTERNS_BY_LANGUAGE = {
       patterns: FRAMEWORK_AST_PATTERNS.riverpod,
     },
   ],
-  [SupportedLanguages.Vue]: [], // Vue uses TypeScript AST framework detection
+  [SupportedLanguages.ArkTS]: [
+    {
+      framework: 'harmony-arkui',
+      entryPointMultiplier: 2.5,
+      reason: 'arkui-pattern',
+      patterns: FRAMEWORK_AST_PATTERNS.harmonyArkui,
+    },
+  ],
   [SupportedLanguages.Cobol]: [], // Standalone regex processor — no AST framework patterns
-  [SupportedLanguages.ArkTS]: [], // ArkTS AST framework detection not yet implemented
-  [SupportedLanguages.ObjectiveC]: [], // Objective-C AST framework detection not yet implemented
+  [SupportedLanguages.ObjectiveC]: [
+    // Cocoa/AppKit/UIKit patterns
+    {
+      framework: 'cocoa-touch',
+      entryPointMultiplier: 2.0,
+      reason: 'cocoa-touch-lifecycle',
+      patterns: FRAMEWORK_AST_PATTERNS.cocoaTouch ?? [],
+    },
+  ],
+  [SupportedLanguages.Vue]: [], // Vue SFCs reuse TypeScript framework patterns
 } satisfies Record<SupportedLanguages, AstFrameworkPatternConfig[]>;
 
 /** Pre-lowercased patterns for O(1) pattern matching at runtime */

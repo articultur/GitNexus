@@ -11,9 +11,6 @@ export const TYPESCRIPT_QUERIES = `
 (class_declaration
   name: (type_identifier) @name) @definition.class
 
-(abstract_class_declaration
-  name: (type_identifier) @name) @definition.class
-
 (interface_declaration
   name: (type_identifier) @name) @definition.interface
 
@@ -25,18 +22,6 @@ export const TYPESCRIPT_QUERIES = `
   name: (identifier) @name) @definition.function
 
 (method_definition
-  name: (property_identifier) @name) @definition.method
-
-; ES2022 #private methods (private_property_identifier not matched by property_identifier)
-(method_definition
-  name: (private_property_identifier) @name) @definition.method
-
-; Abstract method signatures in abstract classes
-(abstract_method_signature
-  name: (property_identifier) @name) @definition.method
-
-; Interface method signatures
-(method_signature
   name: (property_identifier) @name) @definition.method
 
 (lexical_declaration
@@ -159,10 +144,6 @@ export const JAVASCRIPT_QUERIES = `
 
 (method_definition
   name: (property_identifier) @name) @definition.method
-
-; ES2022 #private methods
-(method_definition
-  name: (private_property_identifier) @name) @definition.method
 
 (lexical_declaration
   (variable_declarator
@@ -635,7 +616,6 @@ export const CSHARP_QUERIES = `
 export const RUST_QUERIES = `
 ; Functions & Items
 (function_item name: (identifier) @name) @definition.function
-(function_signature_item name: (identifier) @name) @definition.function
 (struct_item name: (type_identifier) @name) @definition.struct
 (enum_item name: (type_identifier) @name) @definition.enum
 (trait_item name: (type_identifier) @name) @definition.trait
@@ -1126,13 +1106,6 @@ export const DART_QUERIES = `
   value: (identifier) @call.name
   (selector (argument_part))) @call
 
-; ── Calls: member calls in variable assignments (var x = obj.method()) ──────
-(initialized_variable_definition
-  (selector
-    (unconditional_assignable_selector
-      (identifier) @call.name))
-  (selector (argument_part))) @call
-
 ; ── Re-exports (export 'foo.dart') ───────────────────────────────────────────
 (import_or_export
   (library_export
@@ -1174,22 +1147,29 @@ export const DART_QUERIES = `
       (type_identifier) @heritage.trait))) @heritage
 `;
 
+// Objective-C queries - works with tree-sitter-objc
 export const OBJECTIVEC_QUERIES = `
 ; ── Class Interface (@interface Foo) ──────────────────────────────────────────
+; Anchored on ':' token to distinguish from superclass identifier in @interface Foo : Bar
 (class_interface
   (identifier) @name
   (":") @colon) @definition.class
 
+; ── Class Interface without superclass (@interface Foo <Bar>) ──────────────────
+; No ':' → identifier is the class name
 (class_interface
   (identifier) @name) @definition.class
 
 ; ── Heritage: class extends (e.g., @interface Foo : Bar) ─────────────────────
+; Note: uses @heritage.class (not @name) so heritage-processor.js creates EXTENDS edge
 (class_interface
   (identifier) @heritage.class
   (":") @colon
   (identifier) @heritage.extends) @heritage
 
 ; ── Heritage: protocol conformance (e.g., @interface Foo : Bar <Baz>) ──────────
+; Also matches @interface Foo <Baz> (no superclass, just protocol)
+; Uses @heritage.implements so heritage-processor.js creates IMPLEMENTS edges
 (class_interface
   (identifier) @heritage.class
   (parameterized_arguments
@@ -1210,6 +1190,20 @@ export const OBJECTIVEC_QUERIES = `
   (protocol_reference_list
     (identifier) @heritage.extends)) @heritage
 
+; ── Instance Variables (inside @interface or @implementation body) ───────────
+; NSString *name;
+(instance_variable
+  (struct_declaration
+    (struct_declarator
+      (pointer_declarator
+        (identifier) @name)))) @definition.property
+
+; int age;
+(instance_variable
+  (struct_declaration
+    (struct_declarator
+      (identifier) @name))) @definition.property
+
 ; ── Property Declaration (@property) ────────────────────────────────────────
 (property_declaration
   (struct_declaration
@@ -1223,6 +1217,9 @@ export const OBJECTIVEC_QUERIES = `
       (identifier) @name))) @definition.property
 
 ; ── OC Methods in @interface (declarations) ─────────────────────────────────
+; The identifier immediately after method_type is the first selector keyword.
+; For unary methods like - (void)alloc, it is the method name.
+; For multi-arg methods like - (CGSize)sizeOfView:css:, each identifier is captured.
 (method_declaration
   (method_type)
   (identifier) @name) @definition.method
@@ -1247,28 +1244,10 @@ export const OBJECTIVEC_QUERIES = `
 
 import { SupportedLanguages } from 'gitnexus-shared';
 
-export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
-  [SupportedLanguages.TypeScript]: TYPESCRIPT_QUERIES,
-  [SupportedLanguages.JavaScript]: JAVASCRIPT_QUERIES,
-  [SupportedLanguages.Python]: PYTHON_QUERIES,
-  [SupportedLanguages.Java]: JAVA_QUERIES,
-  [SupportedLanguages.C]: C_QUERIES,
-  [SupportedLanguages.Go]: GO_QUERIES,
-  [SupportedLanguages.CPlusPlus]: CPP_QUERIES,
-  [SupportedLanguages.CSharp]: CSHARP_QUERIES,
-  [SupportedLanguages.Rust]: RUST_QUERIES,
-  [SupportedLanguages.PHP]: PHP_QUERIES,
-  [SupportedLanguages.Kotlin]: KOTLIN_QUERIES,
-  [SupportedLanguages.Ruby]: RUBY_QUERIES,
-  [SupportedLanguages.Swift]: SWIFT_QUERIES,
-  [SupportedLanguages.Dart]: DART_QUERIES,
-  [SupportedLanguages.Vue]: TYPESCRIPT_QUERIES, // Vue <script> blocks are parsed as TypeScript
-  [SupportedLanguages.Cobol]: '', // Standalone regex processor — no tree-sitter queries
-  [SupportedLanguages.ArkTS]: TYPESCRIPT_QUERIES, // ArkTS uses TypeScript grammar
-  [SupportedLanguages.ObjectiveC]: OBJECTIVEC_QUERIES,
-};
-
-// ArkTS queries — TypeScript queries plus ArkUI-specific decorator captures.
+// ArkTS queries — superset of TypeScript queries with ArkUI-specific additions:
+//  1. Bare decorator capture: @Entry, @Component, @State, @Prop, @Link, @Builder, @Observed
+//     (TypeScript query only captures called-form decorators like @Component())
+//  2. @Watch decorator with a string argument (e.g. @Watch('count'))
 export const ARKTS_QUERIES =
   TYPESCRIPT_QUERIES +
   `
@@ -1282,3 +1261,24 @@ export const ARKTS_QUERIES =
     function: (identifier) @decorator.name
     arguments: (arguments (string (string_fragment) @decorator.arg)?))) @decorator
 `;
+
+export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
+  [SupportedLanguages.TypeScript]: TYPESCRIPT_QUERIES,
+  [SupportedLanguages.ArkTS]: ARKTS_QUERIES,
+  [SupportedLanguages.JavaScript]: JAVASCRIPT_QUERIES,
+  [SupportedLanguages.Python]: PYTHON_QUERIES,
+  [SupportedLanguages.Java]: JAVA_QUERIES,
+  [SupportedLanguages.C]: C_QUERIES,
+  [SupportedLanguages.Go]: GO_QUERIES,
+  [SupportedLanguages.CPlusPlus]: CPP_QUERIES,
+  [SupportedLanguages.CSharp]: CSHARP_QUERIES,
+  [SupportedLanguages.Rust]: RUST_QUERIES,
+  [SupportedLanguages.PHP]: PHP_QUERIES,
+  [SupportedLanguages.Kotlin]: KOTLIN_QUERIES,
+  [SupportedLanguages.Ruby]: RUBY_QUERIES,
+  [SupportedLanguages.Swift]: SWIFT_QUERIES,
+  [SupportedLanguages.Dart]: DART_QUERIES,
+  [SupportedLanguages.Cobol]: '', // Standalone regex processor — no tree-sitter queries
+  [SupportedLanguages.ObjectiveC]: OBJECTIVEC_QUERIES,
+  [SupportedLanguages.Vue]: TYPESCRIPT_QUERIES, // Vue SFCs are parsed as TypeScript
+};

@@ -226,15 +226,39 @@ export const ENTRY_POINT_PATTERNS = {
     /^onEvent$/, // BLoC event handler
     /^mapEventToState$/, // Legacy BLoC pattern
   ],
-  [SupportedLanguages.Vue]: [], // Vue uses TypeScript queries — entry points handled via TS patterns
-  [SupportedLanguages.Cobol]: [], // Standalone regex processor — no tree-sitter entry points
-  [SupportedLanguages.ArkTS]: [], // ArkTS entry points handled via TypeScript patterns
-  [SupportedLanguages.ObjectiveC]: [
-    /^application:didFinishLaunchingWithOptions:$/, // AppDelegate
-    /^viewDidLoad$/, // UIKit lifecycle
-    /^viewWillAppear:$/, // UIKit lifecycle
-    /^viewDidAppear:$/, // UIKit lifecycle
+  [SupportedLanguages.ArkTS]: [
+    // Phase A: TS-compatible baseline for Harmony/ArkTS projects
+    /^main$/,
+    /^onCreate$/,
+    /^onWindowStageCreate$/,
+    /^onWindowStageDestroy$/,
+    /^build$/,
+    /^aboutToAppear$/,
+    /^aboutToDisappear$/,
   ],
+  [SupportedLanguages.Cobol]: [], // Standalone regex processor — no tree-sitter entry points
+  [SupportedLanguages.ObjectiveC]: [
+    // Cocoa/UIKit AppDelegate entry points
+    /^applicationDidFinishLaunching$/,
+    /^application:didFinishLaunchingWithOptions$/,
+    /^applicationWillFinishLaunching$/,
+    // View controller lifecycle
+    /^viewDidLoad$/,
+    /^viewWillAppear$/,
+    /^viewDidAppear$/,
+    /^viewWillDisappear$/,
+    /^viewDidDisappear$/,
+    /^didReceiveMemoryWarning$/,
+    // Initialisation
+    /^initWithNibName:bundle:$/,
+    /^initWithCoder:$/,
+    /^ awakeFromNib$/,
+    // UIApplicationMain entry
+    /^sharedApplication$/,
+    /alloc$/,
+    /^init$/,
+  ],
+  [SupportedLanguages.Vue]: [], // Vue SFCs use TypeScript lifecycle hooks (no extra patterns needed)
 } satisfies Record<SupportedLanguages, RegExp[]>;
 
 /** Pre-computed merged patterns (universal + language-specific) to avoid per-call array allocation. */
