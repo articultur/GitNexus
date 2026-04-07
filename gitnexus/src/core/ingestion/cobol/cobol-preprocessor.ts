@@ -183,6 +183,15 @@ export interface CobolRegexResults {
 
   // Phase 4.1: INITIALIZE
   initializes: Array<{ target: string; line: number; caller: string | null }>;
+
+  // Phase 1.3: STRING/UNSTRING
+  strings: Array<{
+    sources: string[];
+    target: string;
+    type: 'string' | 'unstring';
+    line: number;
+    caller: string | null;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -511,6 +520,100 @@ const COBOL_STATEMENT_VERBS = [
   'STRING',
   'UNSTRING',
 ];
+
+// STRING statement keyword filter — tokens that are syntax, not data item names
+const STRING_CLAUSE_KEYWORDS = new Set([
+  'STRING',
+  'DELIMITED',
+  'BY',
+  'SIZE',
+  'ALL',
+  'INTO',
+  'WITH',
+  'POINTER',
+  'ON',
+  'OVERFLOW',
+  'NOT',
+  'END-STRING',
+]);
+
+// UNSTRING statement keyword filter
+const UNSTRING_CLAUSE_KEYWORDS = new Set([
+  'UNSTRING',
+  'DELIMITED',
+  'BY',
+  'INTO',
+  'DELIMITER',
+  'IN',
+  'COUNT',
+  'TALLYING',
+  'OR',
+  'ALL',
+  'ON',
+  'OVERFLOW',
+  'NOT',
+  'END-UNSTRING',
+  'WITH',
+  'POINTER',
+]);
+
+/** Extract literal-free tokens from a STRING/UNSTRING statement fragment. */
+function extractIdentTokens(text: string, filterSet: Set<string>): string[] {
+  // Remove quoted literals, then tokenize
+  const stripped = text.replace(/"[^"]*"|'[^']*'/g, ' ');
+  return stripped
+    .trim()
+    .split(/\s+/)
+    .filter((t) => /^[A-Z][A-Z0-9-]+$/i.test(t) && !filterSet.has(t.toUpperCase()));
+}
+
+/** Parse accumulated STRING statement. Returns sources and INTO target. */
+function parseStringStatement(text: string): { sources: string[]; target: string } | null {
+  const upper = text.toUpperCase();
+  const intoIdx = upper.search(/\bINTO\b/);
+  if (intoIdx < 0) return null;
+
+  const beforeInto = text.substring(0, intoIdx);
+  const afterInto = text.substring(intoIdx + 4);
+
+  const sources = extractIdentTokens(beforeInto, STRING_CLAUSE_KEYWORDS);
+  // Target: first identifier after INTO, before WITH POINTER / ON OVERFLOW / END-STRING / period
+  const targetTokens = afterInto
+    .replace(/"[^"]*"|'[^']*'/g, ' ')
+    .replace(/\.\s*$/, '')
+    .split(/\b(?:WITH|ON|NOT|END-STRING)\b/i)[0]
+    .trim()
+    .split(/\s+/)
+    .filter((t) => /^[A-Z][A-Z0-9-]+$/i.test(t));
+  if (targetTokens.length === 0) return null;
+
+  return { sources, target: targetTokens[0] };
+}
+
+/** Parse accumulated UNSTRING statement. Returns source and INTO targets. */
+function parseUnstringStatement(text: string): { sources: string[]; target: string } | null {
+  const upper = text.toUpperCase();
+  // Source: first identifier after UNSTRING, before DELIMITED/INTO
+  const unstringMatch = text.match(/\bUNSTRING\s+(?:"[^"]*"|'[^']*'|([A-Z][A-Z0-9-]+))/i);
+  if (!unstringMatch || !unstringMatch[1]) return null;
+  const source = unstringMatch[1];
+
+  const intoIdx = upper.search(/\bINTO\b/);
+  if (intoIdx < 0) return null;
+
+  const afterInto = text.substring(intoIdx + 4);
+  // INTO targets: identifiers before TALLYING / ON OVERFLOW / NOT / END-UNSTRING / period
+  const intoSection = afterInto
+    .replace(/"[^"]*"|'[^']*'/g, ' ')
+    .replace(/\.\s*$/, '')
+    .split(/\b(?:TALLYING|WITH\s+POINTER|ON|NOT|END-UNSTRING)\b/i)[0];
+
+  const targets = extractIdentTokens(intoSection, UNSTRING_CLAUSE_KEYWORDS);
+  if (targets.length === 0) return null;
+
+  // Return source as sources[], first INTO target as target
+  return { sources: [source], target: targets[0] };
+}
 
 /** Regex matching start of any COBOL statement verb (for accumulator flush triggers). */
 const RE_STATEMENT_VERB_START = new RegExp(`^(?:${COBOL_STATEMENT_VERBS.join('|')})(?:\\s|$)`, 'i');
@@ -1017,6 +1120,7 @@ export function extractCobolSymbolsWithRegex(
     sets: [],
     inspects: [],
     initializes: [],
+    strings: [],
   };
 
   // --- State ---
@@ -1053,6 +1157,11 @@ export function extractCobolSymbolsWithRegex(
   // INSPECT accumulator (multi-line)
   let inspectAccum: string | null = null;
   let inspectStartLine = 0;
+
+  // STRING/UNSTRING accumulator (multi-line)
+  let stringAccum: string | null = null;
+  let stringAccumType: 'string' | 'unstring' = 'string';
+  let stringStartLine = 0;
 
   // CALL accumulator (multi-line CALL ... USING on separate lines)
   let callAccum: string | null = null;
@@ -1177,6 +1286,9 @@ export function extractCobolSymbolsWithRegex(
   // Flush any pending INSPECT accumulator (truncated file without trailing period)
   flushInspect();
 
+  // Flush any pending STRING/UNSTRING accumulator (truncated file without trailing period)
+  flushString();
+
   // Flush any pending CALL accumulator (truncated file without trailing period)
   flushCallAccum();
 
@@ -1276,6 +1388,7 @@ export function extractCobolSymbolsWithRegex(
       flushCallAccum();
       flushSort();
       flushInspect();
+      flushString();
       const topProgram = programBoundaryStack.pop();
       if (topProgram) {
         result.programs.push({
@@ -1308,6 +1421,7 @@ export function extractCobolSymbolsWithRegex(
         flushCallAccum();
         flushSort();
         flushInspect();
+        flushString();
         extractIdentification(line, lineNum);
         return;
       }
@@ -1321,6 +1435,7 @@ export function extractCobolSymbolsWithRegex(
       flushCallAccum();
       flushSort();
       flushInspect();
+      flushString();
 
       const divName = divMatch[1].toUpperCase();
       switch (divName) {
@@ -1658,6 +1773,23 @@ export function extractCobolSymbolsWithRegex(
       caller: currentParagraph,
     });
     inspectAccum = null;
+  }
+
+  function flushString(): void {
+    if (stringAccum === null) return;
+    const text = stringAccum;
+    const parsed =
+      stringAccumType === 'string' ? parseStringStatement(text) : parseUnstringStatement(text);
+    if (parsed && parsed.sources.length > 0 && parsed.target) {
+      result.strings.push({
+        sources: parsed.sources,
+        target: parsed.target,
+        type: stringAccumType,
+        line: stringStartLine,
+        caller: currentParagraph,
+      });
+    }
+    stringAccum = null;
   }
 
   /**
@@ -2041,6 +2173,40 @@ export function extractCobolSymbolsWithRegex(
       inspectStartLine = lineNum;
       if (!/\.\s*$/.test(inspectAccum)) return;
       flushInspect();
+    }
+
+    // STRING/UNSTRING — multi-line accumulator (like INSPECT)
+    if (stringAccum !== null) {
+      const strTrimmed = line.trimStart();
+      const strLeading = line.match(/^(\s*)/)?.[1].length ?? 0;
+      const strIsAreaAPara =
+        RE_PROC_PARAGRAPH.test(line) && (!isFreeFormat ? strLeading <= 7 : false);
+      if (
+        RE_PROC_SECTION.test(line) ||
+        strIsAreaAPara ||
+        RE_STATEMENT_VERB_START.test(strTrimmed) ||
+        /^CALL(?:\s|$)/i.test(strTrimmed)
+      ) {
+        flushString();
+        // Fall through to process this line normally
+      } else {
+        stringAccum += ' ' + line;
+        const endVerb = stringAccumType === 'string' ? /\bEND-STRING\b/i : /\bEND-UNSTRING\b/i;
+        if (/\.\s*$/.test(stringAccum) || endVerb.test(stringAccum)) {
+          flushString();
+        } else {
+          return;
+        }
+      }
+    }
+    const stringVerbMatch = line.match(/\b(STRING|UNSTRING)\b(?!\s*-)/i);
+    if (stringVerbMatch && stringAccum === null) {
+      stringAccumType = stringVerbMatch[1].toUpperCase() === 'STRING' ? 'string' : 'unstring';
+      stringAccum = line;
+      stringStartLine = lineNum;
+      const endVerb = stringAccumType === 'string' ? /\bEND-STRING\b/i : /\bEND-UNSTRING\b/i;
+      if (!/\.\s*$/.test(stringAccum) && !endVerb.test(stringAccum)) return;
+      flushString();
     }
 
     // SEARCH — table access

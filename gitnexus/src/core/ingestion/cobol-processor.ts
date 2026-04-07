@@ -60,6 +60,7 @@ export interface CobolProcessResult {
   sets: number;
   inspects: number;
   initializes: number;
+  strings: number;
 }
 
 /** Returns true if the file is a COBOL or copybook file. */
@@ -114,6 +115,7 @@ export const processCobol = (
     sets: 0,
     inspects: 0,
     initializes: 0,
+    strings: 0,
   };
 
   // ── 1. Separate programs, copybooks, and JCL ───────────────────────
@@ -199,6 +201,7 @@ export const processCobol = (
     result.sets += extracted.sets.length;
     result.inspects += extracted.inspects.length;
     result.initializes += extracted.initializes.length;
+    result.strings += extracted.strings.length;
   }
 
   // ── 4. Second pass: resolve cross-program CALL targets ─────────────
@@ -1133,6 +1136,37 @@ function mapToGraph(
         targetId: targetPropId,
         confidence: 0.9,
         reason: 'cobol-initialize',
+      });
+    }
+  }
+
+  // ── STRING/UNSTRING -> ACCESSES edges ──────────────────
+  for (const str of extracted.strings) {
+    const callerId = scopedCallerLookup(str.caller, str.line);
+    // Sources: read edges
+    for (const src of str.sources) {
+      const srcPropId = dataItemMap.get(src.toUpperCase());
+      if (srcPropId) {
+        graph.addRelationship({
+          id: generateId('ACCESSES', `${callerId}->string-read->${src}:L${str.line}`),
+          type: 'ACCESSES',
+          sourceId: callerId,
+          targetId: srcPropId,
+          confidence: 0.85,
+          reason: 'cobol-string-read',
+        });
+      }
+    }
+    // Target: write edge
+    const targetPropId = dataItemMap.get(str.target.toUpperCase());
+    if (targetPropId) {
+      graph.addRelationship({
+        id: generateId('ACCESSES', `${callerId}->string-write->${str.target}:L${str.line}`),
+        type: 'ACCESSES',
+        sourceId: callerId,
+        targetId: targetPropId,
+        confidence: 0.85,
+        reason: 'cobol-string-write',
       });
     }
   }

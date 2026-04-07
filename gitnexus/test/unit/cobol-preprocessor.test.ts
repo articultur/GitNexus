@@ -2720,4 +2720,162 @@ describe('extractCobolSymbolsWithRegex', () => {
       expect(r.inspects[0].form).toBe('replacing');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 1.3: STRING/UNSTRING data flow extraction
+  // -------------------------------------------------------------------------
+  describe('STRING statement extraction', () => {
+    it('single-line STRING extracts sources (DELIMITED BY SIZE) and INTO target', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        "           STRING WS-FIRST DELIMITED BY SIZE ' ' WS-LAST DELIMITED BY SIZE INTO WS-FULL-NAME.",
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(1);
+      expect(r.strings[0].type).toBe('string');
+      expect(r.strings[0].sources).toEqual(['WS-FIRST', 'WS-LAST']);
+      expect(r.strings[0].target).toBe('WS-FULL-NAME');
+    });
+
+    it('multi-line STRING accumulates across continuation lines', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           STRING WS-CITY',
+        '               DELIMITED BY SPACE',
+        "               ', '",
+        '               WS-STATE',
+        '               DELIMITED BY SIZE',
+        '               INTO WS-ADDRESS.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(1);
+      expect(r.strings[0].type).toBe('string');
+      expect(r.strings[0].sources).toContain('WS-CITY');
+      expect(r.strings[0].sources).toContain('WS-STATE');
+      expect(r.strings[0].target).toBe('WS-ADDRESS');
+    });
+
+    it('STRING terminated by END-STRING', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           STRING WS-A DELIMITED BY SIZE',
+        '               INTO WS-OUT',
+        '           END-STRING.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(1);
+      expect(r.strings[0].type).toBe('string');
+      expect(r.strings[0].sources).toEqual(['WS-A']);
+      expect(r.strings[0].target).toBe('WS-OUT');
+    });
+
+    it('STRING terminated by next verb (no period)', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           STRING WS-A DELIMITED BY SIZE INTO WS-OUT',
+        '           MOVE 0 TO WS-CTR.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(1);
+      expect(r.strings[0].sources).toEqual(['WS-A']);
+      expect(r.strings[0].target).toBe('WS-OUT');
+    });
+
+    it('STRING identifier not mistaken for STRING-DATA variable (no false positive)', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           MOVE 1 TO STRING-DATA.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(0);
+    });
+  });
+
+  describe('UNSTRING statement extraction', () => {
+    it('single-line UNSTRING extracts source and first INTO target', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           UNSTRING WS-INPUT DELIMITED BY SPACE INTO WS-WORD1 WS-WORD2.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(1);
+      expect(r.strings[0].type).toBe('unstring');
+      expect(r.strings[0].sources).toEqual(['WS-INPUT']);
+      expect(r.strings[0].target).toBe('WS-WORD1');
+    });
+
+    it('multi-line UNSTRING accumulates across continuation lines', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           UNSTRING WS-FULL-NAME',
+        "               DELIMITED BY ','",
+        '               INTO WS-FIRST WS-LAST.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(1);
+      expect(r.strings[0].type).toBe('unstring');
+      expect(r.strings[0].sources).toEqual(['WS-FULL-NAME']);
+      expect(r.strings[0].target).toBe('WS-FIRST');
+    });
+
+    it('UNSTRING flushed at END PROGRAM boundary', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           UNSTRING WS-RAW',
+        '               DELIMITED BY SPACE',
+        '               INTO WS-TOKEN',
+        '       END PROGRAM TESTPROG.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(1);
+      expect(r.strings[0].type).toBe('unstring');
+      expect(r.strings[0].sources).toEqual(['WS-RAW']);
+      expect(r.strings[0].target).toBe('WS-TOKEN');
+    });
+
+    it('STRING and UNSTRING in the same procedure does not merge', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           STRING WS-A DELIMITED BY SIZE INTO WS-OUT.',
+        '           UNSTRING WS-OUT DELIMITED BY SPACE INTO WS-X.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.strings).toHaveLength(2);
+      const strOp = r.strings.find((s) => s.type === 'string');
+      const unstrOp = r.strings.find((s) => s.type === 'unstring');
+      expect(strOp).toBeDefined();
+      expect(unstrOp).toBeDefined();
+      expect(strOp!.sources).toEqual(['WS-A']);
+      expect(strOp!.target).toBe('WS-OUT');
+      expect(unstrOp!.sources).toEqual(['WS-OUT']);
+      expect(unstrOp!.target).toBe('WS-X');
+    });
+  });
 });
