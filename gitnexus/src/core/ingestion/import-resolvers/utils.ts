@@ -9,6 +9,7 @@ export const EXTENSIONS = [
   // TypeScript/JavaScript
   '.tsx',
   '.ts',
+  '.ets',
   '.jsx',
   '.js',
   '.vue',
