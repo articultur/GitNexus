@@ -273,6 +273,70 @@ withTestLbugDB(
         }
       });
     });
+
+    describe('test_impact tool', () => {
+      let backend: LocalBackend;
+
+      beforeAll(async () => {
+        const ext = handle as typeof handle & { _backend?: LocalBackend };
+        if (!ext._backend) {
+          throw new Error(
+            'LocalBackend not initialized — afterSetup did not attach _backend to handle',
+          );
+        }
+        backend = ext._backend;
+      });
+
+      it('returns structured response for a known symbol', async () => {
+        const result = await backend.callTool('test_impact', { target: 'validate' });
+        expect(result).not.toHaveProperty('error');
+        expect(result).toHaveProperty('test_files');
+        expect(result).toHaveProperty('total_test_files');
+        expect(result).toHaveProperty('seed_symbols');
+        expect(result).toHaveProperty('summary');
+        expect(Array.isArray(result.test_files)).toBe(true);
+        expect(Array.isArray(result.seed_symbols)).toBe(true);
+        // Seed data has no test files — 0 is correct
+        expect(result.total_test_files).toBe(0);
+      });
+
+      it('returns no-symbol message for unknown symbol', async () => {
+        const result = await backend.callTool('test_impact', {
+          target: 'nonexistent_symbol_xyz_999',
+        });
+        // Either 0 seed symbols found, or still structured (no crash)
+        expect(result).toBeDefined();
+        if (result.error) {
+          expect(typeof result.error).toBe('string');
+        } else {
+          expect(result).toHaveProperty('test_files');
+          expect(result).toHaveProperty('seed_symbols');
+        }
+      });
+
+      it('returns error when no input provided', async () => {
+        const result = await backend.callTool('test_impact', {});
+        expect(result).toHaveProperty('error');
+        expect(result.error).toMatch(/provide/i);
+      });
+
+      it('seed_symbols is populated when target is found', async () => {
+        const result = await backend.callTool('test_impact', { target: 'login' });
+        expect(result).not.toHaveProperty('error');
+        expect(result.seed_symbols.length).toBeGreaterThanOrEqual(1);
+        const names = result.seed_symbols.map((s: any) => s.name);
+        expect(names).toContain('login');
+      });
+
+      it('accepts changes array input', async () => {
+        const result = await backend.callTool('test_impact', {
+          changes: ['validate', 'hash'],
+        });
+        expect(result).not.toHaveProperty('error');
+        expect(result).toHaveProperty('test_files');
+        expect(result.seed_symbols.length).toBeGreaterThanOrEqual(2);
+      });
+    });
   },
   {
     seed: LOCAL_BACKEND_SEED_DATA,

@@ -19,8 +19,8 @@ const GROUP_TOOLS = new Set([
 ]);
 
 describe('GITNEXUS_TOOLS', () => {
-  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 5 group + 3 new)', () => {
-    expect(GITNEXUS_TOOLS).toHaveLength(19);
+  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 5 group + 3 new + 1 test_impact)', () => {
+    expect(GITNEXUS_TOOLS).toHaveLength(20);
   });
 
   it('contains all expected tool names', () => {
@@ -152,5 +152,26 @@ describe('GITNEXUS_TOOLS', () => {
     const shapeCheckTool = GITNEXUS_TOOLS.find((t) => t.name === 'shape_check')!;
     expect(shapeCheckTool.description).toContain('api_impact');
     expect(shapeCheckTool.description).toContain('pre-change analysis');
+  });
+
+  it('test_impact tool has no required parameters', () => {
+    const tool = GITNEXUS_TOOLS.find((t) => t.name === 'test_impact')!;
+    expect(tool).toBeDefined();
+    expect(tool.inputSchema.required).toEqual([]);
+    expect(tool.inputSchema.properties.target).toBeDefined();
+    expect(tool.inputSchema.properties.changes).toBeDefined();
+    expect(tool.inputSchema.properties.scope).toBeDefined();
+    expect(tool.inputSchema.properties.maxDepth).toBeDefined();
+    expect(tool.inputSchema.properties.repo).toBeDefined();
+  });
+
+  it('test_impact scope has valid enum values', () => {
+    const tool = GITNEXUS_TOOLS.find((t) => t.name === 'test_impact')!;
+    expect(tool.inputSchema.properties.scope.enum).toEqual([
+      'unstaged',
+      'staged',
+      'all',
+      'compare',
+    ]);
   });
 });

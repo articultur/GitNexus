@@ -55,6 +55,9 @@ function getNextStepHint(toolName: string, args: Record<string, any> | undefined
     case 'impact':
       return `\n\n---\n**Next:** Review d=1 items first (WILL BREAK). To check affected execution flows, READ gitnexus://repo/${repoPath}/processes.`;
 
+    case 'test_impact':
+      return `\n\n---\n**Next:** Run the returned test files with your test runner. For full blast-radius analysis, use impact({target: "<symbol>", direction: "upstream"${repoParam}}).`;
+
     case 'detect_changes':
       return `\n\n---\n**Next:** Review affected processes. Use context() on high-risk changed symbols. READ gitnexus://repo/${repoPath}/process/{name} for full execution traces.`;
 

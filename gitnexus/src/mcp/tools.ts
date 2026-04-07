@@ -533,6 +533,63 @@ WHEN TO USE: Before group_sync or when agents should refresh indexes.`,
     },
   },
   {
+    name: 'test_impact',
+    description: `Find test files that cover a changed symbol or set of changed files.
+Traverses the call/import graph upstream from the given symbols to discover which test functions (and test files) transitively call them.
+
+WHEN TO USE: Before or after making code changes — quickly find the minimal set of test files that exercise the changed code, avoiding full test-suite runs.
+AFTER THIS: Run the returned test files with your test runner. For deeper risk assessment, use impact({target: "<symbol>", direction: "upstream"}).
+
+Input (one of):
+- target: a single symbol name or file path fragment
+- changes: array of symbol names
+- scope: git diff scope ("unstaged" | "staged" | "all" | "compare") — mirrors detect_changes
+
+Output:
+- test_files: sorted list of test files (by proximity, then hit count)
+- seed_symbols: the resolved input symbols
+- summary: human-readable result`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          description: 'Symbol name or file path fragment to use as the change origin.',
+        },
+        changes: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of symbol names to use as change origins.',
+        },
+        scope: {
+          type: 'string',
+          description:
+            'Git diff scope: "unstaged" (default), "staged", "all", "compare". Mirrors detect_changes.',
+          enum: ['unstaged', 'staged', 'all', 'compare'],
+        },
+        base_ref: {
+          type: 'string',
+          description: 'Branch or commit to compare against (required when scope="compare").',
+        },
+        maxDepth: {
+          type: 'number',
+          description: 'Maximum BFS traversal depth (default: 5).',
+          default: 5,
+        },
+        minConfidence: {
+          type: 'number',
+          description: 'Minimum edge confidence 0-1 (default: 0).',
+          default: 0,
+        },
+        repo: {
+          type: 'string',
+          description: 'Repository name or path. Omit if only one repo is indexed.',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'explain_dataflow',
     description: `Explain a data flow security vulnerability in plain English using an LLM.
 
