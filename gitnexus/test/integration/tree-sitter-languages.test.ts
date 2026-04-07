@@ -9,6 +9,7 @@ import Parser from 'tree-sitter';
 
 const fixturesDir = path.resolve(__dirname, '..', 'fixtures', 'sample-code');
 const harmonyDir = path.join(fixturesDir, 'harmony');
+const objectiveCFixturesDir = path.resolve(__dirname, '..', 'fixtures', 'objective-c');
 
 function readFixture(filename: string): string {
   return fs.readFileSync(path.join(fixturesDir, filename), 'utf-8');
@@ -16,6 +17,10 @@ function readFixture(filename: string): string {
 
 function readHarmonyFixture(...segments: string[]): string {
   return fs.readFileSync(path.join(harmonyDir, ...segments), 'utf-8');
+}
+
+function readObjectiveCFixture(filename: string): string {
+  return fs.readFileSync(path.join(objectiveCFixturesDir, filename), 'utf-8');
 }
 
 function parseAndQuery(parser: Parser, content: string, queryStr: string) {
@@ -806,6 +811,19 @@ describe('Tree-sitter multi-language parsing', () => {
       const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
       const defs = extractDefinitions(matches);
       expect(defs.some((d) => d.name === 'new')).toBe(true);
+    });
+
+    it('parses multi-selector Objective-C fixture', async () => {
+      await loadLanguage(SupportedLanguages.ObjectiveC);
+      const content = readObjectiveCFixture('multi-selector-method.m');
+      const provider = getProvider(SupportedLanguages.ObjectiveC);
+      const { matches } = parseAndQuery(parser, content, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+
+      expect(defs.some((d) => d.name.includes('sizeOfView'))).toBe(true);
+      expect(defs.some((d) => d.name === 'css')).toBe(true);
+      expect(defs.some((d) => d.name === 'attribute')).toBe(true);
+      expect(defs.some((d) => d.name === 'superFrame')).toBe(true);
     });
   });
 });
