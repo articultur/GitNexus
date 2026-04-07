@@ -19,8 +19,8 @@ const GROUP_TOOLS = new Set([
 ]);
 
 describe('GITNEXUS_TOOLS', () => {
-  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 5 group)', () => {
-    expect(GITNEXUS_TOOLS).toHaveLength(16);
+  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 5 group + 3 new)', () => {
+    expect(GITNEXUS_TOOLS).toHaveLength(19);
   });
 
   it('contains all expected tool names', () => {
