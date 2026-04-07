@@ -181,4 +181,9 @@ export interface LanguageTypeConfig {
   inferLiteralType?: LiteralTypeInferrer;
   detectConstructorType?: ConstructorTypeDetector;
   unwrapDeclaredType?: DeclaredTypeUnwrapper;
+  /** Extract return type annotation from a function/method definition node.
+   *  Used as a doc-comment fallback when the generic AST parser cannot infer
+   *  the return type (e.g., Ruby YARD `@return [Type]`, PHP `@return User[]`).
+   *  Returns the type string, or undefined if extraction is not possible. */
+  extractReturnType?: (node: import('../utils/ast-helpers.js').SyntaxNode) => string | undefined;
 }

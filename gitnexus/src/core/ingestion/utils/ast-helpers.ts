@@ -453,6 +453,90 @@ export const inferFunctionLabel = (nodeType: string): NodeLabel =>
       ? 'Constructor'
       : 'Function';
 
+/**
+ * Combine `genericFuncName` + `inferFunctionLabel` into a single helper.
+ * Avoids duplicating both calls at every call-site.
+ */
+export function extractFunctionName(node: SyntaxNode): {
+  funcName: string | null;
+  label: NodeLabel;
+} {
+  return { funcName: genericFuncName(node), label: inferFunctionLabel(node.type) };
+}
+
+/** AST node types that typically represent a parameter list in definitions. */
+const PARAM_LIST_NODE_TYPES = new Set([
+  'parameters',
+  'parameter_list',
+  'formal_parameters',
+  'type_parameters',
+  'function_parameters',
+  'param_list',
+]);
+
+/** AST child node types considered optional/default-having parameters. */
+const OPTIONAL_PARAM_NODE_TYPES = new Set([
+  'optional_parameter',
+  'default_parameter',
+  'rest_element',
+  'optional_identifier',
+]);
+
+/**
+ * Generic fallback for extracting method signature metadata when no
+ * language-specific `MethodExtractor` is available.
+ *
+ * Scans the immediate children of `node` for a parameter-list child and counts
+ * its named children as parameters. Each named child that is itself an
+ * optional/default/rest node is counted as optional; the rest are required.
+ *
+ * Returns a mutable object so callers can patch `returnType` after doc-comment
+ * extraction (e.g., Ruby YARD, PHP PHPDoc).
+ */
+export function extractMethodSignature(node: SyntaxNode | null | undefined): {
+  parameterCount: number;
+  requiredParameterCount: number;
+  parameterTypes: string[];
+  returnType: string | undefined;
+} {
+  if (!node)
+    return {
+      parameterCount: 0,
+      requiredParameterCount: 0,
+      parameterTypes: [],
+      returnType: undefined,
+    };
+
+  // Find the first child that looks like a parameter list.
+  let paramList: SyntaxNode | null = null;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && PARAM_LIST_NODE_TYPES.has(child.type)) {
+      paramList = child;
+      break;
+    }
+  }
+
+  if (!paramList)
+    return {
+      parameterCount: 0,
+      requiredParameterCount: 0,
+      parameterTypes: [],
+      returnType: undefined,
+    };
+
+  let parameterCount = 0;
+  let requiredParameterCount = 0;
+  for (let i = 0; i < paramList.namedChildCount; i++) {
+    const param = paramList.namedChild(i);
+    if (!param) continue;
+    parameterCount++;
+    if (!OPTIONAL_PARAM_NODE_TYPES.has(param.type)) requiredParameterCount++;
+  }
+
+  return { parameterCount, requiredParameterCount, parameterTypes: [], returnType: undefined };
+}
+
 /** Argument list node types shared between countCallArguments and call-resolution helpers. */
 export const CALL_ARGUMENT_LIST_TYPES = new Set(['arguments', 'argument_list', 'value_arguments']);
 
