@@ -235,6 +235,15 @@ export const ENTRY_POINT_PATTERNS = {
     /^build$/,
     /^aboutToAppear$/,
     /^aboutToDisappear$/,
+    // Phase B: HarmonyOS Ability class names and additional lifecycle hooks
+    /^onDestroy$/,
+    /^onForeground$/,
+    /^onBackground$/,
+    /^onNewWant$/,
+    /^onContinue$/,
+    /Ability$/, // EntryAbility, UIAbility, AbilityStage, ServiceAbility, etc.
+    /^AbilityStage$/,
+    /^Index$/, // Default HarmonyOS page entry
   ],
   [SupportedLanguages.Cobol]: [], // Standalone regex processor — no tree-sitter entry points
   [SupportedLanguages.ObjectiveC]: [
