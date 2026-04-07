@@ -2,14 +2,20 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { loadParser, loadLanguage } from '../../src/core/tree-sitter/parser-loader.js';
+import { preprocessArktsContent } from '../../src/core/ingestion/languages/arkts-preprocess.js';
 import { SupportedLanguages, getLanguageFromFilename } from 'gitnexus-shared';
 import { getProvider } from '../../src/core/ingestion/languages/index.js';
 import Parser from 'tree-sitter';
 
 const fixturesDir = path.resolve(__dirname, '..', 'fixtures', 'sample-code');
+const harmonyDir = path.join(fixturesDir, 'harmony');
 
 function readFixture(filename: string): string {
   return fs.readFileSync(path.join(fixturesDir, filename), 'utf-8');
+}
+
+function readHarmonyFixture(...segments: string[]): string {
+  return fs.readFileSync(path.join(harmonyDir, ...segments), 'utf-8');
 }
 
 function parseAndQuery(parser: Parser, content: string, queryStr: string) {
@@ -69,6 +75,82 @@ describe('Tree-sitter multi-language parsing', () => {
       // Should detect Counter class and Button/useCounter functions
       const names = defs.map((d) => d.name);
       expect(names).toContain('Counter');
+    });
+  });
+
+  describe('ArkTS (.ets)', () => {
+    it('parses class and function declarations with TypeScript grammar compatibility', async () => {
+      await loadLanguage(SupportedLanguages.ArkTS, 'simple.ets');
+      const content = preprocessArktsContent(readFixture('simple.ets'));
+      const provider = getProvider(SupportedLanguages.ArkTS);
+      const { matches } = parseAndQuery(parser, content, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+
+      expect(defs.length).toBeGreaterThan(0);
+      const names = defs.map((d) => d.name);
+      expect(names).toContain('ArkSession');
+      expect(names).toContain('createSession');
+    });
+
+    it('captures bare ArkUI decorators (@Entry, @Component) via ARKTS_QUERIES', async () => {
+      await loadLanguage(SupportedLanguages.ArkTS, 'harmony/pages/Index.ets');
+      const content = preprocessArktsContent(readHarmonyFixture('pages', 'Index.ets'));
+      const provider = getProvider(SupportedLanguages.ArkTS);
+      const { matches } = parseAndQuery(parser, content, provider.treeSitterQueries);
+
+      // Collect all decorator.name captures
+      const decoratorNames = matches
+        .flatMap((m) => m.captures)
+        .filter((c) => c.name === 'decorator.name')
+        .map((c) => c.node.text);
+
+      expect(decoratorNames).toContain('Entry');
+      expect(decoratorNames).toContain('Component');
+      expect(decoratorNames).toContain('State');
+      expect(decoratorNames).toContain('Builder');
+    });
+
+    it('extracts class/method definitions from Harmony EntryAbility fixture', async () => {
+      await loadLanguage(SupportedLanguages.ArkTS, 'harmony/entryability/EntryAbility.ets');
+      const content = preprocessArktsContent(
+        readHarmonyFixture('entryability', 'EntryAbility.ets'),
+      );
+      const provider = getProvider(SupportedLanguages.ArkTS);
+      const { matches } = parseAndQuery(parser, content, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+
+      const names = defs.map((d) => d.name);
+      expect(names).toContain('EntryAbility');
+      // Lifecycle methods should be captured
+      expect(names).toContain('onCreate');
+      expect(names).toContain('onWindowStageCreate');
+      expect(names).toContain('onDestroy');
+    });
+
+    it('extracts exported functions and class from HttpService fixture', async () => {
+      await loadLanguage(SupportedLanguages.ArkTS, 'harmony/network/HttpService.ets');
+      const content = preprocessArktsContent(readHarmonyFixture('network', 'HttpService.ets'));
+      const provider = getProvider(SupportedLanguages.ArkTS);
+      const { matches } = parseAndQuery(parser, content, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+
+      const names = defs.map((d) => d.name);
+      expect(names).toContain('fetchJson');
+      expect(names).toContain('fetchProducts');
+      expect(names).toContain('logRequest');
+    });
+
+    it('extracts ProductCard and Index structs from ArkUI page fixture', async () => {
+      await loadLanguage(SupportedLanguages.ArkTS, 'harmony/pages/Index.ets');
+      const content = preprocessArktsContent(readHarmonyFixture('pages', 'Index.ets'));
+      const provider = getProvider(SupportedLanguages.ArkTS);
+      const { matches } = parseAndQuery(parser, content, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+
+      const names = defs.map((d) => d.name);
+      expect(names).toContain('ProductCard');
+      expect(names).toContain('Index');
+      expect(names).toContain('loadProducts');
     });
   });
 
@@ -688,6 +770,42 @@ describe('Tree-sitter multi-language parsing', () => {
       const tree = parser.parse('function {{{ class >>><< if(( end');
       expect(tree.rootNode).toBeDefined();
       expect(tree.rootNode.hasError).toBe(true);
+    });
+  });
+
+  describe('Objective-C', () => {
+    let parser: Parser;
+
+    beforeAll(async () => {
+      parser = await loadParser();
+    });
+
+    it('parses unary method declarations', async () => {
+      await loadLanguage(SupportedLanguages.ObjectiveC);
+      const code = `@interface Foo\n- (void)alloc;\n@end`;
+      const provider = getProvider(SupportedLanguages.ObjectiveC);
+      const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+      expect(defs.some((d) => d.name === 'alloc')).toBe(true);
+    });
+
+    it('parses multi-argument method definitions', async () => {
+      await loadLanguage(SupportedLanguages.ObjectiveC);
+      const code = `@implementation Foo\n- (CGSize)sizeOfView:(id)viewData css:(NSDictionary *)css {\n  return CGSizeZero;\n}\n@end`;
+      const provider = getProvider(SupportedLanguages.ObjectiveC);
+      const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+      expect(defs.some((d) => d.name.includes('sizeOfView'))).toBe(true);
+      expect(defs.some((d) => d.name === 'css')).toBe(true);
+    });
+
+    it('parses class method declarations', async () => {
+      await loadLanguage(SupportedLanguages.ObjectiveC);
+      const code = `@interface Foo\n+ (instancetype)new;\n@end`;
+      const provider = getProvider(SupportedLanguages.ObjectiveC);
+      const { matches } = parseAndQuery(parser, code, provider.treeSitterQueries);
+      const defs = extractDefinitions(matches);
+      expect(defs.some((d) => d.name === 'new')).toBe(true);
     });
   });
 });
