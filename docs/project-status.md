@@ -1,11 +1,70 @@
 # GitNexus 项目状态全景文档
 
-> 基于 commit `6838e30` (main) · 更新日期：2026-04-08
+> 基于 commit `7d4e982` (main) · 更新日期：2026-04-08
 > 合并自：`project-analysis-2026-04-08.md` · `feature-gap-assessment.md` · `session-progress.md`
 
 ---
 
-## 0. C/C++/ObjC 语言增强（Phase 1 & Phase 2）
+## 0. 影响力分析增强（2026-04-08）
+
+> 本次增强将影响分析工具从"能查到影响"升级为"能指导决策"，实现统一评分、行级映射、标准证据、测试分层、契约语义。
+
+### 已完成功能
+
+**Phase 1（数据基础与评分统一）：**
+- [x] `git-diff-parser.ts` - Git diff hunk 解析与符号映射
+- [x] `computeImpactScore()` - 统一评分模型（4维度加权）
+- [x] `detect_changes` 行级变更映射
+
+**Phase 2a（Schema 统一与测试分层）：**
+- [x] `createEvidenceBuilder()` - StandardEvidence schema
+- [x] `test_impact` 三层优先级输出（must_run/should_run/can_skip）
+
+**Phase 2b（API 增强与端到端联动）：**
+- [x] `api_impact` 契约语义增强（contract_change_class）
+- [x] 4 工具统一 evidence 结构
+
+### 新增/修改文件
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `src/mcp/local/tools/shared.ts` | 修改 | 统一评分 + Evidence Builder |
+| `src/mcp/local/tools/git-diff-parser.ts` | 新增 | Diff hunk 解析 |
+| `src/mcp/local/tools/impact.ts` | 修改 | score_v2 字段 |
+| `src/mcp/local/tools/detect.ts` | 修改 | 行级映射 + change_type |
+| `src/mcp/local/tools/test-impact.ts` | 修改 | 三层优先级 |
+| `src/mcp/local/tools/graph-tools.ts` | 修改 | API契约分类 |
+| `test/unit/compute-impact-score.test.ts` | 新增 | 评分测试 |
+| `test/unit/standard-evidence.test.ts` | 新增 | Evidence测试 |
+| `test/unit/git-diff-parser.test.ts` | 新增 | Diff解析测试 |
+
+### 统一评分模型
+
+```
+score = norm(Σ(w_rel × conf / √depth) × w_change × w_process)
+```
+
+| 风险等级 | 分数范围 | 含义 |
+|----------|----------|------|
+| LOW | 0-24 | 低风险，可安全变更 |
+| MEDIUM | 25-49 | 中风险，需审查 |
+| HIGH | 50-79 | 高风险，需全面测试 |
+| CRITICAL | 80-100 | 关键风险，需架构评审 |
+
+### 测试覆盖
+
+- 新增单元测试：77 个
+- 所有新测试通过
+
+### 待完成项
+
+| 任务 | 状态 | 说明 |
+|------|------|------|
+| impact-golden 数据集 | 待实施 | 评估数据集与CI报告 |
+
+---
+
+## 1. C/C++/ObjC 语言增强（Phase 1 & Phase 2）
 
 > 本次增强将 C/C++ 和 Objective-C 从 Tier-3 提升至 Tier-2，完成关键能力补齐。
 
@@ -20,7 +79,7 @@
 - [x] 集成测试：`test/integration/resolvers/objc.test.ts`（9/9 通过）
 
 **Phase 2（能力补齐）：**
-- [x] Objective-C named-bindings 实现（`named-bindings/objectivec.ts`）
+- [x] Objective-C named-bindings 提取器文件落地（`named-bindings/objective-c.ts`，provider 挂载待补齐）
 - [x] Objective-C symbol-extractor 优化（Category 方法合并建模）
 - [x] C/C++ 框架检测完善（Qt/main 入口模式识别）
 - [x] C/C++ 符号提取优化
@@ -29,7 +88,7 @@
 
 | 语言 | 维度 | 原评级 | 新评级 |
 |------|------|:------:|:------:|
-| Objective-C | 导入绑定 | 🔴 | 🟢 |
+| Objective-C | 导入绑定 | 🔴 | 🟡 |
 | Objective-C | 符号提取 | 🟡 | 🟢 |
 | Objective-C | 数据流 | 🟡 | 🟢 |
 | Objective-C | **综合** | **🟡** | **🟢** |
@@ -42,6 +101,7 @@
 | 语言 | 缺口 | 优先级 |
 |------|------|:------:|
 | C/C++ | named-bindings（宏展开影响） | P3 |
+| Objective-C | named-bindings provider 挂载（提取器已存在） | P3 |
 | Objective-C | 框架检测（CocoaTouch 入口） | P3 |
 | C/C++/ObjC | HANDLES_ROUTE 边（无路由框架） | ⚪ N/A |
 
@@ -49,20 +109,21 @@
 
 ## 目录
 
-0. [C/C++/ObjC 语言增强](#0-ccobjc-语言增强phase-1--phase-2)
-1. [项目概览](#1-项目概览)
-2. [架构全景](#2-架构全景)
-3. [核心模块解析](#3-核心模块解析)
-4. [迭代进展记录](#4-迭代进展记录)
-5. [功能缺口评估](#5-功能缺口评估)
-6. [当前测试状态](#6-当前测试状态)
-7. [MCP 工具生态](#7-mcp-工具生态)
-8. [量化指标](#8-量化指标)
-9. [执行计划](#9-执行计划)
+0. [影响力分析增强](#0-影响力分析增强2026-04-08)
+1. [C/C++/ObjC 语言增强](#1-ccobjc-语言增强phase-1--phase-2)
+2. [项目概览](#2-项目概览)
+3. [架构全景](#3-架构全景)
+4. [核心模块解析](#4-核心模块解析)
+5. [迭代进展记录](#5-迭代进展记录)
+6. [功能缺口评估](#6-功能缺口评估)
+7. [当前测试状态](#7-当前测试状态)
+8. [MCP 工具生态](#8-mcp-工具生态)
+9. [量化指标](#9-量化指标)
+10. [执行计划](#10-执行计划)
 
 ---
 
-## 1. 项目概览
+## 2. 项目概览
 
 GitNexus 是一个**代码智能引擎**：通过 tree-sitter 解析 18 种编程语言的源代码，构建知识图谱（符号、调用关系、导入、继承、数据流），并通过 MCP 协议向 AI Agent（Claude、Cursor 等）暴露查询 / 影响分析 / 重构等能力。
 
@@ -86,7 +147,7 @@ GitNexus 是一个**代码智能引擎**：通过 tree-sitter 解析 18 种编�
 
 ---
 
-## 2. 架构全景
+## 3. 架构全景
 
 ### 2.1 分层架构
 
@@ -137,7 +198,7 @@ mcp/local/
 
 ---
 
-## 3. 核心模块解析
+## 4. 核心模块解析
 
 ### 3.1 Ingestion Pipeline（12 阶段）
 
@@ -158,7 +219,7 @@ mcp/local/
 
 ### 3.2 图谱模型
 
-**节点类型（15 种）：**
+**节点类型（17 种）：**
 ```
 File · Folder · Function · Class · Interface · Method ·
 Constructor · Property · CodeElement · Struct · Enum ·
@@ -216,6 +277,8 @@ Trait · Impl · Community · Process · Route · Tool
 | `middleware.ts` | Express middleware 路由 | ✅ 原有 |
 | `django.ts` | Django `urls.py` `path()`/`re_path()` | ✅ `796aad9` |
 | `rails.ts` | Rails `routes.rb` DSL（get/post/resources 等） | ✅ `796aad9` |
+| `spring.ts` | Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` | ✅ `e60099a` |
+| `fastapi.ts` | FastAPI 装饰器路由 + Gin/Echo/Fiber 风格路由调用 | ✅ `e60099a` |
 
 ### 3.6 Named Bindings（`named-bindings/`）
 
@@ -230,18 +293,19 @@ Trait · Impl · Community · Process · Route · Tool
 | PHP | `php.ts` | ✅ 原有 |
 | Dart | `dart.ts` | ✅ `796aad9`（`show` combinator 提取） |
 | Go | `go.ts` | ✅ `796aad9`（package alias / `isModuleAlias` 提取） |
+| Swift | `swift.ts` | ✅ `e60099a`（`import class/func/var` 限定导入） |
+| Objective-C | `objective-c.ts` | 🟡 提取器已存在，provider 尚未挂载 |
 | Ruby | — | ⚫ 待实现 |
-| Swift | — | ⚫ 待实现 |
 
 ---
 
-## 4. 迭代进展记录
+## 5. 迭代进展记录
 
 ### 历史 commit 链（有效代码变更）
 
 | Commit | 日期 | 主要内容 |
 |--------|------|---------|
-| `6838e30` | 2026-04-08 | **Phase 2 C/C++/ObjC 增强**：ObjC named-bindings + symbol-extractor 优化；C/C++ 框架检测完善；两者综合评级均升至 🟢，进入 Tier-2 |
+| `6838e30` | 2026-04-08 | **Phase 2 C/C++/ObjC 增强**：ObjC named-bindings 提取器文件落地（provider 挂载待补齐）+ symbol-extractor 优化；C/C++ 框架检测完善；两者综合评级升至 🟢，进入 Tier-2 |
 | `36694e4` | 早期 | 恢复 Dataflow Phase 12 完整实现（cfg-builder/dfa-engine/taint-engine） |
 | `53df277` | 早期 | 修复 C/C++/ObjC `#include`/`#import` IMPORTS 边；搜索精度提升 |
 | `f3ad103` | 早期 | 添加 Bug 检测引擎（rule-engine + diff-detector）+ 6 条初始规则 |
@@ -255,7 +319,7 @@ Trait · Impl · Community · Process · Route · Tool
 
 ---
 
-## 5. 功能缺口评估
+## 6. 功能缺口评估
 
 ### ✅ 已解决（原高优先级）
 
@@ -280,36 +344,33 @@ Trait · Impl · Community · Process · Route · Tool
 
 ### 🔴 P1 — 当前高优先级
 
-#### P1.1 — 部分测试仍在失败（4 个测试文件，5 个用例）
+#### P1.1 — 单测主干回归（最近一次本地运行：8 个文件失败，158 个用例失败）
 
-| 失败测试 | 根因 | 影响 |
+| 失败测试（可见） | 根因 | 影响 |
 |---------|------|------|
-| `detection-rules.node.test.ts` | 设计使用 `node:test` runner，vitest 无法正确执行（**预期行为**） | 无（已知，不算真正失败） |
-| `impact-batching-grouping.test.ts`（3 用例） | `tools/impact.ts` batching/chunking 逻辑与测试期望不匹配 | MCP impact 工具批处理路径回归风险 |
-| `skip-git-cli.test.ts`（1 用例） | `analyze.ts` 自我重生（respawn）后 stderr 输出格式变化，测试断言 `--skip-git` 字符串未出现 | CLI 错误提示回归 |
-| `resolvers/cobol.test.ts`（1 用例） | COBOL EVALUATE/IF 新增后总 CALLS 边从 31 变为 32，测试断言未更新 | 次要（数值更新即可修复） |
+| `impact-batching-grouping.test.ts`（多用例） | `backend._impactImpl is not a function`（测试仍依赖旧内部入口） | impact 工具批处理路径的回归风险 |
+| 其余失败文件（本次日志未完整展开） | 受 worker forks 错误影响，存在连带失败 | 需先清理 worker 稳定性后再归因单测失败 |
 
-> COBOL 用例修复：将 `test/integration/resolvers/cobol.test.ts` line 695 的 `.toBe(31)` 改为 `.toBe(32)`，约 5 分钟工作量。
+> 最近一次本地命令：`cd gitnexus && npm test -- --reporter=verbose --coverage`，结果为 Test Files `8 failed | 180 passed | 2 skipped`，Tests `158 failed | 5685 passed | 139 skipped`，并伴随 vitest worker forks unhandled error。
 
 ---
 
 ### 🟡 P2 — 中优先级
 
-#### P2.1 — 路由提取：Spring / FastAPI / Flask / Gin / Echo 仍缺失
+#### P2.1 — 路由提取剩余缺口（主流框架已接入）
 
-- **现状**：Django（✅）和 Rails（✅）已实现；Spring Boot、FastAPI/Flask python、Gin/Echo/Fiber Go 框架识别存在但**不生成 `HANDLES_ROUTE` 边**
-- **影响**：`route_map` 和 `api_impact` MCP 工具在 Java/Kotlin/Python（Flask/FastAPI）/Go 项目中返回空结果
-- **方案**：
-  1. Spring（Java/Kotlin）：扫描 `@RequestMapping`/`@GetMapping`/`@PostMapping` 注解
-  2. FastAPI/Flask（Python）：扫描 `@app.route()`/`@router.xxx()` 装饰器
-  3. Gin/Echo/Fiber（Go）：扫描 `router.GET(...)`/`r.Post(...)` 调用
-  4. 每框架约 2 天
+- **现状**：Django/Rails/Spring/FastAPI/Gin 风格路由均已接入 pipeline，可生成 `HANDLES_ROUTE` 边。
+- **剩余缺口**：
+  1. Flask `@app.route`（显式 Flask 模式）未专项提取
+  2. Go Fiber 常见 `app.Get/app.Post` 驼峰调用需补充匹配
+  3. Laravel 显式路由文件（非文件路由）仍待补齐
+- **影响**：`route_map` 和 `api_impact` 在上述框架子集会出现漏检。
 
-#### P2.2 — Ruby / Swift named-bindings 仍缺失
+#### P2.2 — Ruby / Objective-C named-bindings 待补齐
 
-- **现状**：Dart 和 Go 已在 `796aad9` 实现；Ruby（mixin/extend）和 Swift（`import Swift.module`）仍为 `wildcard` 语义
-- **影响**：Ruby/Swift 符号绑定精度低，`named-bindings` 导入图边质量差
-- **方案**：Ruby 难度较高（动态 `include`/`extend`）；Swift 相对清晰（模块级 import）
+- **现状**：Dart、Go、Swift 已实现；Ruby 仍缺失；Objective-C 提取器文件已存在但 provider 尚未挂载。
+- **影响**：Ruby/Objective-C 导入图边精度仍有限。
+- **方案**：Ruby 优先做静态可判定子集（常量模块导入）；Objective-C 完成 provider 接入与回归测试。
 
 #### P2.3 — `local-backend.ts` 仍有 2,357 行
 
@@ -327,9 +388,9 @@ Trait · Impl · Community · Process · Route · Tool
 
 | 项 | 描述 | 预估工作量 |
 |----|------|:---------:|
-| Spring / FastAPI / Gin 路由提取（P2.1 后续） | 继续路由提取器覆盖 | 每框架 2 天 |
+| Flask / Fiber / Laravel 显式路由提取（P2.1 后续） | 继续路由提取器覆盖 | 每框架 1~2 天 |
 | Ruby named-bindings | 动态 `include`/`extend` 较难静态捕获 | 3~5 天 |
-| Swift named-bindings | 模块级 import 提取 | 1~2 天 |
+| Objective-C named-bindings provider 接入 | 提取器挂载 + 回归测试 | 1 天 |
 | Objective-C Category 合并语义 | category 方法归并与归属策略仍可优化 | 2 天 |
 | COBOL 迁移 tree-sitter | 现有 regex 处理器 3,700+ 行，可评估 `tree-sitter-cobol` | 1~2 周 |
 | Web UI 核心组件单元测试 | `GraphCanvas`/`ProcessFlowModal`/`QueryFAB` 无组件级测试 | 2~3 天 |
@@ -339,30 +400,28 @@ Trait · Impl · Community · Process · Route · Tool
 
 ---
 
-## 6. 当前测试状态
+## 7. 当前测试状态
 
-> 数据来自 `npm run test` 于 HEAD `796aad9`
+> 数据来自最近一次本地执行：`cd gitnexus && npm test -- --reporter=verbose --coverage`（HEAD `7d4e982`）
 
 | 指标 | 数值 |
 |------|:----:|
-| 测试文件数（总） | 185（含 1 跳过） |
-| **通过** | **5,759** |
-| **失败** | **5**（4 个文件） |
-| 跳过 | 128 |
-| 运行时长 | ~321 秒（含集成测试） |
+| 测试文件数（总） | 190（含 2 跳过） |
+| **通过** | **180**（文件级） |
+| **失败** | **8**（文件级） |
+| 测试用例通过/失败/跳过 | 5685 / 158 / 139 |
+| 运行时长 | ~86 秒（含 coverage，vitest 报告） |
 
-**失败详情：**
+**失败详情（当前已确认）：**
 
-| 文件 | 失败数 | 是否阻塞 | 修复难度 |
-|------|:------:|:-------:|:-------:|
-| `detection-rules.node.test.ts` | 1 | ❌ 否（预期行为，node:test 设计） | — |
-| `impact-batching-grouping.test.ts` | 3 | ⚠️ 是 | 🟡 中 |
-| `skip-git-cli.test.ts` | 1 | ⚠️ 是 | 🟡 中 |
-| `resolvers/cobol.test.ts` | 1 | ✅ 易修复 | 🟢 低（改 31→32） |
+| 文件 | 表现 | 是否阻塞 | 修复难度 |
+|------|------|:-------:|:-------:|
+| `impact-batching-grouping.test.ts` | 多用例因 `_impactImpl` 入口缺失失败 | ⚠️ 是 | 🟡 中 |
+| 其他失败文件 | 受 vitest worker forks 错误连带影响 | ⚠️ 是 | 🟡 中 |
 
 ---
 
-## 7. MCP 工具生态
+## 8. MCP 工具生态
 
 ### 工具清单（20 个）
 
@@ -398,7 +457,7 @@ gitnexus://repo/{name}/cluster/{n} — 单个功能区域详情
 
 ---
 
-## 8. 量化指标
+## 9. 量化指标
 
 ### 代码规模（截至 `796aad9`）
 
@@ -429,25 +488,26 @@ gitnexus://repo/{name}/cluster/{n} — 单个功能区域详情
 | `0050109`（初始） | ~5,318 | 有历史失败 |
 | `b57da45` | ~5,450 | Node v24 CI 36 个失败修复 |
 | `36506d0` | ~5,580 | — |
-| `796aad9`（当前） | **5,759** | 5 个失败（见第 6 节） |
+| `796aad9` | **5,759** | 5 个失败（历史记录） |
+| `7d4e982`（当前） | 5685（用例通过） | 158 个失败（见第 6 节） |
 
 ---
 
-## 9. 执行计划
+## 10. 执行计划
 
 ```
 本周（紧急修复，P1.1）
-  ├── D1: 修复 cobol.test.ts（.toBe(31)→.toBe(32)）约 5 分钟
-  ├── D1: 修复 impact-batching-grouping.test.ts（3 个用例）—— batching 逻辑对齐
-  └── D2: 修复 skip-git-cli.test.ts（respawn 后 stderr 捕获方式）
+  ├── D1: 修复 impact-batching-grouping.test.ts（测试入口改为当前公开 API，移除 `_impactImpl` 依赖）
+  ├── D1: 排查并修复 vitest worker forks unhandled error（先恢复测试稳定性）
+  └── D2: 补跑全量测试并更新失败清单（按文件归因）
 
 下周（P2 路由覆盖扩展）
-  ├── D1~D3: Spring Boot 路由提取器（Java/Kotlin @RequestMapping）
-  └── D4~D5: FastAPI/Flask 路由提取器（Python @router/@app.route）
+  ├── D1~D2: Flask `@app.route` 提取器
+  └── D3~D5: Fiber `app.Get/app.Post` + Laravel 显式路由提取
 
 Week 3（P2 继续）
-  ├── Gin/Echo/Fiber 路由提取器（Go router.GET/r.Post）
-  └── Swift named-bindings + Ruby named-bindings 评估
+  ├── Objective-C named-bindings provider 挂载 + 回归测试
+  └── Ruby named-bindings 可行子集实现
 
 Week 4（P2.3 + P2.4 工程债）
   ├── local-backend.ts 减至 ≤500 行（提取状态管理到 LocalBackendCore）

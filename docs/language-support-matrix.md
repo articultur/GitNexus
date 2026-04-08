@@ -1,6 +1,6 @@
 # GitNexus 语言支持全景矩阵
 
-> 最后更新：2026-04-08 · 基于 commit `6838e30` (main)  
+> 最后更新：2026-04-08 · 基于 commit `7d4e982` (main)  
 > 数据来源：`gitnexus/src/core/ingestion/` 源码实际分析（非文档推测）
 
 ---
@@ -64,10 +64,10 @@
 | Swift | ✅ | 🟡 | 🟡 | swift resolver（`Package.swift` targets）；`extractSwiftNamedBindings`（`import class/func/var Module.Symbol` 限定导入，`†` 可选安装） |
 | Dart | ✅ | 🟡 | 🟢 | dart resolver + `extractDartNamedBindings`（`show` 组合符精确绑定）（`†` 可选安装） |
 | Ruby | ✅ | ⚫ | 🟡 | ruby resolver（require/require_relative via callRouter）；**无 named-bindings**，mixin/extend 无法追踪 |
-| Objective-C | ✅ | 🟢 | 🟢 | standard resolver（`#import` 扫描）+ `objectivec.ts` named-bindings；category 合并语义已优化 |
+| Objective-C | ✅ | 🟡 | 🟢 | standard resolver（`#import` 扫描）；named-bindings 提取器文件已存在（`named-bindings/objective-c.ts`），但 provider 尚未挂载，当前仍以 wildcard 语义为主 |
 | COBOL | ⚫ | ⚫ | ⚫ | COPY 语句无解析；无绑定实现 |
 
-> **现状**：Go（包别名）、Dart（`show` 组合符）、Swift（`import class/func/var` 限定式导入）已实现 named-bindings。剩余缺口：Ruby 因动态 `method_missing`/`include` 难度较高；C/C++ 受预处理器影响最难。
+> **现状**：Go（包别名）、Dart（`show` 组合符）、Swift（`import class/func/var` 限定式导入）已实现 named-bindings。剩余缺口：Ruby 因动态 `method_missing`/`include` 难度较高；C/C++ 受预处理器影响最难；Objective-C 仍需完成 provider 挂载。
 
 ---
 
@@ -233,7 +233,7 @@
 | **Objective-C** | 🟢 | 🟢 | 🟡 | 🟢 | 🟢 | 🟡 | 🟢 |
 | **COBOL** | ⚫ | 🔴 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ |
 
-> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C#/C/C++/Objective-C 升入 **Tier-2**（CFG DSL + named-bindings + taint 扩展完成）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 为 **Tier-3**（bug 规则 + named-bindings 改善）；COBOL 为 **未就绪**。
+> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C#/C/C++/Objective-C 升入 **Tier-2**（CFG DSL + 数据流/规则增强完成，Objective-C named-bindings 挂载仍待补齐）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 为 **Tier-3**（bug 规则 + named-bindings 改善）；COBOL 为 **未就绪**。
 
 ---
 
@@ -244,6 +244,7 @@
 | 路由提取器：Spring `@RequestMapping`/`@GetMapping`（缺 HANDLES_ROUTE 边） | Java, Kotlin | 🟡 中 | 🔴 P1 | ✅ 已完成（e60099a） |
 | 路由提取器：FastAPI `@router.xxx` / Gin / Echo / Fiber handler | Python, Go | 🟡 中 | 🔴 P1 | ✅ 已完成（e60099a） |
 | named-bindings：Swift（`import class/func/var` 限定式） | Swift | 🟡 中 | 🟡 P2 | ✅ 已完成（e60099a） |
+| named-bindings：Objective-C provider 挂载（提取器已存在） | Objective-C | 🟢 低 | 🟢 P3 | 🔲 待完成 |
 | Objective-C 无 Method 节点（HAS_METHOD 边） | Objective-C | 🟢 低 | 🟡 P2 | ✅ 已完成（未发布） |
 | named-bindings：Ruby（`require` 为 wildcard，无 named-import 语义） | Ruby | 🔴 高 | ⚪ 不适用 | ⚫ 跳过（Ruby 无具名导入） |
 | C# 无构造函数推断 | C# | 🟢 低 | 🟢 P3 | ✅ 已完成 |
@@ -258,7 +259,7 @@
 
 | 日期 | commit | 变更内容 |
 |------|--------|----------|
-| 2026-04-08 | `6838e30` | **Phase 2 增强**：ObjC named-bindings 实现（`objectivec.ts`）→ 导入绑定 🔴→🟢；C/C++ 框架检测完善（Qt/main 入口）→ 框架检测 🔴→🟢；ObjC/C++ 符号提取优化 → 符号提取 🟡→🟢；ObjC 数据流 taint 扩展完成 → 数据流 🟡→🟢；两者综合评级均升至 🟢，进入 Tier-2 |
+| 2026-04-08 | `6838e30` | **Phase 2 增强**：ObjC named-bindings 提取器文件落地（`objective-c.ts`，后续需 provider 挂载）；C/C++ 框架检测完善（Qt/main 入口）→ 框架检测 🔴→🟢；ObjC/C++ 符号提取优化 → 符号提取 🟡→🟢；ObjC 数据流 taint 扩展完成 → 数据流 🟡→🟢；两者综合评级升至 🟢，进入 Tier-2 |
 | 2026-04-08 | 未发布 | ObjC CFG DSL（`objectivec-static-edges.sg`，覆盖 if/while/for/switch/@try/@catch/@synchronized 等）；ObjC 升入 LANGUAGE_TIERS.LIMITED；missing-guard/resource/return-check 新增 ObjC 专属规则；taint.ts 扩展 ObjC source/sink/sanitizer（SQL/JS/HTML/路径穿越/动态分派/KVC 注入等）；修复 ObjC 容器 AST 节点映射并补充 `test/integration/resolvers/objc.test.ts`（9/9 通过） |
 | 2026-04-09 | `e60099a` | Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` 路由提取器（Java/Kotlin）；FastAPI `@app.get`/`@router.post` + Gin/Echo/Fiber `r.GET()/.POST()` 路由提取器（Python/Go）；Swift `import class/func/var` 限定导入 named-binding extractor；ObjC `methodExtractor` 注册（`objcMethodConfig` + `extractOwnerName` 模式，HAS_METHOD 边现在可用） |
 | 2026-04-08 | `796aad9` | Rust/C/C++ CFG DSL（各 18/14/20 节点类型）；Kotlin/C# CFG DSL（13/20 节点）；LANGUAGE_DSL_MAP 覆盖 10 种语言；Dart `show`/Go 包别名 named-bindings；Swift/Dart/ArkTS bug 规则扩展（MG/MU/MR/MCG）；COBOL EVALUATE/IF 控制流模拟（CALLS 图边）；XSS 规则（OWASP A03）注册 |
