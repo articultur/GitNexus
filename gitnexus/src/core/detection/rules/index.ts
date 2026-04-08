@@ -11,6 +11,8 @@ import { missingResourceRule } from './missing-resource.js';
 import { missingExceptionHandlingRule } from './missing-exception-handling.js';
 import { missingReturnCheckRule } from './missing-return-check.js';
 import { missingConcurrencyGuardRule } from './missing-concurrency-guard.js';
+import { sqlInjectionRule } from './sql-injection.js';
+import { pathTraversalRule } from './path-traversal.js';
 
 /** All built-in rules, in evaluation order. */
 export const builtinRules: Rule[] = [
@@ -20,4 +22,6 @@ export const builtinRules: Rule[] = [
   missingExceptionHandlingRule,
   missingReturnCheckRule,
   missingConcurrencyGuardRule,
+  sqlInjectionRule,
+  pathTraversalRule,
 ];

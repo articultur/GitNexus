@@ -14,9 +14,12 @@ This project uses the [PolyForm Noncommercial License 1.0.0](https://polyformpro
 ## Development setup
 
 1. Clone the repository.
-2. **CLI / MCP package:** `cd gitnexus && npm install && npm run build`
-3. **Web UI (if needed):** `cd gitnexus-web && npm install`
-4. Run tests as described in [TESTING.md](TESTING.md).
+2. **System prerequisites for native tree-sitter bindings**: `python3`, `make`, and a C++ compiler (`g++` on Linux/macOS, MSVC on Windows) must be on your PATH. On macOS these come with Xcode Command Line Tools (`xcode-select --install`). On Debian/Ubuntu: `sudo apt-get install python3 make g++`.
+3. **CLI / MCP package:** `cd gitnexus && npm install && npm run build`
+4. **Web UI (if needed):** `cd gitnexus-web && npm install`
+5. Run tests as described in [TESTING.md](TESTING.md).
+
+> **Optional language grammar install warnings** — `tree-sitter-kotlin`, `tree-sitter-swift`, and `tree-sitter-dart` are declared as `optionalDependencies`. If `python3`/`make`/`g++` are missing, npm will print a native build warning for those packages. The warning is non-fatal: GitNexus will still index all other languages. To silence the warning, install the prerequisites above before running `npm install`.
 
 ## Branch and pull requests
 

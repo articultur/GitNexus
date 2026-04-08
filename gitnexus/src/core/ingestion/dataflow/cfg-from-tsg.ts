@@ -76,7 +76,8 @@ const LANGUAGE_DSL_MAP: Record<string, string> = {
   typescript: 'typescript-static-edges.sg',
   javascript: 'javascript-static-edges.sg',
   python: 'python-static-edges.sg',
-  // Future: add more languages as their DSL files are written
+  java: 'java-static-edges.sg',
+  go: 'go-static-edges.sg',
 };
 
 /** Directories searched for DSL files, in priority order */

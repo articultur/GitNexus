@@ -1,0 +1,233 @@
+; Go CFG DSL — Control-Flow Graph edges for tree-sitter-go
+; Go uses a single `for` keyword for all loop forms:
+;   - C-style:    for init; cond; post { }
+;   - range-based: for k, v := range xs { }
+;   - while-style: for cond { }
+;   - infinite:   for { }
+;
+; Edge type vocabulary (same as TS/Python/Java DSLs):
+;   TRUE_BRANCH, FALSE_BRANCH, LOOP_HEADER, NEXT, TRY_BODY,
+;   CATCH, BREAK, CONTINUE, THROW, RETURN,
+;   SWITCH_CASE, SWITCH_DEFAULT
+;
+; BREAK/CONTINUE routing to nearest enclosing scope is handled by
+; the TypeScript post-processor (cfg-post-processor.ts).
+; Go does not have try/catch; defer/panic/recover use THROW/CATCH semantics.
+
+; ============================================================
+; FUNCTION / METHOD DECLARATION
+; ============================================================
+(function_declaration) @fn
+{
+  node @fn.cfg
+  attr (@fn.cfg) label = "func"
+  attr (@fn.cfg) statementType = "function"
+}
+
+(method_declaration) @method
+{
+  node @method.cfg
+  attr (@method.cfg) label = "method"
+  attr (@method.cfg) statementType = "function"
+}
+
+; ============================================================
+; IF STATEMENT — TRUE_BRANCH / FALSE_BRANCH
+; ============================================================
+(if_statement
+  consequence: (_) @then
+  alternative: (_)? @alt
+) @if
+{
+  node @if.cfg
+  attr (@if.cfg) label = "if"
+  attr (@if.cfg) statementType = "if"
+
+  node @if.then_node
+  attr (@if.then_node) label = (source-text @then)
+  edge @if.cfg -> @if.then_node
+  attr (@if.cfg -> @if.then_node) type = "TRUE_BRANCH"
+
+  if some @alt {
+    node @if.else_node
+    attr (@if.else_node) label = (source-text @alt)
+    edge @if.cfg -> @if.else_node
+    attr (@if.cfg -> @if.else_node) type = "FALSE_BRANCH"
+  }
+}
+
+; ============================================================
+; FOR LOOP (all forms share the same node type in Go)
+; Handles: C-style, range, while-style, infinite loop
+; ============================================================
+(for_statement
+  body: (_) @fb
+) @for
+{
+  node @for.cfg
+  attr (@for.cfg) label = "for"
+  attr (@for.cfg) statementType = "loop"
+
+  edge @for.cfg -> @for.cfg
+  attr (@for.cfg -> @for.cfg) type = "LOOP_HEADER"
+  attr (@for.cfg -> @for.cfg) isLoopHeader = #true
+
+  node @for.body
+  attr (@for.body) label = (source-text @fb)
+  edge @for.cfg -> @for.body
+  attr (@for.cfg -> @for.body) type = "NEXT"
+}
+
+; ============================================================
+; EXPRESSION SWITCH — SWITCH_CASE / SWITCH_DEFAULT
+; ============================================================
+(expression_switch_statement) @switch
+{
+  node @switch.cfg
+  attr (@switch.cfg) label = "switch"
+  attr (@switch.cfg) statementType = "switch"
+}
+
+(expression_switch_statement
+  (expression_case) @case
+) @switch
+{
+  node @case.cfg
+  attr (@case.cfg) label = (source-text @case)
+  attr (@case.cfg) statementType = "case"
+  edge @switch.cfg -> @case.cfg
+  attr (@switch.cfg -> @case.cfg) type = "SWITCH_CASE"
+}
+
+(expression_switch_statement
+  (default_case) @default
+) @switch
+{
+  node @default.cfg
+  attr (@default.cfg) label = "default"
+  attr (@default.cfg) statementType = "default"
+  edge @switch.cfg -> @default.cfg
+  attr (@switch.cfg -> @default.cfg) type = "SWITCH_DEFAULT"
+}
+
+; ============================================================
+; TYPE SWITCH — same structure as expression_switch
+; ============================================================
+(type_switch_statement) @tswitch
+{
+  node @tswitch.cfg
+  attr (@tswitch.cfg) label = "type-switch"
+  attr (@tswitch.cfg) statementType = "switch"
+}
+
+(type_switch_statement
+  (type_case) @tcase
+) @tswitch
+{
+  node @tcase.cfg
+  attr (@tcase.cfg) label = (source-text @tcase)
+  attr (@tcase.cfg) statementType = "case"
+  edge @tswitch.cfg -> @tcase.cfg
+  attr (@tswitch.cfg -> @tcase.cfg) type = "SWITCH_CASE"
+}
+
+; ============================================================
+; SELECT — maps each communication_case as SWITCH_CASE
+; ============================================================
+(select_statement) @select
+{
+  node @select.cfg
+  attr (@select.cfg) label = "select"
+  attr (@select.cfg) statementType = "switch"
+}
+
+(select_statement
+  (communication_case) @scase
+) @select
+{
+  node @scase.cfg
+  attr (@scase.cfg) label = (source-text @scase)
+  attr (@scase.cfg) statementType = "case"
+  edge @select.cfg -> @scase.cfg
+  attr (@select.cfg -> @scase.cfg) type = "SWITCH_CASE"
+}
+
+; ============================================================
+; GO STATEMENT — goroutine spawn (NEXT semantics)
+; ============================================================
+(go_statement) @go
+{
+  node @go.cfg
+  attr (@go.cfg) label = (source-text @go)
+  attr (@go.cfg) statementType = "go"
+}
+
+; ============================================================
+; DEFER STATEMENT — deferred call (NEXT semantics)
+; ============================================================
+(defer_statement) @defer
+{
+  node @defer.cfg
+  attr (@defer.cfg) label = (source-text @defer)
+  attr (@defer.cfg) statementType = "defer"
+}
+
+; ============================================================
+; BREAK / CONTINUE — post-processor routes to enclosing loop
+; ============================================================
+(break_statement) @b
+{
+  node @b.cfg
+  attr (@b.cfg) label = (source-text @b)
+  attr (@b.cfg) statementType = "break"
+}
+
+(continue_statement) @c
+{
+  node @c.cfg
+  attr (@c.cfg) label = (source-text @c)
+  attr (@c.cfg) statementType = "continue"
+}
+
+; ============================================================
+; RETURN — function exit, no successor
+; ============================================================
+(return_statement) @ret
+{
+  node @ret.cfg
+  attr (@ret.cfg) label = (source-text @ret)
+  attr (@ret.cfg) statementType = "return"
+}
+
+; ============================================================
+; SEQUENTIAL STATEMENTS
+; ============================================================
+(expression_statement) @expr
+{
+  node @expr.cfg
+  attr (@expr.cfg) label = (source-text @expr)
+}
+
+(short_var_declaration) @shortvar
+{
+  node @shortvar.cfg
+  attr (@shortvar.cfg) label = (source-text @shortvar)
+}
+
+(var_declaration) @vardecl
+{
+  node @vardecl.cfg
+  attr (@vardecl.cfg) label = (source-text @vardecl)
+}
+
+(assignment_statement) @assign
+{
+  node @assign.cfg
+  attr (@assign.cfg) label = (source-text @assign)
+}
+
+(send_statement) @send
+{
+  node @send.cfg
+  attr (@send.cfg) label = (source-text @send)
+}
