@@ -1,10 +1,25 @@
 /**
  * Detect changes tool — git-diff based impact analysis.
+ * Uses line-level mapping for precise symbol detection and unified scoring.
  */
 
 import { executeParameterized } from '../../../core/lbug/pool-adapter.js';
-import { logQueryError } from './shared.js';
-import type { RepoHandle } from './shared.js';
+import {
+  logQueryError,
+  type RepoHandle,
+  computeImpactScore,
+  createEvidenceBuilder,
+  isTestFilePath,
+} from './shared.js';
+import { getDiffHunks, lineRangeOverlapsHunk, type DiffHunk } from './git-diff-parser.js';
+
+/** Change type classification for a symbol */
+type ChangeType =
+  | 'signature_change' // function/method signature affected
+  | 'implementation_change' // body changed
+  | 'doc_change' // only comments/docs
+  | 'test_change' // in test file
+  | 'meta_change'; // imports, exports, etc.
 
 /**
  * Detect changes — git-diff based impact analysis.
@@ -19,6 +34,8 @@ export async function detectChangesTool(
     include_evidence?: boolean;
     /** When true, run bug detection rules on changed symbols. Default: false */
     enable_detection?: boolean;
+    /** Maximum number of symbols to return per file. Default: 100 (was 20) */
+    symbol_limit?: number;
   },
   ensureInitialized: (id: string) => Promise<void>,
 ): Promise<any> {
@@ -26,39 +43,27 @@ export async function detectChangesTool(
 
   const scope = params.scope || 'unstaged';
   const include_evidence = params.include_evidence ?? true;
-  const { execFileSync } = await import('child_process');
+  const symbolLimit = params.symbol_limit ?? 100;
 
-  // Build git diff args based on scope (using execFileSync to avoid shell injection)
-  let diffArgs: string[];
-  switch (scope) {
-    case 'staged':
-      diffArgs = ['diff', '--staged', '--name-only'];
-      break;
-    case 'all':
-      diffArgs = ['diff', 'HEAD', '--name-only'];
-      break;
-    case 'compare':
-      if (!params.base_ref) return { error: 'base_ref is required for "compare" scope' };
-      diffArgs = ['diff', params.base_ref, '--name-only'];
-      break;
-    case 'unstaged':
-    default:
-      diffArgs = ['diff', '--name-only'];
-      break;
+  // Validate scope
+  const validScope = scope as 'unstaged' | 'staged' | 'all' | 'compare';
+  if (!['unstaged', 'staged', 'all', 'compare'].includes(validScope)) {
+    return { error: `Invalid scope: ${scope}. Must be one of: unstaged, staged, all, compare` };
   }
 
-  let changedFiles: string[];
+  // Get structured diff hunks instead of just file names
+  let diffHunks: DiffHunk[];
   try {
-    const output = execFileSync('git', diffArgs, { cwd: repo.repoPath, encoding: 'utf-8' });
-    changedFiles = output
-      .trim()
-      .split('\n')
-      .filter((f) => f.length > 0);
+    diffHunks = await getDiffHunks(
+      repo.repoPath,
+      validScope,
+      validScope === 'compare' ? params.base_ref : undefined,
+    );
   } catch (err: any) {
     return { error: `Git diff failed: ${err.message}` };
   }
 
-  if (changedFiles.length === 0) {
+  if (diffHunks.length === 0) {
     return {
       summary: {
         changed_count: 0,
@@ -71,46 +76,165 @@ export async function detectChangesTool(
     };
   }
 
-  // Map changed files to indexed symbols
-  const changedSymbols: any[] = [];
-  const fileMatches: Array<{ filePath: string; symbols: any[] }> = [];
-  for (const file of changedFiles) {
-    const normalizedFile = file.replace(/\\/g, '/');
+  // Create evidence builder for structured evidence
+  const evidenceBuilder = createEvidenceBuilder();
+  evidenceBuilder.addExplanation(
+    'Changed lines are mapped to indexed symbols via line range overlap, then expanded to processes through STEP_IN_PROCESS links.',
+  );
+
+  // Map changed hunks to indexed symbols with line-level precision
+  const changedSymbols: Array<{
+    id: string;
+    name: string;
+    type: string;
+    filePath: string;
+    change_type: ChangeType;
+    changed_lines: Array<{ start: number; end: number }>;
+    match_reason: string;
+  }> = [];
+
+  const fileMatches: Array<{
+    filePath: string;
+    changeType: DiffHunk['changeType'];
+    hunks: number;
+    symbols: any[];
+  }> = [];
+
+  // Track modules for scoring
+  const affectedModules = new Set<string>();
+  const allImpactedItems: Array<{
+    depth: number;
+    relationType: string;
+    confidence: number;
+    name: string;
+  }> = [];
+
+  for (const fileHunk of diffHunks) {
+    const normalizedFile = fileHunk.filePath.replace(/\\/g, '/');
+
+    // Extract module path (first two directory components or file name)
+    const pathParts = normalizedFile.split('/');
+    if (pathParts.length > 1) {
+      affectedModules.add(pathParts.slice(0, 2).join('/'));
+    } else {
+      affectedModules.add(normalizedFile);
+    }
+
+    // Determine if this is a test file
+    const isTestFile = isTestFilePath(normalizedFile);
+
     try {
+      // Query symbols in the file that overlap with changed line ranges
       const symbols = await executeParameterized(
         repo.id,
         `
-          MATCH (n) WHERE n.filePath CONTAINS $filePath
-          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath
-          LIMIT 20
+          MATCH (n)
+          WHERE n.filePath CONTAINS $filePath
+            AND n.startLine IS NOT NULL
+            AND n.endLine IS NOT NULL
+          RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath,
+                 n.startLine AS startLine, n.endLine AS endLine, n.content AS content
+          LIMIT $limit
         `,
-        { filePath: normalizedFile },
+        { filePath: normalizedFile, limit: symbolLimit },
       );
-      const fileSymbols = symbols.map((sym: any) => ({
-        id: sym.id || sym[0],
-        name: sym.name || sym[1],
-        type: sym.type || sym[2],
-        filePath: sym.filePath || sym[3],
-        match_reason: `filePath contains ${normalizedFile}`,
-      }));
-      fileMatches.push({ filePath: normalizedFile, symbols: fileSymbols });
+
+      const fileSymbols: any[] = [];
+      const matchedSymbolIds = new Set<string>();
+
       for (const sym of symbols) {
-        changedSymbols.push({
-          id: sym.id || sym[0],
-          name: sym.name || sym[1],
-          type: sym.type || sym[2],
-          filePath: sym.filePath || sym[3],
-          change_type: 'Modified',
-          match_reason: `filePath contains ${normalizedFile}`,
+        const id = sym.id || sym[0];
+        const name = sym.name || sym[1];
+        const type = sym.type || sym[2];
+        const filePath = sym.filePath || sym[3];
+        const startLine = sym.startLine || sym[4];
+        const endLine = sym.endLine || sym[5];
+        const content = sym.content || sym[6];
+
+        // Find which hunks overlap with this symbol's line range
+        const overlappingHunks = fileHunk.hunks.filter((hunk) =>
+          lineRangeOverlapsHunk(startLine, endLine, hunk),
+        );
+
+        if (overlappingHunks.length === 0) {
+          continue; // Symbol not affected by changes
+        }
+
+        // Compute changed line ranges
+        const changedLines: Array<{ start: number; end: number }> = [];
+        for (const hunk of overlappingHunks) {
+          changedLines.push({ start: hunk.newStart, end: hunk.newEnd });
+          // Track critical edges for evidence
+          evidenceBuilder.addCriticalEdge(filePath, `${name}:${hunk.newStart}`, 'CONTAINS', 0.95);
+        }
+
+        // Classify change type
+        const changeType = classifyChangeType(type, content, overlappingHunks, isTestFile);
+
+        // Deduplicate symbols (may overlap multiple hunks)
+        if (matchedSymbolIds.has(id)) {
+          continue;
+        }
+        matchedSymbolIds.add(id);
+
+        const symbolRecord = {
+          id,
+          name,
+          type,
+          filePath,
+          change_type: changeType,
+          changed_lines: changedLines,
+          match_reason: `line range overlaps with ${overlappingHunks.length} hunk(s)`,
+        };
+
+        changedSymbols.push(symbolRecord);
+        fileSymbols.push({
+          id,
+          name,
+          type,
+          change_type: changeType,
+          changed_lines_count: changedLines.length,
         });
+
+        // Add to impacted items for scoring
+        allImpactedItems.push({
+          depth: 1,
+          relationType: 'CHANGED_IN',
+          confidence: 0.95,
+          name,
+        });
+
+        // Add path to evidence
+        evidenceBuilder.addPath(
+          { id: filePath, name: filePath },
+          { id, name, filePath },
+          'CHANGED_IN',
+        );
       }
+
+      fileMatches.push({
+        filePath: normalizedFile,
+        changeType: fileHunk.changeType,
+        hunks: fileHunk.hunks.length,
+        symbols: fileSymbols,
+      });
     } catch (e) {
       logQueryError('detect-changes:file-symbols', e);
     }
   }
 
   // Find affected processes
-  const affectedProcesses = new Map<string, any>();
+  const affectedProcesses = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      process_type: string | undefined;
+      step_count: number | undefined;
+      changed_steps: Array<{ symbol: string; step: number | undefined }>;
+    }
+  >();
+
   for (const sym of changedSymbols) {
     try {
       const procs = await executeParameterized(
@@ -136,6 +260,13 @@ export async function detectChangesTool(
           symbol: sym.name,
           step: proc.step || proc[4],
         });
+
+        // Add to evidence
+        evidenceBuilder.addPath(
+          { id: sym.id, name: sym.name, filePath: sym.filePath },
+          { id: pid, name: proc.label || proc[1] },
+          'STEP_IN_PROCESS',
+        );
       }
     } catch (e) {
       logQueryError('detect-changes:process-lookup', e);
@@ -143,14 +274,27 @@ export async function detectChangesTool(
   }
 
   const processCount = affectedProcesses.size;
-  const risk =
-    processCount === 0
-      ? 'low'
-      : processCount <= 5
-        ? 'medium'
-        : processCount <= 15
-          ? 'high'
-          : 'critical';
+  const moduleCount = affectedModules.size;
+  const directCount = changedSymbols.length;
+  const totalCount = directCount + processCount;
+
+  // Use unified scoring
+  const scoreResult = computeImpactScore({
+    directCount,
+    processCount,
+    moduleCount,
+    totalCount,
+    impactedItems: allImpactedItems,
+    direction: 'upstream', // detect changes is always upstream (what calls changed code)
+  });
+
+  // Map to lowercase risk for backward compatibility
+  const risk = scoreResult.risk.toLowerCase() as 'low' | 'medium' | 'high' | 'critical';
+
+  // Add confidence factors to evidence
+  evidenceBuilder.addConfidenceFactor('line_level_mapping', 0.95);
+  evidenceBuilder.addConfidenceFactor('hunk_overlap_detection', 0.9);
+  evidenceBuilder.addConfidenceFactor('symbol_boundary_matching', 0.85);
 
   // ── Bug detection on changed symbols ────────────────────────────────
   let detection_findings: any[] | undefined;
@@ -197,19 +341,97 @@ export async function detectChangesTool(
     }
   }
 
+  // ── API Impact Hints (Phase 2b): detect Route nodes in changed files ────────
+  // For any changed file that contains indexed Route nodes, surface lightweight
+  // hints so callers can decide whether to invoke api_impact for full analysis.
+  const apiImpactHints: Array<{
+    route: string;
+    handler_file: string;
+    consumer_count: number;
+    change_type: ChangeType;
+    note: string;
+  }> = [];
+
+  if (changedSymbols.length > 0) {
+    const changedFilePaths = [...new Set(changedSymbols.map((s) => s.filePath))];
+    try {
+      for (const fp of changedFilePaths) {
+        const routeRows = await executeParameterized(
+          repo.id,
+          `
+            MATCH (n:Route)
+            WHERE n.filePath CONTAINS $filePath
+            OPTIONAL MATCH (consumer)-[:CodeRelation {type: 'FETCHES'}]->(n)
+            RETURN n.name AS route, n.filePath AS handlerFile, COUNT(DISTINCT consumer) AS consumerCount
+            LIMIT 20
+          `,
+          { filePath: fp },
+        ).catch(() => []);
+
+        // Determine the most severe change_type in this file
+        const fileSymbols = changedSymbols.filter((s) => s.filePath === fp);
+        const SEVERITY: Record<ChangeType, number> = {
+          signature_change: 4,
+          implementation_change: 3,
+          test_change: 1,
+          meta_change: 2,
+          doc_change: 0,
+        };
+        const worstChangeType = fileSymbols.reduce<ChangeType>(
+          (worst, s) => (SEVERITY[s.change_type] > SEVERITY[worst] ? s.change_type : worst),
+          'doc_change',
+        );
+
+        for (const row of routeRows) {
+          const routeName = row.route ?? row[0];
+          const handlerFile = row.handlerFile ?? row[1];
+          const consumerCount = Number(row.consumerCount ?? row[2] ?? 0);
+          if (!routeName) continue;
+          apiImpactHints.push({
+            route: routeName,
+            handler_file: handlerFile ?? fp,
+            consumer_count: consumerCount,
+            change_type: worstChangeType,
+            note:
+              consumerCount > 0
+                ? `${consumerCount} consumer(s) — run api_impact to check contract safety`
+                : 'No known consumers — low risk, but verify route shape',
+          });
+        }
+      }
+    } catch (e) {
+      logQueryError('detect-changes:api-impact-hints', e);
+    }
+  }
+
+  // Build response with backward compatibility
+  const changedFiles = diffHunks.map((h) => h.filePath);
+
   return {
     summary: {
       changed_count: changedSymbols.length,
       affected_count: processCount,
       changed_files: changedFiles.length,
+      affected_modules: moduleCount,
       risk_level: risk,
+      // New unified scoring
+      score_v2: {
+        score: scoreResult.score,
+        risk: scoreResult.risk,
+        confidence: scoreResult.confidence,
+        score_breakdown: scoreResult.score_breakdown,
+        top_contributors: scoreResult.top_contributors,
+      },
       ...(detection_findings && { detection_count: detection_findings.length }),
+      ...(apiImpactHints.length > 0 && { api_impact_hints_count: apiImpactHints.length }),
     },
     changed_symbols: changedSymbols,
     affected_processes: Array.from(affectedProcesses.values()),
+    ...(apiImpactHints.length > 0 && { api_impact_hints: apiImpactHints }),
     ...(detection_findings && detection_findings.length > 0 && { detection_findings }),
     ...(include_evidence && {
-      evidence: {
+      evidence: evidenceBuilder.build(),
+      evidence_legacy: {
         explanation:
           'Changed files are matched to indexed symbols by file path, then expanded to processes through STEP_IN_PROCESS links.',
         changed_files: changedFiles,
@@ -218,4 +440,89 @@ export async function detectChangesTool(
       },
     }),
   };
+}
+
+/**
+ * Classify the type of change based on symbol type, content, and hunks.
+ */
+function classifyChangeType(
+  symbolType: string,
+  content: string | undefined,
+  hunks: DiffHunk['hunks'],
+  isTestFile: boolean,
+): ChangeType {
+  // Test files always get test_change
+  if (isTestFile) {
+    return 'test_change';
+  }
+
+  // Check for meta changes (imports, exports, etc.)
+  if (symbolType === 'Import' || symbolType === 'Export') {
+    return 'meta_change';
+  }
+
+  // For functions, methods, classes - check if signature changed
+  if (['Function', 'Method', 'Constructor'].includes(symbolType)) {
+    // Heuristic: if first line of symbol is changed, likely signature
+    const firstHunk = hunks[0];
+    if (firstHunk) {
+      // Check if first few lines (signature area) are affected
+      const hasSignatureChange = firstHunk.lines.some(
+        (line) =>
+          line.type === 'removed' &&
+          line.lineNumber <= 5 &&
+          (line.content.includes('(') ||
+            line.content.includes('function') ||
+            line.content.includes('def ') ||
+            line.content.includes('func ') ||
+            line.content.includes('fn ')),
+      );
+      if (hasSignatureChange) {
+        return 'signature_change';
+      }
+    }
+    return 'implementation_change';
+  }
+
+  // Classes and interfaces
+  if (['Class', 'Interface', 'Struct', 'Trait'].includes(symbolType)) {
+    // Check for property/signature changes
+    const hasSignatureChange = hunks.some((hunk) =>
+      hunk.lines.some(
+        (line) =>
+          line.type === 'added' &&
+          (line.content.trim().startsWith('public ') ||
+            line.content.trim().startsWith('private ') ||
+            line.content.trim().startsWith('def ') ||
+            line.content.trim().startsWith('func ')),
+      ),
+    );
+    if (hasSignatureChange) {
+      return 'signature_change';
+    }
+    return 'implementation_change';
+  }
+
+  // Check for doc-only changes
+  if (content) {
+    const isDocOnly = hunks.every((hunk) =>
+      hunk.lines.every(
+        (line) =>
+          line.type === 'context' ||
+          line.content.trim().startsWith('*') ||
+          line.content.trim().startsWith('//') ||
+          line.content.trim().startsWith('#') ||
+          line.content.trim().startsWith('"""') ||
+          line.content.trim().startsWith("'''") ||
+          line.content.trim().startsWith('/**') ||
+          line.content.trim().startsWith('/*'),
+      ),
+    );
+    if (isDocOnly) {
+      return 'doc_change';
+    }
+  }
+
+  // Default to implementation change
+  return 'implementation_change';
 }

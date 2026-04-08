@@ -3,9 +3,55 @@
  */
 
 import { executeParameterized } from '../../../core/lbug/pool-adapter.js';
-import { logQueryError, VALID_NODE_LABELS } from './shared.js';
-import type { RepoHandle } from './shared.js';
+import { logQueryError, VALID_NODE_LABELS, createEvidenceBuilder } from './shared.js';
+import type { RepoHandle, StandardEvidence } from './shared.js';
 import { fetchRoutesWithConsumers, fetchLinkedFlowsBatch } from './route-tools.js';
+
+// ─── Contract Change Classification ───────────────────────────────────────────
+
+/**
+ * Classification of API contract changes based on impact analysis.
+ * - 'breaking': responseKeys were removed AND consumers access them
+ * - 'potentially_breaking': mismatches exist (consumer accesses keys not in response)
+ * - 'non_breaking': only new keys added, no removals, no mismatches
+ * - 'unknown': responseKeys is empty/null
+ */
+export type ContractChangeClass = 'breaking' | 'potentially_breaking' | 'non_breaking' | 'unknown';
+
+/**
+ * Classify the contract change based on response shape changes and consumer access patterns.
+ */
+function classifyContractChange(params: {
+  responseKeys: string[];
+  errorKeys: string[];
+  consumerAccessedKeys: string[];
+  mismatches: Array<{ field: string; confidence: string }>;
+}): ContractChangeClass {
+  const { responseKeys, errorKeys, consumerAccessedKeys, mismatches } = params;
+
+  // Unknown: responseKeys is empty/null
+  if (!responseKeys || responseKeys.length === 0) {
+    return 'unknown';
+  }
+
+  const allKnownKeys = new Set([...responseKeys, ...errorKeys]);
+
+  // Find keys that were accessed by consumers but are no longer in the response
+  const removedKeys = consumerAccessedKeys.filter((key) => !allKnownKeys.has(key));
+
+  // Breaking: responseKeys were removed AND consumers access them
+  if (removedKeys.length > 0) {
+    return 'breaking';
+  }
+
+  // Potentially breaking: mismatches exist (consumer accesses keys not in response)
+  if (mismatches.length > 0) {
+    return 'potentially_breaking';
+  }
+
+  // Non-breaking: no removals, no mismatches (only new keys added or unchanged)
+  return 'non_breaking';
+}
 
 // ─── Private helper ──────────────────────────────────────────────────────────
 
@@ -280,6 +326,14 @@ export async function apiImpactTool(
     const errorKeys = r.errorKeys ?? [];
     const allKnownKeys = new Set([...responseKeys, ...errorKeys]);
 
+    // Collect all consumer-accessed keys for contract classification
+    const consumerAccessedKeys: string[] = [];
+    for (const c of r.consumers) {
+      if (c.accessedKeys) {
+        consumerAccessedKeys.push(...c.accessedKeys);
+      }
+    }
+
     // Build consumer list with mismatch detection
     const consumers = r.consumers.map((c) => ({
       name: c.name,
@@ -316,10 +370,78 @@ export async function apiImpactTool(
       }
     }
 
+    // Compute contract change classification
+    const contractChangeClass = classifyContractChange({
+      responseKeys,
+      errorKeys,
+      consumerAccessedKeys,
+      mismatches: mismatches.map((m) => ({ field: m.field, confidence: m.confidence })),
+    });
+
+    // Compute contract change details
+    const consumerAccessedKeySet = new Set(consumerAccessedKeys);
+    const removedKeys = Array.from(consumerAccessedKeySet).filter((key) => !allKnownKeys.has(key));
+    const addedKeys = responseKeys.filter((key) => !consumerAccessedKeySet.has(key));
+    const mismatchedAccesses = mismatches.map((m) => m.field);
+
+    // Build evidence for contract classification
+    const evidenceBuilder = createEvidenceBuilder();
+
+    // Add explanation for contract classification
+    const classificationExplanations: Record<ContractChangeClass, string> = {
+      breaking: `Breaking change detected: ${removedKeys.length} key(s) removed that are accessed by consumers.`,
+      potentially_breaking: `Potentially breaking: ${mismatches.length} mismatch(es) found where consumers access keys not in response shape.`,
+      non_breaking: `Non-breaking change: No keys removed and no mismatches detected.`,
+      unknown: `Contract classification unknown: response shape has no keys defined.`,
+    };
+    evidenceBuilder.addExplanation(classificationExplanations[contractChangeClass]);
+
+    // Add paths showing consumer access chains for removed/mismatched keys
+    for (const consumer of r.consumers) {
+      if (!consumer.accessedKeys) continue;
+      const problematicKeys = consumer.accessedKeys.filter((key) => !allKnownKeys.has(key));
+      if (problematicKeys.length > 0) {
+        // Construct a synthetic id using filePath as fallback
+        const consumerId = `consumer:${consumer.filePath}`;
+        evidenceBuilder.addPath(
+          { id: consumerId, name: consumer.name, filePath: consumer.filePath },
+          { id: r.id, name: r.name, filePath: r.filePath },
+          'FETCHES',
+        );
+        // Add critical edges for high-confidence mismatches
+        const isMultiFetch = (consumer.fetchCount ?? 1) > 1;
+        evidenceBuilder.addCriticalEdge(
+          consumer.filePath,
+          r.filePath,
+          'ACCESSES_KEY',
+          isMultiFetch ? 0.5 : 0.9,
+        );
+      }
+    }
+
+    // Add confidence factors based on data quality
+    evidenceBuilder.addConfidenceFactor(
+      'response_shape_defined',
+      responseKeys.length > 0 ? 1.0 : 0.0,
+    );
+    evidenceBuilder.addConfidenceFactor(
+      'consumer_data_available',
+      consumerAccessedKeys.length > 0 ? 1.0 : 0.5,
+    );
+    evidenceBuilder.addConfidenceFactor(
+      'mismatch_confidence',
+      mismatches.length > 0
+        ? mismatches.reduce((sum, m) => sum + (m.confidence === 'high' ? 0.9 : 0.5), 0) /
+            mismatches.length
+        : 1.0,
+    );
+
+    const evidence: StandardEvidence = evidenceBuilder.build();
+
     const flows = flowMap.get(r.id) || [];
     const consumerCount = r.consumers.length;
 
-    // Risk level heuristic
+    // Risk level heuristic - now incorporates contract change class
     let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
     if (consumerCount >= 10) {
       riskLevel = 'HIGH';
@@ -333,6 +455,10 @@ export async function apiImpactTool(
       if (riskLevel === 'LOW') riskLevel = 'MEDIUM';
       else if (riskLevel === 'MEDIUM') riskLevel = 'HIGH';
     }
+    // Bump up to HIGH for breaking contract changes
+    if (contractChangeClass === 'breaking') {
+      riskLevel = 'HIGH';
+    }
 
     const warning =
       consumerCount > 0
@@ -344,6 +470,16 @@ export async function apiImpactTool(
     const middlewareArr = r.middleware || [];
     const handlerRouteCount = r.filePath ? (routeCountByHandler.get(r.filePath) ?? 1) : 1;
     const middlewarePartial = middlewareArr.length > 0 && handlerRouteCount > 1;
+
+    // Build contract change details object (only include if there are actual changes)
+    const contractChangeDetails =
+      removedKeys.length > 0 || addedKeys.length > 0 || mismatchedAccesses.length > 0
+        ? {
+            removed_keys: removedKeys,
+            added_keys: addedKeys,
+            mismatched_accesses: mismatchedAccesses,
+          }
+        : undefined;
 
     return {
       route: r.name,
@@ -367,8 +503,11 @@ export async function apiImpactTool(
         directConsumers: consumerCount,
         affectedFlows: flows.length,
         riskLevel,
+        contract_change_class: contractChangeClass,
+        ...(contractChangeDetails ? { contract_change_details: contractChangeDetails } : {}),
         ...(warning ? { warning } : {}),
       },
+      evidence,
     };
   });
 

@@ -9,8 +9,10 @@ import {
   IMPACT_RELATION_CONFIDENCE,
   confidenceForRelType,
   isTestFilePath,
+  computeImpactScore,
+  createEvidenceBuilder,
 } from './shared.js';
-import type { ImpactParams, RepoHandle } from './shared.js';
+import type { ImpactParams, RepoHandle, ImpactedItem } from './shared.js';
 
 export async function impactTool(
   repo: RepoHandle,
@@ -572,16 +574,56 @@ export async function runImpactBFS(
     }
   }
 
-  // Risk scoring
+  // Unified risk scoring using computeImpactScore
   const processCount = affectedProcesses.length;
   const moduleCount = affectedModules.length;
-  let risk = 'LOW';
-  if (directCount >= 30 || processCount >= 5 || moduleCount >= 5 || impacted.length >= 200) {
-    risk = 'CRITICAL';
-  } else if (directCount >= 15 || processCount >= 3 || moduleCount >= 3 || impacted.length >= 100) {
-    risk = 'HIGH';
-  } else if (directCount >= 5 || impacted.length >= 30) {
-    risk = 'MEDIUM';
+
+  // Prepare impacted items for top contributor calculation
+  const impactedItems: ImpactedItem[] = impacted.map((item) => ({
+    depth: item.depth,
+    relationType: item.relationType,
+    confidence: item.confidence,
+    name: item.name,
+  }));
+
+  const scoreResult = computeImpactScore({
+    directCount,
+    processCount,
+    moduleCount,
+    totalCount: impacted.length,
+    impactedItems,
+    direction,
+  });
+
+  // Build StandardEvidence using createEvidenceBuilder (Sub C: 4-tool coverage)
+  const evidenceBuilder = createEvidenceBuilder();
+  evidenceBuilder.addExplanation(
+    'Impact is computed by breadth-first traversal over graph relations from the target symbol using the selected relation types.',
+  );
+  for (const item of impacted) {
+    evidenceBuilder.addPath(
+      {
+        id: String(item.source?.id ?? ''),
+        name: item.source?.name ?? '',
+        filePath: item.source?.filePath,
+      },
+      { id: String(item.id ?? ''), name: item.name ?? '', filePath: item.filePath },
+      item.relationType,
+    );
+    // Add critical edges for direct high-confidence impacts
+    if (item.depth === 1 && item.confidence >= 0.8) {
+      evidenceBuilder.addCriticalEdge(
+        String(item.source?.id ?? ''),
+        String(item.id ?? ''),
+        item.relationType,
+        item.confidence,
+      );
+    }
+  }
+  evidenceBuilder.addConfidenceFactor('bfs_traversal', scoreResult.confidence);
+  evidenceBuilder.addConfidenceFactor('relation_coverage', relationTypes.length > 0 ? 0.9 : 0.5);
+  if (!traversalComplete) {
+    evidenceBuilder.addExclusion('BFS truncated: maxDepth or chunk limit reached');
   }
 
   return {
@@ -593,7 +635,14 @@ export async function runImpactBFS(
     },
     direction,
     impactedCount: impacted.length,
-    risk,
+    risk: scoreResult.risk, // Use unified risk level
+    score_v2: {
+      score: scoreResult.score,
+      risk: scoreResult.risk,
+      confidence: scoreResult.confidence,
+      top_contributors: scoreResult.top_contributors,
+      score_breakdown: scoreResult.score_breakdown,
+    },
     ...(!traversalComplete && { partial: true }),
     summary: {
       direct: directCount,
@@ -604,7 +653,8 @@ export async function runImpactBFS(
     affected_modules: affectedModules,
     byDepth: grouped,
     ...(include_evidence && {
-      evidence: {
+      evidence: evidenceBuilder.build(),
+      evidence_legacy: {
         explanation:
           'Impact is computed by breadth-first traversal over graph relations from the target symbol using the selected relation types.',
         relation_types: relationTypes,
