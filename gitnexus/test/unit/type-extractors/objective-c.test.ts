@@ -12,6 +12,16 @@ import {
   type ObjCMethodContext,
 } from '../../../src/core/ingestion/type-extractors/objective-c.js';
 
+/** Debug helper: print AST node structure */
+function debugNode(node: any, indent = 0): void {
+  const prefix = '  '.repeat(indent);
+  console.log(`${prefix}${node.type}: "${node.text.slice(0, 50)}"`);
+  for (let i = 0; i < node.namedChildCount; i++) {
+    const child = node.namedChild(i);
+    if (child) debugNode(child, indent + 1);
+  }
+}
+
 const objcAvailable = isLanguageAvailable(SupportedLanguages.ObjectiveC);
 
 function parseAndFindNodes(parser: Parser, code: string, nodeType: string) {
@@ -56,10 +66,8 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
 
   beforeAll(async () => {
     parser = await loadParser();
-    const lang = await loadLanguage(SupportedLanguages.ObjectiveC);
-    if (lang) {
-      parser.setLanguage(lang);
-    }
+    // loadLanguage returns void, but sets language on the global parser
+    await loadLanguage(SupportedLanguages.ObjectiveC);
   });
 
   describe('instancetype inference', () => {
@@ -100,14 +108,18 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
     });
 
     it('should return instancetype literal when no enclosing class context', async () => {
+      // Note: ObjC requires methods to be inside a class/interface
+      // For this test, we use a minimal class wrapper but don't pass enclosingClass
       const code = `
+        @interface Dummy
         - (instancetype)foo;
+        @end
       `;
       const nodes = parseAndFindNodes(parser, code, 'method_declaration');
       expect(nodes.length).toBeGreaterThan(0);
 
       const methodNode = nodes[0];
-      const context: ObjCMethodContext = {};
+      const context: ObjCMethodContext = {}; // No enclosing class
       const result = extractObjCMethodReturnType(methodNode, context);
       expect(result).toEqual({ name: 'instancetype', isSpecial: true });
     });
@@ -137,14 +149,14 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
 
   describe('property synthesis', () => {
     // Helper to parse property and return the translation_unit root
-    function parsePropertyCode(parser: Parser, code: string) {
+    function parsePropertyCode(code: string) {
       const tree = parser.parse(code);
       return tree?.rootNode ?? null;
     }
 
     it('should synthesize getter and setter for readwrite property', async () => {
       const code = `@property (nonatomic, strong) NSString *name;`;
-      const rootNode = parsePropertyCode(parser, code);
+      const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
       expect(result).toEqual({
@@ -159,7 +171,7 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
 
     it('should synthesize only getter for readonly property', async () => {
       const code = `@property (nonatomic, readonly) NSInteger age;`;
-      const rootNode = parsePropertyCode(parser, code);
+      const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
       expect(result).toEqual({
@@ -170,7 +182,7 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
 
     it('should handle custom getter attribute', async () => {
       const code = `@property (nonatomic, getter=isHidden) BOOL hidden;`;
-      const rootNode = parsePropertyCode(parser, code);
+      const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
       expect(result.getter.selector).toBe('isHidden');
@@ -178,7 +190,7 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
 
     it('should handle custom setter attribute', async () => {
       const code = `@property (nonatomic, setter=setHiddenFlag:) BOOL hidden;`;
-      const rootNode = parsePropertyCode(parser, code);
+      const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
       expect(result.setter?.selector).toBe('setHiddenFlag:');
@@ -186,7 +198,7 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
 
     it('should handle property without attributes', async () => {
       const code = `@property NSString *title;`;
-      const rootNode = parsePropertyCode(parser, code);
+      const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
       expect(result.getter.selector).toBe('title');
@@ -195,7 +207,7 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
 
     it('should handle primitive type property', async () => {
       const code = `@property (assign) NSInteger count;`;
-      const rootNode = parsePropertyCode(parser, code);
+      const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
       expect(result.getter.returnType.name).toBe('NSInteger');
@@ -204,7 +216,7 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
 
     it('should handle id type property', async () => {
       const code = `@property (nonatomic) id delegate;`;
-      const rootNode = parsePropertyCode(parser, code);
+      const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
       expect(result.getter.returnType.name).toBe('id');

@@ -31,20 +31,61 @@ export interface TypeInfo {
 /**
  * Extract the return type from an Objective-C method declaration.
  * Handles instancetype inference based on enclosing class context.
+ *
+ * Tree-sitter-objc structure:
+ *   (method_declaration
+ *     (method_type)           ;; contains the return type, text is "(instancetype)"
+ *       (type_name)           ;; the actual return type
+ *         (type_identifier)   ;; e.g., "instancetype", "NSString"
+ *     (identifier "methodName")  ;; selector
+ *     ...)
  */
 export function extractObjCMethodReturnType(
   node: SyntaxNode,
   context: ObjCMethodContext,
 ): TypeInfo | undefined {
-  // Method declaration: - (returnType)methodName...
-  // The return type is in the 'return_type' field or child
-  const returnTypeNode = node.childForFieldName('return_type') ?? node.childForFieldName('type');
+  // First try field-based lookup (if the grammar supports it)
+  let returnTypeNode = node.childForFieldName('return_type') ?? node.childForFieldName('type');
+
+  // If field lookup fails, look inside method_type child
+  if (!returnTypeNode) {
+    // Find method_type child - it contains the return type
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const child = node.namedChild(i);
+      if (!child) continue;
+
+      // method_type contains the return type info
+      if (child.type === 'method_type') {
+        // Look for type_name inside method_type
+        for (let j = 0; j < child.namedChildCount; j++) {
+          const innerChild = child.namedChild(j);
+          if (!innerChild) continue;
+          if (innerChild.type === 'type_name' || innerChild.type === 'type_descriptor') {
+            returnTypeNode = innerChild;
+            break;
+          }
+        }
+        if (returnTypeNode) break;
+      }
+
+      // Also check for direct type nodes (fallback for some grammars)
+      if (
+        child.type === 'type_name' ||
+        child.type === 'type_descriptor' ||
+        child.type === 'return_type'
+      ) {
+        returnTypeNode = child;
+        break;
+      }
+    }
+  }
 
   if (!returnTypeNode) {
     return undefined;
   }
 
-  const returnText = returnTypeNode.text.trim();
+  // Get the return type text, stripping parentheses
+  const returnText = returnTypeNode.text.replace(/[()]/g, '').trim();
 
   // Handle instancetype - infer as the enclosing class
   if (returnText === 'instancetype') {
@@ -58,7 +99,7 @@ export function extractObjCMethodReturnType(
   const isPointer = returnText.includes('*');
   const typeName = extractSimpleTypeName(returnTypeNode);
 
-  return { name: typeName ?? returnText, isPointer };
+  return { name: typeName ?? returnText.replace(/\*/g, '').trim(), isPointer };
 }
 
 // ============================================================================
@@ -333,25 +374,75 @@ export interface PropertyInfo {
  * - readwrite/readonly attributes
  * - custom getter= and setter= attributes
  * - Objective-C property type conventions
+ *
+ * Note: tree-sitter-objc parses @property as:
+ * - translation_unit
+ *   - expression_statement
+ *     - at_expression
+ *       - call_expression (contains attributes in argument_list)
+ *   - declaration (contains type and name)
  */
 export function synthesizePropertyAccessors(node: SyntaxNode): PropertyInfo {
-  // Find the property name
-  const nameNode = node.childForFieldName('name') ?? node.lastNamedChild;
-  const propertyName = nameNode ? extractVarName(nameNode) : '';
-
-  // Extract type
   let typeName = 'id';
   let isPointer = false;
+  let propertyName = '';
+  const attributes = new Map<string, string>();
 
-  const typeNode = node.childForFieldName('type');
-  if (typeNode) {
-    const typeText = typeNode.text.trim();
-    typeName = extractSimpleTypeName(typeNode) ?? typeText.replace(/\*/g, '').trim();
-    isPointer = typeText.includes('*');
+  // Handle translation_unit root (typical case for @property)
+  if (node.type === 'translation_unit') {
+    // Find the declaration node for type and name
+    const declaration = node.children.find((c) => c.type === 'declaration');
+    if (declaration) {
+      const typeNode = declaration.children.find(
+        (c) =>
+          c.type === 'type_identifier' ||
+          c.type === 'primitive_type' ||
+          c.type === 'typedefed_specifier',
+      );
+      if (typeNode) {
+        typeName = typeNode.text.trim();
+        isPointer = false;
+      }
+
+      // Find the property name from declarator
+      const pointerDeclarator = declaration.children.find((c) => c.type === 'pointer_declarator');
+      if (pointerDeclarator) {
+        isPointer = true;
+        const inner = pointerDeclarator.firstNamedChild;
+        if (inner && inner.type === 'identifier') {
+          propertyName = inner.text.trim();
+        }
+      } else {
+        const identifier = declaration.children.find((c) => c.type === 'identifier');
+        if (identifier) {
+          propertyName = identifier.text.trim();
+        }
+      }
+    }
+
+    // Find the at_expression for attributes
+    const exprStmt = node.children.find((c) => c.type === 'expression_statement');
+    if (exprStmt) {
+      const atExpr = exprStmt.children.find((c) => c.type === 'at_expression');
+      if (atExpr) {
+        parsePropertyAttributesFromAtExpression(atExpr, attributes);
+      }
+    }
+  } else {
+    // Legacy support: handle direct nodes
+    const nameNode = node.childForFieldName('name') ?? node.lastNamedChild;
+    propertyName = nameNode ? extractVarName(nameNode) : '';
+
+    const typeNode = node.childForFieldName('type');
+    if (typeNode) {
+      const typeText = typeNode.text.trim();
+      typeName = extractSimpleTypeName(typeNode) ?? typeText.replace(/\*/g, '').trim();
+      isPointer = typeText.includes('*');
+    }
+
+    parsePropertyAttributesLegacy(node, attributes);
   }
 
-  // Parse property attributes
-  const attributes = parsePropertyAttributes(node);
   const isReadonly = attributes.has('readonly');
 
   // Determine getter selector (default or custom)
@@ -385,16 +476,60 @@ export function synthesizePropertyAccessors(node: SyntaxNode): PropertyInfo {
   };
 }
 
-/** Parse property attributes into a map. */
-function parsePropertyAttributes(node: SyntaxNode): Map<string, string> {
-  const attributes = new Map<string, string>();
+/** Parse property attributes from an at_expression node. */
+function parsePropertyAttributesFromAtExpression(
+  atExpr: SyntaxNode,
+  attributes: Map<string, string>,
+): void {
+  // at_expression contains call_expression with argument_list
+  const callExpr = atExpr.children.find((c) => c.type === 'call_expression');
+  if (!callExpr) return;
 
+  const argList = callExpr.children.find((c) => c.type === 'argument_list');
+  if (!argList) return;
+
+  const children = argList.children;
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (!child) continue;
+
+    if (child.type === 'identifier') {
+      const text = child.text.trim();
+      if (text === 'readonly' || text === 'readwrite') {
+        attributes.set(text, 'true');
+      }
+    } else if (child.type === 'assignment_expression') {
+      // Handle getter=isHidden or setter=setHiddenFlag:
+      const left = child.children.find((c) => c.type === 'identifier');
+      const right = child.children.filter((c) => c.type === 'identifier')[1];
+      if (left && right) {
+        const key = left.text.trim();
+        let value = right.text.trim();
+
+        // For setter, check if there's a colon following (ERROR node or punct)
+        if (key === 'setter' && i + 1 < children.length) {
+          const next = children[i + 1];
+          if (next && (next.type === 'ERROR' || next.type === ':') && next.text === ':') {
+            value += ':';
+          }
+        }
+
+        if (key === 'getter' || key === 'setter') {
+          attributes.set(key, value);
+        }
+      }
+    }
+  }
+}
+
+/** Parse property attributes from legacy node structure. */
+function parsePropertyAttributesLegacy(node: SyntaxNode, attributes: Map<string, string>): void {
   // Find attribute list
   const attrList = node.children.find(
     (c) => c.type === 'attribute_specifier' || c.type === 'property_attribute_list',
   );
 
-  if (!attrList) return attributes;
+  if (!attrList) return;
 
   // Parse each attribute
   for (const child of attrList.children) {
@@ -417,6 +552,4 @@ function parsePropertyAttributes(node: SyntaxNode): Map<string, string> {
       }
     }
   }
-
-  return attributes;
 }
