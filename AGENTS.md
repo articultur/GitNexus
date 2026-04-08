@@ -14,9 +14,9 @@ This file uses a standard agent header (version, scope, model policy, reference 
 
 | | |
 |--|--|
-| **Reads** | Repository tree as needed for the task: `gitnexus/`, `gitnexus-web/`, `eval/`, plugin packages, `.github/`, `.gitnexus/` when present, and docs. |
+| **Reads** | Repository tree as needed for the task: `gitnexus/`, `gitnexus-web/`, plugin packages, `.github/`, `.gitnexus/` when present, and docs. |
 | **Writes** | Only paths required for the requested change; keep diffs minimal. Update lockfiles when dependencies change. |
-| **Executes** | `npm`, `npx`, `node` under `gitnexus/` and `gitnexus-web/`; `uv run` for Python under `eval/` when applicable; shell utilities for documented CI/dev workflows. |
+| **Executes** | `npm`, `npx`, `node` under `gitnexus/` and `gitnexus-web/`; shell utilities for documented CI/dev workflows. |
 | **Off-limits** | User secrets (e.g. real `.env`), production deployment credentials, unrelated repositories, destructive git history operations without explicit human confirmation. |
 
 ## Model Configuration
@@ -174,7 +174,6 @@ This is a monorepo with two main products and supporting config packages:
 | **GitNexus Web UI** | `gitnexus-web/` | React/Vite browser app — graph explorer + AI chat. Runs entirely in WASM. |
 | Claude Plugin | `gitnexus-claude-plugin/` | Static config for Claude marketplace (no build). |
 | Cursor Integration | `gitnexus-cursor-integration/` | Static config for Cursor editor (no build). |
-| SWE-bench Eval | `eval/` | Python evaluation harness (optional; needs Docker + LLM API keys). |
 
 ### Running services
 
