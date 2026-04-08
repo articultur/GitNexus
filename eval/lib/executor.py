@@ -30,6 +30,31 @@ from .mcp_client import GitNexusClient, MCPToolError
 
 
 # ---------------------------------------------------------------------------
+# Prompt template selection
+# ---------------------------------------------------------------------------
+
+def select_template(case: dict, group: str, templates_dir: Path | None = None) -> str | None:
+    """Select prompt template based on case task_prompt_style.
+
+    Looks for ``{style}-{group}.md`` in *templates_dir*, falling back to
+    ``locate-fix-{group}.md`` when the task-specific template does not exist.
+    Returns ``None`` when *templates_dir* is not provided or no template is found.
+    """
+    if templates_dir is None:
+        return None
+    style = case.get("task_prompt_style", "locate-fix")
+    template_name = f"{style}-{group}.md"
+    path = templates_dir / template_name
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    # Fallback to locate-fix
+    fallback = templates_dir / f"locate-fix-{group}.md"
+    if fallback.exists():
+        return fallback.read_text(encoding="utf-8")
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
 
