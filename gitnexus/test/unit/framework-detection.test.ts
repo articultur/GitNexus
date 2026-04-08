@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { SupportedLanguages } from 'gitnexus-shared';
 import {
   detectFrameworkFromPath,
   detectFrameworkFromAST,
@@ -382,6 +383,91 @@ describe('detectFrameworkFromAST', () => {
   });
 });
 
+describe('C/C++ framework detection', () => {
+  it('should detect Boost framework from boost:: patterns', () => {
+    const result = detectFrameworkFromAST(SupportedLanguages.CPlusPlus, 'boost::asio::io_context io;');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('boost');
+    expect(result!.entryPointMultiplier).toBe(2.5);
+    expect(result!.reason).toBe('boost-module');
+  });
+
+  it('should detect LLVM framework from llvm:: patterns', () => {
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.CPlusPlus,
+      'class MyPass : public llvm::FunctionPass { };',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('llvm');
+    expect(result!.entryPointMultiplier).toBe(2.5);
+    expect(result!.reason).toBe('llvm-pass');
+  });
+
+  it('should detect Qt framework from Qt patterns', () => {
+    const result = detectFrameworkFromAST(SupportedLanguages.CPlusPlus, 'class MyWidget : public QWidget { Q_OBJECT };');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('qt');
+    expect(result!.entryPointMultiplier).toBe(2.8);
+  });
+
+  it('should detect Android NDK from JNI patterns', () => {
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.C,
+      'JNIEXPORT void JNICALL Java_com_example_foo(JNIEnv *env, jobject obj)',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('android-ndk');
+    expect(result!.entryPointMultiplier).toBe(2.8);
+    expect(result!.reason).toBe('jni-entry');
+  });
+
+  it('should detect Android NDK from ANativeActivity', () => {
+    const result = detectFrameworkFromAST(SupportedLanguages.C, 'void android_main(struct ANativeActivity* activity)');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('android-ndk');
+  });
+});
+
+describe('Objective-C framework detection', () => {
+  it('should detect CoreData framework', () => {
+    const result = detectFrameworkFromAST(SupportedLanguages.ObjectiveC, '@interface User : NSManagedObject @end');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('coredata');
+    expect(result!.entryPointMultiplier).toBe(2.0);
+    expect(result!.reason).toBe('coredata-model');
+  });
+
+  it('should detect ReactiveObjC framework', () => {
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.ObjectiveC,
+      'RACSignal *signal = [RACSignal createSignal:^RACDisposable *{ }];',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('reactiveobjc');
+    expect(result!.entryPointMultiplier).toBe(2.2);
+    expect(result!.reason).toBe('rac-signal');
+  });
+
+  it('should detect Cocoa Touch lifecycle patterns', () => {
+    const result = detectFrameworkFromAST(SupportedLanguages.ObjectiveC, '@interface MyViewController : UIViewController @end');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('cocoa-touch');
+    expect(result!.entryPointMultiplier).toBe(2.0);
+  });
+
+  it('should detect NSPersistentContainer for CoreData', () => {
+    const result = detectFrameworkFromAST(SupportedLanguages.ObjectiveC, 'NSPersistentContainer *container = [[NSPersistentContainer alloc] initWithName:@"Model"]');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('coredata');
+  });
+
+  it('should detect RAC macro for ReactiveObjC', () => {
+    const result = detectFrameworkFromAST(SupportedLanguages.ObjectiveC, 'RAC(self, username)');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('reactiveobjc');
+  });
+});
+
 describe('FRAMEWORK_AST_PATTERNS', () => {
   it('has patterns for all expected frameworks', () => {
     const expectedFrameworks = [
@@ -410,6 +496,11 @@ describe('FRAMEWORK_AST_PATTERNS', () => {
       'rails',
       'sinatra',
       'harmonyArkui',
+      'cocoaTouch',
+      'coreData',
+      'reactiveObjC',
+      'boost',
+      'llvm',
     ];
     for (const fw of expectedFrameworks) {
       expect(FRAMEWORK_AST_PATTERNS).toHaveProperty(fw);

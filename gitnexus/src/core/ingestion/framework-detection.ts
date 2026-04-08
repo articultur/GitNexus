@@ -651,7 +651,7 @@ export const FRAMEWORK_AST_PATTERNS = {
     'llvm::Function',
     'llvm::Type',
   ],
-  android_ndk: [
+  androidNdk: [
     'JNI_OnLoad',
     'android_main',
     'ANativeActivity',
@@ -949,7 +949,7 @@ export const AST_FRAMEWORK_PATTERNS_BY_LANGUAGE = {
       framework: 'android-ndk',
       entryPointMultiplier: 2.8,
       reason: 'jni-entry',
-      patterns: FRAMEWORK_AST_PATTERNS.android_ndk,
+      patterns: FRAMEWORK_AST_PATTERNS.androidNdk,
     },
   ],
   [SupportedLanguages.CPlusPlus]: [
