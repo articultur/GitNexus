@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { glob } from 'glob';
+import { globIterate } from 'glob';
 import { createIgnoreFilter } from '../../config/ignore-service.js';
 
 export interface FileEntry {
@@ -27,6 +27,9 @@ const MAX_FILE_SIZE = 512 * 1024;
 /**
  * Phase 1: Scan repository — stat files to get paths + sizes, no content loaded.
  * Memory: ~10MB for 100K files vs ~1GB+ with content.
+ * 
+ * Uses globIterate for streaming to memory-efficiently process large repositories
+ * without loading all file paths into memory at once.
  */
 export const walkRepositoryPaths = async (
   repoPath: string,
@@ -34,37 +37,70 @@ export const walkRepositoryPaths = async (
 ): Promise<ScannedFile[]> => {
   const ignoreFilter = await createIgnoreFilter(repoPath);
 
-  const filtered = await glob('**/*', {
+  const entries: ScannedFile[] = [];
+  let processed = 0;
+  let skippedLarge = 0;
+  let batch: string[] = [];
+
+  // Stream files from glob instead of loading all at once
+  for await (const relativePath of globIterate('**/*', {
     cwd: repoPath,
     nodir: true,
     dot: false,
     ignore: ignoreFilter,
-  });
-  const entries: ScannedFile[] = [];
-  let processed = 0;
-  let skippedLarge = 0;
+  })) {
+    batch.push(relativePath);
 
-  for (let start = 0; start < filtered.length; start += READ_CONCURRENCY) {
-    const batch = filtered.slice(start, start + READ_CONCURRENCY);
+    // Process batch when reaching concurrency limit
+    if (batch.length >= READ_CONCURRENCY) {
+      const results = await Promise.allSettled(
+        batch.map(async (p) => {
+          const fullPath = path.join(repoPath, p);
+          const stat = await fs.stat(fullPath);
+          if (stat.size > MAX_FILE_SIZE) {
+            skippedLarge++;
+            return null;
+          }
+          return { path: p.replace(/\\/g, '/'), size: stat.size };
+        }),
+      );
+
+      for (let i = 0; i < results.length; i++) {
+        processed++;
+        const result = results[i];
+        if (result.status === 'fulfilled' && result.value !== null) {
+          entries.push(result.value);
+          onProgress?.(processed, entries.length, result.value.path);
+        } else {
+          onProgress?.(processed, entries.length, batch[i]);
+        }
+      }
+      batch = [];
+    }
+  }
+
+  // Process any remaining files in final batch
+  if (batch.length > 0) {
     const results = await Promise.allSettled(
-      batch.map(async (relativePath) => {
-        const fullPath = path.join(repoPath, relativePath);
+      batch.map(async (p) => {
+        const fullPath = path.join(repoPath, p);
         const stat = await fs.stat(fullPath);
         if (stat.size > MAX_FILE_SIZE) {
           skippedLarge++;
           return null;
         }
-        return { path: relativePath.replace(/\\/g, '/'), size: stat.size };
+        return { path: p.replace(/\\/g, '/'), size: stat.size };
       }),
     );
 
-    for (const result of results) {
+    for (let i = 0; i < results.length; i++) {
       processed++;
+      const result = results[i];
       if (result.status === 'fulfilled' && result.value !== null) {
         entries.push(result.value);
-        onProgress?.(processed, filtered.length, result.value.path);
+        onProgress?.(processed, entries.length, result.value.path);
       } else {
-        onProgress?.(processed, filtered.length, batch[results.indexOf(result)]);
+        onProgress?.(processed, entries.length, batch[i]);
       }
     }
   }

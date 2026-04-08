@@ -193,9 +193,21 @@ export async function runFullAnalysis(
 
     try {
       await createFTSIndex('File', 'file_fts', ['name', 'content']);
-      await createFTSIndex('Function', 'function_fts', ['name', 'content']);
+      await createFTSIndex('Function', 'function_fts', [
+        'name',
+        'content',
+        'parameterNames',
+        'returnType',
+        'qualifier',
+      ]);
       await createFTSIndex('Class', 'class_fts', ['name', 'content']);
-      await createFTSIndex('Method', 'method_fts', ['name', 'content']);
+      await createFTSIndex('Method', 'method_fts', [
+        'name',
+        'content',
+        'parameterNames',
+        'returnType',
+        'qualifier',
+      ]);
       await createFTSIndex('Interface', 'interface_fts', ['name', 'content']);
     } catch {
       // Non-fatal — FTS is best-effort

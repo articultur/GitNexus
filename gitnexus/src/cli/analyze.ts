@@ -20,19 +20,29 @@ import fs from 'fs/promises';
 
 const HEAP_MB = 8192;
 const HEAP_FLAG = `--max-old-space-size=${HEAP_MB}`;
+const STACK_SIZE_KB = 16384; // 16MB stack size for deep repositories
+const STACK_FLAG = `--stack-size=${STACK_SIZE_KB}`;
 
-/** Re-exec the process with an 8GB heap if we're currently below that. */
+/** Re-exec the process with an 8GB heap and increased stack size if we're currently below that. */
 function ensureHeap(): boolean {
   const nodeOpts = process.env.NODE_OPTIONS || '';
-  if (nodeOpts.includes('--max-old-space-size')) return false;
+  const hasHeapOption = /--max-old-space-size(=|\s)/.test(nodeOpts);
+  const hasStackOption = /--stack-size(=|\s)/.test(nodeOpts);
 
   const v8Heap = v8.getHeapStatistics().heap_size_limit;
-  if (v8Heap >= HEAP_MB * 1024 * 1024 * 0.9) return false;
+  const heapAlreadyLarge = v8Heap >= HEAP_MB * 1024 * 1024 * 0.9;
+
+  const nodeFlagsToAdd: string[] = [];
+  if (!heapAlreadyLarge && !hasHeapOption) nodeFlagsToAdd.push(HEAP_FLAG);
+  if (!hasStackOption) nodeFlagsToAdd.push(STACK_FLAG);
+  if (nodeFlagsToAdd.length === 0) return false;
 
   try {
-    execFileSync(process.execPath, [HEAP_FLAG, ...process.argv.slice(1)], {
+    const childArgs = nodeFlagsToAdd.concat(process.argv.slice(1));
+    const mergedNodeOpts = `${nodeOpts} ${nodeFlagsToAdd.join(' ')}`.trim();
+    execFileSync(process.execPath, childArgs, {
       stdio: 'inherit',
-      env: { ...process.env, NODE_OPTIONS: `${nodeOpts} ${HEAP_FLAG}`.trim() },
+      env: { ...process.env, NODE_OPTIONS: mergedNodeOpts },
     });
   } catch (e: any) {
     process.exitCode = e.status ?? 1;

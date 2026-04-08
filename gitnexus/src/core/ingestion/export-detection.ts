@@ -173,18 +173,25 @@ export const kotlinExportChecker: ExportChecker = (node, _name) => {
 /**
  * C/C++: functions without 'static' storage class have external linkage by default,
  * making them globally accessible (equivalent to exported). Only functions explicitly
- * marked 'static' are file-scoped (not exported). C++ anonymous namespaces
+ * marked 'static' or 'inline' are file-scoped (not exported). C++ anonymous namespaces
  * (namespace { ... }) also give internal linkage.
+ * 
+ * Note: inline functions with external linkage in C++17+ may still be exported,
+ * but we treat them conservatively as non-exported for the purpose of static analysis.
  */
 export const cCppExportChecker: ExportChecker = (node, _name) => {
   let cur: SyntaxNode | null = node;
   while (cur) {
     if (cur.type === 'function_definition' || cur.type === 'declaration') {
-      // Check for 'static' storage class specifier as a direct child node.
+      // Check for 'static' or 'inline' storage class specifier as direct child node.
       // This avoids reading the full function text (which can be very large).
       for (let i = 0; i < cur.childCount; i++) {
         const child = cur.child(i);
-        if (child?.type === 'storage_class_specifier' && child.text === 'static') return false;
+        if (child?.type === 'storage_class_specifier') {
+          const text = child.text;
+          // Treat both static and inline as non-exported for analysis purposes
+          if (text === 'static' || text === 'inline') return false;
+        }
       }
     }
     // C++ anonymous namespace: namespace_definition with no name child = internal linkage

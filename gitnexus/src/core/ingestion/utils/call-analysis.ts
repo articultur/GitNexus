@@ -64,6 +64,7 @@ const MEMBER_ACCESS_NODE_TYPES = new Set([
   'member_expression', // TS/JS: obj.method()
   'attribute', // Python: obj.method()
   'member_access_expression', // C#: obj.Method()
+  'message_expression', // Objective-C: [obj method]
   'field_expression', // Rust/C++: obj.method() / ptr->method()
   'selector_expression', // Go: obj.Method()
   'navigation_suffix', // Kotlin/Swift: obj.method() — nameNode sits inside navigation_suffix

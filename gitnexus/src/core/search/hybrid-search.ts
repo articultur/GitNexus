@@ -15,7 +15,7 @@ import type { SemanticSearchResult } from '../embeddings/types.js';
  * RRF constant - standard value used in the literature
  * Higher values give more weight to lower-ranked results
  */
-const RRF_K = 60;
+const RRF_K = 20;
 
 export interface HybridSearchResult {
   filePath: string;
