@@ -364,7 +364,7 @@ export function synthesizePropertyAccessors(node: SyntaxNode): PropertyInfo {
     const customSetter = attributes.get('setter');
     if (customSetter) {
       setterSelector = customSetter;
-    } else {
+    } else if (propertyName) {
       // Default: propertyName -> setPropertyName:
       setterSelector = 'set' + propertyName.charAt(0).toUpperCase() + propertyName.slice(1) + ':';
     }
