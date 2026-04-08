@@ -63,6 +63,7 @@ export interface CobolRegexResults {
     occurs?: number;
     dependingOn?: string;
     redefines?: string;
+    parentName?: string;
     values?: string[];
     isExternal?: boolean;
     isGlobal?: boolean;
