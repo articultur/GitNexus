@@ -12,16 +12,6 @@ import {
   type ObjCMethodContext,
 } from '../../../src/core/ingestion/type-extractors/objective-c.js';
 
-/** Debug helper: print AST node structure */
-function debugNode(node: any, indent = 0): void {
-  const prefix = '  '.repeat(indent);
-  console.log(`${prefix}${node.type}: "${node.text.slice(0, 50)}"`);
-  for (let i = 0; i < node.namedChildCount; i++) {
-    const child = node.namedChild(i);
-    if (child) debugNode(child, indent + 1);
-  }
-}
-
 const objcAvailable = isLanguageAvailable(SupportedLanguages.ObjectiveC);
 
 function parseAndFindNodes(parser: Parser, code: string, nodeType: string) {
