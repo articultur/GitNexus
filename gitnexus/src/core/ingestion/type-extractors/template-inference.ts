@@ -39,10 +39,57 @@ export interface SFINAEContext {
 
 /** Type constraint extracted from concept/requires clauses. */
 export interface TypeConstraint {
-  kind: 'concept' | 'requires' | 'where';
+  kind: 'concept' | 'requires' | 'where' | 'compound_requires';
   name: string;
   typeParams: string[];
+  /** For compound requirements: the expression being tested */
+  expression?: string;
+  /** For compound requirements: the expected concept type (e.g., 'std::same_as<void>') */
+  expectedType?: string;
 }
+
+/** Result of decltype(auto) analysis */
+export interface DecltypeAutoResult {
+  isAuto: boolean;
+  deducedType: TypeInfo;
+  /** When true, the type is deduced from a return statement */
+  deducedFromReturn?: boolean;
+}
+
+/** Known C++ standard concepts */
+const KNOWN_CONCEPTS = new Set([
+  'std::integral',
+  'std::floating_point',
+  'std::same_as',
+  'std::convertible_to',
+  'std::derived_from',
+  'std::common_with',
+  'std::common_reference_with',
+  'std::assignable_from',
+  'std::swappable',
+  'std::swappable_with',
+  'std::destructible',
+  'std::constructible_from',
+  'std::default_constructible',
+  'std::move_constructible',
+  'std::copy_constructible',
+  'std::movable',
+  'std::copyable',
+  'std::semiregular',
+  'std::regular',
+  'std::equality_comparable',
+  'std::totally_ordered',
+  'std::regular_invocable',
+  'std::predicate',
+  'std::relation',
+  'std::strict_weak_order',
+  'std::numeric',
+  'integral',
+  'floating_point',
+  'same_as',
+  'convertible_to',
+  'derived_from',
+]);
 
 /**
  * C++ Template Inference Engine
@@ -134,11 +181,22 @@ export class TemplateInferenceEngine {
 
   /**
    * Evaluate decltype expression.
+   * Handles:
+   * - decltype(auto) return type deduction
+   * - decltype(expr) with function calls
+   * - decltype(std::declval<T>()) pattern
    */
   evaluateDecltype(node: SyntaxNode): TypeInfo {
     const cacheKey = `decltype:${node.text}`;
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey)!;
+    }
+
+    // Check for decltype(auto) pattern
+    if (this.isDecltypeAuto(node)) {
+      const result = this.evaluateDecltypeAuto(node);
+      this.cache.set(cacheKey, result.deducedType);
+      return result.deducedType;
     }
 
     // Find the expression inside decltype
@@ -147,13 +205,97 @@ export class TemplateInferenceEngine {
       return { name: 'auto' };
     }
 
+    // Check for std::declval<T>() pattern
+    if (this.isDeclvalPattern(exprNode)) {
+      const result = this.resolveDeclvalType(exprNode);
+      this.cache.set(cacheKey, result);
+      return result;
+    }
+
     const result = this.inferExpressionTypeRecursive(exprNode, 0);
     this.cache.set(cacheKey, result);
     return result;
   }
 
   /**
+   * Analyze decltype(auto) for return type deduction.
+   * Returns information about whether this is decltype(auto) and the deduced type.
+   */
+  evaluateDecltypeAutoFull(node: SyntaxNode): DecltypeAutoResult {
+    if (!this.isDecltypeAuto(node)) {
+      return { isAuto: false, deducedType: { name: 'auto' } };
+    }
+
+    // decltype(auto) deduces the type as if by decltype(return-expression)
+    // This typically requires context to determine the return type
+    return {
+      isAuto: true,
+      deducedType: { name: 'auto', isSpecial: true },
+      deducedFromReturn: true,
+    };
+  }
+
+  /**
+   * Check if node represents decltype(auto) pattern.
+   */
+  private isDecltypeAuto(node: SyntaxNode): boolean {
+    const text = node.text;
+    return /\bdecltype\s*\(\s*auto\s*\)/.test(text) || text === 'decltype(auto)';
+  }
+
+  /**
+   * Evaluate decltype(auto) context.
+   */
+  private evaluateDecltypeAuto(node: SyntaxNode): DecltypeAutoResult {
+    return this.evaluateDecltypeAutoFull(node);
+  }
+
+  /**
+   * Check if node represents std::declval<T>() pattern.
+   */
+  private isDeclvalPattern(node: SyntaxNode): boolean {
+    const text = node.text;
+    return text.includes('std::declval') || text.includes('declval<');
+  }
+
+  /**
+   * Resolve type from std::declval<T>() pattern.
+   * std::declval<T>() returns T&& (rvalue reference to T).
+   */
+  private resolveDeclvalType(node: SyntaxNode): TypeInfo {
+    const text = node.text;
+
+    // Extract template argument from declval<T>()
+    const match = text.match(/declval\s*<\s*([^>]+)\s*>/);
+    if (match) {
+      const innerType = match[1].trim();
+      // declval<T>() returns T&&, declval<T&>() returns T&
+      if (innerType.endsWith('&')) {
+        return { name: innerType, isPointer: false };
+      }
+      return { name: `${innerType}&&`, isPointer: false };
+    }
+
+    // Fallback: could be declval<T> without parens
+    const matchNoParens = text.match(/declval\s*<\s*([^>]+)\s*>/);
+    if (matchNoParens) {
+      const innerType = matchNoParens[1].trim();
+      if (innerType.endsWith('&')) {
+        return { name: innerType, isPointer: false };
+      }
+      return { name: `${innerType}&&`, isPointer: false };
+    }
+
+    return { name: 'auto' };
+  }
+
+  /**
    * Analyze concept constraints.
+   * Handles:
+   * - requires clauses in function templates
+   * - concept definitions
+   * - compound requirements: requires { { expr } -> Concept; }
+   * - C++20 abbreviated function syntax: void foo(Integral auto x)
    */
   analyzeConceptConstraint(node: SyntaxNode): TypeConstraint[] {
     const constraints: TypeConstraint[] = [];
@@ -170,7 +312,125 @@ export class TemplateInferenceEngine {
       constraints.push(...this.extractConceptConstraints(conceptDef));
     }
 
+    // Find compound requirements in requires expressions
+    const compoundReqs = this.findCompoundRequirements(node);
+    for (const req of compoundReqs) {
+      constraints.push(...this.extractCompoundRequirements(req));
+    }
+
+    // Find C++20 abbreviated syntax: void foo(Integral auto x)
+    const abbreviatedSyn = this.findAbbreviatedConceptSyntax(node);
+    constraints.push(...abbreviatedSyn);
+
     return constraints;
+  }
+
+  /**
+   * Find compound requirements within requires expressions.
+   * Pattern: requires { { expr } -> Concept; }
+   */
+  private findCompoundRequirements(node: SyntaxNode): SyntaxNode[] {
+    const results: SyntaxNode[] = [];
+
+    const walk = (n: SyntaxNode) => {
+      // Check for requires_expression (contains compound requirements)
+      if (n.type === 'requires_expression' || n.type === 'requirement_sequence') {
+        results.push(n);
+      }
+      for (const child of n.children ?? []) {
+        walk(child);
+      }
+    };
+
+    walk(node);
+    return results;
+  }
+
+  /**
+   * Extract compound requirements from a requires expression.
+   * Handles patterns like:
+   * - { expr } -> Concept<T>;
+   * - { expr } noexcept;
+   * - requires requires { expr };
+   */
+  private extractCompoundRequirements(node: SyntaxNode): TypeConstraint[] {
+    const constraints: TypeConstraint[] = [];
+    const text = node.text;
+
+    // Pattern: { expr } -> Concept<T>;
+    const arrowPattern = /\{\s*([^}]+)\s*\}\s*->\s*(\w+(?:::\w+)*(?:<[^>]+>)?)/g;
+    let match;
+    while ((match = arrowPattern.exec(text)) !== null) {
+      constraints.push({
+        kind: 'compound_requires',
+        name: this.normalizeConceptName(match[2]),
+        typeParams: [],
+        expression: match[1].trim(),
+        expectedType: match[2].trim(),
+      });
+    }
+
+    // Pattern: requires(T t) { t.sort(); } - nested requires
+    const nestedRequires = /\brequires\s*\([^)]*\)\s*\{([^}]+)\}/;
+    const nestedMatch = nestedRequires.exec(text);
+    if (nestedMatch) {
+      constraints.push({
+        kind: 'compound_requires',
+        name: 'requires_expression',
+        typeParams: [],
+        expression: nestedMatch[1].trim(),
+      });
+    }
+
+    return constraints;
+  }
+
+  /**
+   * Find C++20 abbreviated concept syntax.
+   * Pattern: void foo(Integral auto x) - where Integral is a concept
+   */
+  private findAbbreviatedConceptSyntax(node: SyntaxNode): TypeConstraint[] {
+    const constraints: TypeConstraint[] = [];
+    const text = node.text;
+
+    // Pattern: Concept auto or Concept auto& or Concept auto&&
+    // Matches: Integral auto, Sortable auto&, etc.
+    const abbrevPattern = /(\w+(?:::\w+)*)\s+auto\s*(&{0,2})?/g;
+    let match;
+    while ((match = abbrevPattern.exec(text)) !== null) {
+      const conceptName = match[1];
+      // Only add if it's a known concept or follows naming conventions
+      if (KNOWN_CONCEPTS.has(conceptName) || /^[A-Z]/.test(conceptName)) {
+        constraints.push({
+          kind: 'concept',
+          name: this.normalizeConceptName(conceptName),
+          typeParams: [],
+        });
+      }
+    }
+
+    // Pattern: std::ranges::range auto - with namespace
+    const nsPattern = /(std::\w+(?:::\w+)*)\s+auto/g;
+    while ((match = nsPattern.exec(text)) !== null) {
+      constraints.push({
+        kind: 'concept',
+        name: match[1],
+        typeParams: [],
+      });
+    }
+
+    return constraints;
+  }
+
+  /**
+   * Normalize concept name by removing std:: prefix if present.
+   */
+  private normalizeConceptName(name: string): string {
+    // Keep std:: prefix for standard concepts
+    if (name.startsWith('std::')) {
+      return name;
+    }
+    return name;
   }
 
   // Private helper methods
@@ -330,9 +590,39 @@ export class TemplateInferenceEngine {
     return text.includes('std::conditional_t') || text.includes('conditional_t');
   }
 
+  /**
+   * Resolve std::conditional_t<Condition, TrueType, FalseType> pattern.
+   * Properly evaluates the condition and returns the appropriate type.
+   *
+   * Supports:
+   * - Boolean conditions
+   * - Type traits as conditions
+   * - sizeof comparisons
+   * - Logical operators (&&, ||, !)
+   * - Nested enable_if as condition
+   */
   private resolveConditionalT(_node: SyntaxNode, context: SFINAEContext): TypeInfo {
-    // Simplified: return true type
-    // Full implementation would parse the ternary
+    const cacheKey = `conditional_t:${JSON.stringify(context)}`;
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey)!;
+    }
+
+    // Evaluate the condition with full SFINAE support
+    const conditionMet = this.evaluateCondition(context.condition, 0);
+
+    if (conditionMet === true) {
+      this.cache.set(cacheKey, context.trueType);
+      return context.trueType;
+    }
+
+    if (conditionMet === false) {
+      const result = context.falseType ?? { name: 'void' };
+      this.cache.set(cacheKey, result);
+      return result;
+    }
+
+    // Cannot determine statically - default to trueType optimistically
+    this.cache.set(cacheKey, context.trueType);
     return context.trueType;
   }
 
@@ -861,32 +1151,148 @@ export class TemplateInferenceEngine {
 
   /**
    * Resolve std::enable_if<Condition, T>::type pattern.
-   * Now properly evaluates type trait conditions.
+   * Properly evaluates type trait conditions and handles nested SFINAE.
+   *
+   * Supports:
+   * - Simple conditions: std::is_integral<T>::value
+   * - Compound conditions: std::is_integral<T>::value && std::is_signed<T>::value
+   * - Nested enable_if: std::enable_if<std::enable_if<C1, T>::type::value, U>
+   * - falseType branch when condition is false
    */
   private resolveEnableIf(node: SyntaxNode, context: SFINAEContext): TypeInfo {
-    const cacheKey = `enable_if:${node.text}`;
+    const cacheKey = `enable_if:${node.text}:${JSON.stringify(context)}`;
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey)!;
     }
 
-    // Try to evaluate the condition
-    let conditionMet = this.evaluateCondition(context.condition);
-
-    // If we can't determine the condition, default to trueType (optimistic)
-    if (conditionMet === null) {
-      conditionMet = true;
+    // Check for nested enable_if pattern in the condition
+    if (this.isNestedEnableIf(context.condition)) {
+      const result = this.resolveNestedEnableIf(context, 0);
+      this.cache.set(cacheKey, result);
+      return result;
     }
 
-    const result = conditionMet ? context.trueType : (context.falseType ?? { name: 'void' });
-    this.cache.set(cacheKey, result);
-    return result;
+    // Evaluate the condition with full SFINAE support
+    const conditionMet = this.evaluateCondition(context.condition, 0);
+
+    // When condition is explicitly false, return falseType or undefined marker
+    if (conditionMet === false) {
+      // Return falseType if available, otherwise return a SFINAE-failure marker
+      const result = context.falseType ?? { name: '__sfinae_failure__', isSpecial: true };
+      this.cache.set(cacheKey, result);
+      return result;
+    }
+
+    // When condition is explicitly true, return trueType
+    if (conditionMet === true) {
+      this.cache.set(cacheKey, context.trueType);
+      return context.trueType;
+    }
+
+    // Cannot determine statically - return trueType optimistically
+    // This is the safe default for SFINAE: assume the condition holds
+    this.cache.set(cacheKey, context.trueType);
+    return context.trueType;
+  }
+
+  /**
+   * Check if condition contains nested enable_if pattern.
+   */
+  private isNestedEnableIf(condition: TypeInfo): boolean {
+    const name = condition.name;
+    // Check for nested enable_if: enable_if<enable_if<...>>
+    const nestedMatch = name.match(/enable_if\s*<\s*.*enable_if\s*</);
+    // Check for conditional_t with enable_if condition
+    const conditionalMatch = name.match(/conditional_t\s*<\s*.*enable_if/);
+    return !!(nestedMatch || conditionalMatch);
+  }
+
+  /**
+   * Resolve nested enable_if pattern.
+   * Handles: std::enable_if<std::enable_if<C1, T>::type::value, U>
+   * And: std::conditional_t<std::enable_if<C, T>::value, A, B>
+   */
+  private resolveNestedEnableIf(context: SFINAEContext, depth: number): TypeInfo {
+    if (depth > this.maxRecursionDepth) {
+      return context.trueType;
+    }
+
+    const name = context.condition.name;
+
+    // Handle conditional_t with enable_if condition
+    const conditionalMatch = name.match(/conditional_t\s*<\s*(.+?)\s*,\s*(\w+)\s*,\s*(\w+)\s*>/);
+    if (conditionalMatch) {
+      const innerCondition = conditionalMatch[1];
+      const trueBranch = conditionalMatch[2];
+      const falseBranch = conditionalMatch[3];
+
+      // Check if inner condition has enable_if
+      if (innerCondition.includes('enable_if')) {
+        // Recursively resolve the enable_if
+        const innerResult = this.evaluateCondition({ name: innerCondition }, depth + 1);
+        if (innerResult === true) {
+          return { name: trueBranch };
+        } else if (innerResult === false) {
+          return { name: falseBranch };
+        }
+      }
+    }
+
+    // Handle nested enable_if: enable_if<enable_if<C, T>::type::value, U>
+    const nestedMatch = name.match(/enable_if\s*<\s*(.+?)\s*,\s*(\w+)\s*>/);
+    if (nestedMatch) {
+      const innerCondition = nestedMatch[1];
+      const outerType = nestedMatch[2];
+
+      // Check if inner condition is another enable_if
+      if (innerCondition.includes('enable_if')) {
+        // Parse inner enable_if
+        const innerMatch = innerCondition.match(/enable_if\s*<\s*(.+?)\s*,\s*(\w+)\s*>::value/);
+        if (innerMatch) {
+          const actualCondition = innerMatch[1];
+          const truthyValue = innerMatch[2];
+
+          // If truthyValue is std::true_type, the outer enable_if depends on actualCondition
+          if (truthyValue === 'std::true_type' || truthyValue === 'true_type') {
+            const innerResult = this.evaluateCondition({ name: actualCondition }, depth + 1);
+            if (innerResult === true) {
+              // Inner enable_if succeeds, now check outer
+              return { name: outerType };
+            } else if (innerResult === false) {
+              // Inner enable_if fails, SFINAE failure
+              return context.falseType ?? { name: '__sfinae_failure__', isSpecial: true };
+            }
+          }
+        }
+      }
+    }
+
+    // Default: evaluate the outer condition normally
+    const result = this.evaluateCondition(context.condition, depth + 1);
+    return result === false
+      ? (context.falseType ?? { name: '__sfinae_failure__', isSpecial: true })
+      : context.trueType;
   }
 
   /**
    * Evaluate a condition (type trait or expression) to a boolean.
    * Returns null if the condition cannot be statically determined.
+   *
+   * Supports:
+   * - Simple boolean values (true, false, true_type, false_type)
+   * - Type traits (std::is_integral<T>::value, etc.)
+   * - sizeof comparisons (sizeof(T) == N, sizeof(T) > N, etc.)
+   * - Logical operators (&& and ||)
+   * - Negation (!)
+   * - Parenthesized expressions
+   * - Nested conditions
    */
-  private evaluateCondition(condition: TypeInfo): boolean | null {
+  private evaluateCondition(condition: TypeInfo, depth: number = 0): boolean | null {
+    // Prevent infinite recursion
+    if (depth > this.maxRecursionDepth) {
+      return null;
+    }
+
     // If the TypeInfo already has a boolean value, use it
     if (condition.isBool && condition.boolValue !== undefined) {
       return condition.boolValue;
@@ -900,6 +1306,21 @@ export class TemplateInferenceEngine {
     }
     if (name === 'false' || name === 'std::false_type' || name === 'false_type') {
       return false;
+    }
+
+    // Handle logical AND (&&) - split on && and evaluate all parts
+    if (this.containsLogicalAnd(name)) {
+      return this.evaluateLogicalAnd(name, depth);
+    }
+
+    // Handle logical OR (||) - split on || and evaluate all parts
+    if (this.containsLogicalOr(name)) {
+      return this.evaluateLogicalOr(name, depth);
+    }
+
+    // Handle negation (!)
+    if (name.startsWith('!')) {
+      return this.evaluateLogicalNot(name, depth);
     }
 
     // Check for type trait patterns in the name
@@ -922,8 +1343,154 @@ export class TemplateInferenceEngine {
       return this.compareValues(sizeExpr, op, value);
     }
 
+    // Handle more complex sizeof expressions like sizeof(T) == sizeof(U)
+    const sizeofCompareMatch = name.match(
+      /sizeof\s*\(\s*(\w+)\s*\)\s*(==|!=|>=|<=|>|<)\s*sizeof\s*\(\s*(\w+)\s*\)/,
+    );
+    if (sizeofCompareMatch) {
+      const size1 = this.evaluateSizeof(sizeofCompareMatch[1]);
+      const op = sizeofCompareMatch[2];
+      const size2 = this.evaluateSizeof(sizeofCompareMatch[3]);
+      return this.compareValues(size1, op, size2);
+    }
+
+    // Handle parentheses - extract inner expression
+    const parenMatch = name.match(/\(([^()]+)\)/);
+    if (parenMatch && parenMatch[1] !== name) {
+      return this.evaluateCondition({ name: parenMatch[1].trim() }, depth + 1);
+    }
+
     // Cannot determine statically
     return null;
+  }
+
+  /**
+   * Check if expression contains logical AND operator (not nested).
+   */
+  private containsLogicalAnd(expr: string): boolean {
+    // Simple check - splitLogicalExpression handles nesting properly
+    return expr.includes('&&');
+  }
+
+  /**
+   * Check if expression contains logical OR operator (not nested).
+   */
+  private containsLogicalOr(expr: string): boolean {
+    // Simple check - splitLogicalExpression handles nesting properly
+    return expr.includes('||');
+  }
+
+  /**
+   * Evaluate logical AND expression (condition1 && condition2 && ...)
+   * Returns true only if ALL conditions are true.
+   * Returns false if ANY condition is false.
+   * Returns null if any condition cannot be determined.
+   */
+  private evaluateLogicalAnd(expr: string, depth: number): boolean | null {
+    // Split on && while respecting nesting (parentheses, angle brackets)
+    const parts = this.splitLogicalExpression(expr, '&&');
+
+    let hasNull = false;
+    for (const part of parts) {
+      const result = this.evaluateCondition({ name: part.trim() }, depth + 1);
+      if (result === false) {
+        // Short-circuit: any false makes the whole AND false
+        return false;
+      }
+      if (result === null) {
+        hasNull = true;
+      }
+    }
+
+    // If all parts are true, return true
+    // If any part is null (undetermined), return null
+    return hasNull ? null : true;
+  }
+
+  /**
+   * Evaluate logical OR expression (condition1 || condition2 || ...)
+   * Returns true if ANY condition is true.
+   * Returns false only if ALL conditions are false.
+   * Returns null if no condition is true and some cannot be determined.
+   */
+  private evaluateLogicalOr(expr: string, depth: number): boolean | null {
+    // Split on || while respecting nesting
+    const parts = this.splitLogicalExpression(expr, '||');
+
+    let hasNull = false;
+    for (const part of parts) {
+      const result = this.evaluateCondition({ name: part.trim() }, depth + 1);
+      if (result === true) {
+        // Short-circuit: any true makes the whole OR true
+        return true;
+      }
+      if (result === null) {
+        hasNull = true;
+      }
+    }
+
+    // If all parts are false, return false
+    // If no part is true and some are null, return null
+    return hasNull ? null : false;
+  }
+
+  /**
+   * Evaluate logical NOT expression (!condition)
+   */
+  private evaluateLogicalNot(expr: string, depth: number): boolean | null {
+    // Remove the ! prefix
+    const inner = expr.substring(1).trim();
+
+    // Handle !! (double negation)
+    if (inner.startsWith('!')) {
+      // Double negation: !!x is equivalent to x
+      return this.evaluateCondition({ name: inner.substring(1).trim() }, depth + 1);
+    }
+
+    const result = this.evaluateCondition({ name: inner }, depth + 1);
+    if (result === null) return null;
+    return !result;
+  }
+
+  /**
+   * Split a logical expression while respecting nesting (parentheses, angle brackets).
+   * Handles cases like: (a && b) || c, std::is_same<T, U>::value && sizeof(T) > 4
+   */
+  private splitLogicalExpression(expr: string, operator: '&&' | '||'): string[] {
+    const parts: string[] = [];
+    let current = '';
+    let parenDepth = 0;
+    let angleDepth = 0;
+    let i = 0;
+
+    while (i < expr.length) {
+      const char = expr[i];
+      const twoChars = expr.substring(i, i + 2);
+
+      // Track nesting
+      if (char === '(') parenDepth++;
+      if (char === ')') parenDepth--;
+      if (char === '<') angleDepth++;
+      if (char === '>') angleDepth--;
+
+      // Only split when not nested
+      if (parenDepth === 0 && angleDepth === 0 && twoChars === operator) {
+        parts.push(current.trim());
+        current = '';
+        i += 2; // Skip the operator
+        continue;
+      }
+
+      current += char;
+      i++;
+    }
+
+    // Add the last part
+    if (current.trim()) {
+      parts.push(current.trim());
+    }
+
+    return parts;
   }
 
   /**
