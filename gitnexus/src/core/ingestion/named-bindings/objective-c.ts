@@ -116,7 +116,14 @@ function extractProtocolInheritance(node: SyntaxNode): string[] {
   return inherited;
 }
 
-/** Extract required and optional methods from a protocol body. */
+/** Extract required and optional methods from a protocol body.
+ *
+ * Tree-sitter-objc (via tree-sitter-c) structure:
+ *   [ '@protocol', identifier, qualified_protocol_interface_declaration*, '@end' ]
+ *
+ * Where qualified_protocol_interface_declaration contains:
+ *   '@required\n  - (void)method;' or '@optional\n  - (void)method;'
+ */
 function extractProtocolMethods(node: SyntaxNode): {
   requiredMethods: ObjCMethodSignature[];
   optionalMethods: ObjCMethodSignature[];
@@ -124,35 +131,68 @@ function extractProtocolMethods(node: SyntaxNode): {
   const requiredMethods: ObjCMethodSignature[] = [];
   const optionalMethods: ObjCMethodSignature[] = [];
 
-  // Find the protocol body
+  // Find the protocol body (some tree-sitter versions)
   const protocolBody = node.children.find((c) => c.type === 'protocol_body');
-  const searchNode = protocolBody ?? node;
 
-  let currentSection: 'required' | 'optional' = 'required'; // Default to required
+  // Protocol body with @required/@optional markers (some versions)
+  if (protocolBody) {
+    let currentSection: 'required' | 'optional' = 'required'; // Default to required
 
-  // Walk through all children, tracking @required/@optional sections
-  for (const child of searchNode.children) {
-    const text = child.text.trim();
+    for (const child of protocolBody.children) {
+      const text = child.text.trim();
 
-    // Check for section markers
-    if (text === '@required') {
-      currentSection = 'required';
-      continue;
+      if (text === '@required') {
+        currentSection = 'required';
+        continue;
+      }
+      if (text === '@optional') {
+        currentSection = 'optional';
+        continue;
+      }
+
+      if (child.type === 'method_declaration') {
+        const method = extractMethodSignature(child);
+        if (method) {
+          if (currentSection === 'required') {
+            requiredMethods.push(method);
+          } else {
+            optionalMethods.push(method);
+          }
+        }
+      }
     }
-    if (text === '@optional') {
-      currentSection = 'optional';
-      continue;
+    return { requiredMethods, optionalMethods };
+  }
+
+  // tree-sitter-c style: qualified_protocol_interface_declaration nodes
+  // Each contains @required or @optional followed by methods
+  for (const child of node.children) {
+    if (child.type === 'qualified_protocol_interface_declaration') {
+      const text = child.text.trim();
+      const isOptional = text.startsWith('@optional');
+      const isRequired = text.startsWith('@required');
+
+      // Find method declarations within this section
+      for (const innerChild of child.children) {
+        if (innerChild.type === 'method_declaration') {
+          const method = extractMethodSignature(innerChild);
+          if (method) {
+            if (isOptional) {
+              optionalMethods.push(method);
+            } else {
+              // Default to required for @required or unknown
+              requiredMethods.push(method);
+            }
+          }
+        }
+      }
     }
 
-    // Extract method declarations
+    // Also handle direct method_declaration children (protocol without @required/@optional)
     if (child.type === 'method_declaration') {
       const method = extractMethodSignature(child);
       if (method) {
-        if (currentSection === 'required') {
-          requiredMethods.push(method);
-        } else {
-          optionalMethods.push(method);
-        }
+        requiredMethods.push(method); // Default to required
       }
     }
   }
@@ -208,10 +248,17 @@ function extractCategoryBinding(node: SyntaxNode): ObjCCategoryBinding | undefin
   };
 }
 
-/** Extract class name and category name from @interface ClassName (CategoryName). */
+/** Extract class name and category name from @interface ClassName (CategoryName).
+ *
+ * Tree-sitter-objc can represent categories in two ways:
+ * 1. With a 'category' child node (some versions)
+ * 2. As a parenthesized pattern: @interface ClassName ( CategoryName )
+ *    where the category name is a second identifier after '('
+ */
 function extractCategoryNames(node: SyntaxNode): { className: string; categoryName: string } {
   let className = '';
   let categoryName = '';
+  let seenOpenParen = false;
 
   for (const child of node.children) {
     // First identifier is the class name
@@ -220,7 +267,7 @@ function extractCategoryNames(node: SyntaxNode): { className: string; categoryNa
       continue;
     }
 
-    // Category is in a 'category' node or parenthesized identifier
+    // Category is in a 'category' child node (some tree-sitter-objc versions)
     if (child.type === 'category') {
       for (const catChild of child.children) {
         if (catChild.type === 'identifier') {
@@ -228,6 +275,24 @@ function extractCategoryNames(node: SyntaxNode): { className: string; categoryNa
           break;
         }
       }
+      continue;
+    }
+
+    // Handle parenthesized pattern: "(" followed by identifier followed by ")"
+    // This is the pattern used by tree-sitter-c when parsing ObjC
+    if (child.text === '(') {
+      seenOpenParen = true;
+      continue;
+    }
+
+    if (child.text === ')') {
+      seenOpenParen = false;
+      continue;
+    }
+
+    // If we're inside parentheses and see an identifier, it's the category name
+    if (seenOpenParen && child.type === 'identifier' && !categoryName) {
+      categoryName = child.text.trim();
     }
   }
 
@@ -310,15 +375,21 @@ function detectClassMethod(node: SyntaxNode): boolean {
   return false; // Default to instance method
 }
 
-/** Extract return type from method_type node. */
+/** Extract return type from method_type node.
+ *  The method_type can be:
+ *  - `(BOOL)` - just the type in parentheses (tree-sitter-c style)
+ *  - `- (BOOL)` - with leading minus/plus (some tree-sitter-objc versions)
+ */
 function extractMethodReturnType(node: SyntaxNode): TypeInfo {
   for (const child of node.children) {
     if (child.type === 'method_type') {
       const text = child.text.trim();
       // Strip leading +/- and parentheses: "- (NSString *)" -> "NSString *"
+      // Also handle just "(BOOL)" without leading +/-
       const stripped = text
-        .replace(/^[+\-]\s*\(/, '')
-        .replace(/\)$/, '')
+        .replace(/^[+\-]\s*/, '') // Strip leading +/- and whitespace
+        .replace(/^\(/, '') // Strip leading (
+        .replace(/\)$/, '') // Strip trailing )
         .trim();
       return parseTypeInfo(stripped);
     }
@@ -338,88 +409,100 @@ function parseTypeInfo(typeText: string): TypeInfo {
   return { name: name || 'id', isPointer, isNullable };
 }
 
-/** Extract method selector and parameters from method declaration. */
+/** Extract method selector and parameters from method declaration.
+ *
+ * Tree-sitter-objc (via tree-sitter-c) structure for multi-arg methods:
+ *   [ '-', method_type, identifier, method_parameter, identifier, method_parameter, ';' ]
+ *
+ * Where method_parameter looks like ':(NSInteger)start' containing the colon and param info.
+ */
 function extractMethodSelectorAndParams(node: SyntaxNode): {
   selector: string;
   parameters: Array<{ name: string; type: TypeInfo }>;
 } {
   const parts: string[] = [];
   const parameters: Array<{ name: string; type: TypeInfo }> = [];
+  let hasParamAfter = false;
 
   // Walk through children to build selector pattern
-  for (const child of node.children) {
-    // Skip method_type
-    if (child.type === 'method_type') continue;
+  for (let i = 0; i < node.children.length; i++) {
+    const child = node.children[i];
 
-    // Identifier can be selector keyword or parameter name
+    // Skip method_type and literal tokens
+    if (
+      child.type === 'method_type' ||
+      child.text === '-' ||
+      child.text === '+' ||
+      child.text === ';'
+    ) {
+      continue;
+    }
+
+    // Identifier can be selector keyword
     if (child.type === 'identifier') {
-      // First identifier after method_type is typically the first selector keyword
-      // or the full selector for unary methods like - (void)dealloc
-      if (parts.length === 0) {
-        parts.push(child.text.trim());
+      const text = child.text.trim();
+      // Check if there's a method_parameter following this identifier
+      const nextChild = node.children[i + 1];
+      if (nextChild?.type === 'method_parameter' || nextChild?.type === 'parameter_declaration') {
+        parts.push(text + ':');
+        hasParamAfter = true;
+      } else {
+        parts.push(text);
       }
       continue;
     }
 
-    // Parameter declaration contains selector keyword and parameter info
-    if (child.type === 'parameter_declaration') {
-      const { keyword, paramName, paramType } = extractParameterInfo(child);
-      if (keyword) {
-        parts.push(keyword);
+    // method_parameter contains the colon and parameter info
+    if (child.type === 'method_parameter' || child.type === 'parameter_declaration') {
+      const paramInfo = extractMethodParameterInfo(child);
+      if (paramInfo.paramName && paramInfo.paramType) {
+        parameters.push({ name: paramInfo.paramName, type: paramInfo.paramType });
       }
-      if (paramName && paramType) {
-        parameters.push({ name: paramName, type: paramType });
-      }
+      continue;
     }
   }
 
-  // Build selector: concatenate parts with colons
-  // For multi-arg: tableView:numberOfRowsInSection:
-  // For unary: dealloc
-  const hasParams = parameters.length > 0;
-  const selector = hasParams ? parts.map((p) => p + ':').join('') : parts.join('');
+  // Build selector: concatenate parts
+  const selector = parts.join('');
 
   return { selector, parameters };
 }
 
-/** Extract parameter info from parameter_declaration node. */
-function extractParameterInfo(node: SyntaxNode): {
-  keyword: string;
+/** Extract parameter info from method_parameter or parameter_declaration node. */
+function extractMethodParameterInfo(node: SyntaxNode): {
   paramName: string;
   paramType: TypeInfo;
 } {
-  let keyword = '';
   let paramName = '';
   let paramType: TypeInfo = { name: 'id', isPointer: true };
 
-  for (const child of node.children) {
-    // Type descriptor contains the parameter type
-    if (child.type === 'type_descriptor' || child.type === 'type_name') {
-      const text = child.text.trim();
-      paramType = parseTypeInfo(text);
-      continue;
-    }
+  const text = node.text.trim();
+  // method_parameter looks like ':(NSInteger)start' or ':(NSString *)name'
+  // Strip leading colon
+  const content = text.replace(/^:/, '').trim();
 
-    // Method type within parameter (alternative structure)
-    if (child.type === 'method_type') {
-      const text = child.text.trim();
-      // Strip parentheses to get type
-      const stripped = text.replace(/[()]/g, '').trim();
-      paramType = parseTypeInfo(stripped);
-      continue;
-    }
-
-    // Identifier could be keyword or param name
-    if (child.type === 'identifier') {
-      if (!keyword) {
-        keyword = child.text.trim();
-      } else {
-        paramName = child.text.trim();
+  // Try to parse type and name from content
+  // Pattern: (Type)name or (Type *)name
+  const match = content.match(/^\(([^)]+)\)\s*(\w+)$/);
+  if (match) {
+    const typeText = match[1].trim();
+    paramName = match[2];
+    paramType = parseTypeInfo(typeText);
+  } else {
+    // Fallback: look for identifier children
+    for (const child of node.children) {
+      if (child.type === 'type_descriptor' || child.type === 'type_name') {
+        paramType = parseTypeInfo(child.text.trim());
+      }
+      if (child.type === 'identifier') {
+        if (!paramName) {
+          paramName = child.text.trim();
+        }
       }
     }
   }
 
-  return { keyword, paramName, paramType };
+  return { paramName, paramType };
 }
 
 // ============================================================================
