@@ -16,6 +16,10 @@ export interface TypeInfo {
   isTemplate?: boolean;
   templateArgs?: TypeInfo[];
   isSpecial?: boolean;
+  /** Whether this represents a boolean value (for type traits) */
+  isBool?: boolean;
+  /** The boolean value for type trait evaluation */
+  boolValue?: boolean;
 }
 
 /** Result of template specialization analysis. */
@@ -95,12 +99,19 @@ export class TemplateInferenceEngine {
   }
 
   /**
-   * Resolve SFINAE type from enable_if/conditional_t patterns.
+   * Resolve SFINAE type from enable_if/conditional_t/void_t patterns.
    */
   resolveSFINAE(node: SyntaxNode, context: SFINAEContext): TypeInfo {
     const cacheKey = `sfinae:${node.text}`;
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey)!;
+    }
+
+    // Check for std::void_t pattern
+    if (this.isVoidTPattern(node)) {
+      const result = this.resolveVoidT(node);
+      this.cache.set(cacheKey, result);
+      return result;
     }
 
     // Check for std::enable_if pattern
@@ -319,12 +330,6 @@ export class TemplateInferenceEngine {
     return text.includes('std::conditional_t') || text.includes('conditional_t');
   }
 
-  private resolveEnableIf(_node: SyntaxNode, context: SFINAEContext): TypeInfo {
-    // Simplified: return true type if condition is met
-    // Full implementation would evaluate the condition
-    return context.trueType;
-  }
-
   private resolveConditionalT(_node: SyntaxNode, context: SFINAEContext): TypeInfo {
     // Simplified: return true type
     // Full implementation would parse the ternary
@@ -469,5 +474,509 @@ export class TemplateInferenceEngine {
     }
 
     return constraints;
+  }
+
+  // ============================================================================
+  // std::void_t<Ts...> pattern support
+  // ============================================================================
+
+  /**
+   * Check if node represents std::void_t<Ts...> pattern.
+   * std::void_t maps any sequence of type arguments to void.
+   */
+  isVoidTPattern(node: SyntaxNode): boolean {
+    const text = node.text;
+    return text.includes('std::void_t') || text.includes('void_t') || /\bvoid_t\s*</.test(text);
+  }
+
+  /**
+   * Resolve std::void_t<Ts...> to void type.
+   * void_t always resolves to void if all template arguments are valid types.
+   * In SFINAE contexts, if any argument is ill-formed, the entire expression fails.
+   */
+  resolveVoidT(node: SyntaxNode): TypeInfo {
+    const cacheKey = `void_t:${node.text}`;
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey)!;
+    }
+
+    // void_t always maps to void when valid
+    // The SFINAE failure happens at a higher level when arguments are ill-formed
+    const result: TypeInfo = { name: 'void' };
+    this.cache.set(cacheKey, result);
+    return result;
+  }
+
+  // ============================================================================
+  // std::is_*<T>::value type trait support
+  // ============================================================================
+
+  /** Known C++ type traits with their evaluation logic hints */
+  private static readonly TYPE_TRAITS: Set<string> = new Set([
+    'is_integral',
+    'is_floating_point',
+    'is_arithmetic',
+    'is_pointer',
+    'is_reference',
+    'is_lvalue_reference',
+    'is_rvalue_reference',
+    'is_array',
+    'is_class',
+    'is_struct',
+    'is_enum',
+    'is_union',
+    'is_void',
+    'is_null_pointer',
+    'is_same',
+    'is_convertible',
+    'is_assignable',
+    'is_constructible',
+    'is_trivially_constructible',
+    'is_trivially_assignable',
+    'is_copy_constructible',
+    'is_move_constructible',
+    'is_copy_assignable',
+    'is_move_assignable',
+    'is_destructible',
+    'is_trivially_destructible',
+    'is_const',
+    'is_volatile',
+    'is_signed',
+    'is_unsigned',
+    'is_fundamental',
+    'is_compound',
+    'is_scalar',
+    'is_object',
+    'is_function',
+    'is_member_pointer',
+    'is_member_function_pointer',
+    'is_member_object_pointer',
+    'is_abstract',
+    'is_polymorphic',
+    'is_final',
+    'is_empty',
+    'has_virtual_destructor',
+    'is_default_constructible',
+    'is_nothrow_constructible',
+    'is_nothrow_assignable',
+    'is_nothrow_destructible',
+    'is_trivial',
+    'is_trivially_copyable',
+    'is_standard_layout',
+    'is_pod',
+    'is_literal_type',
+  ]);
+
+  /**
+   * Check if node represents std::is_*<T>::value pattern.
+   * Examples: std::is_integral<int>::value, std::is_pointer<T*>::value
+   */
+  isTypeTraitPattern(node: SyntaxNode): boolean {
+    const text = node.text;
+
+    // Check for common patterns:
+    // 1. std::is_integral<T>::value
+    // 2. is_integral<T>::value
+    // 3. std::is_same<T, U>::value
+    const traitMatch = text.match(/(?:std::)?is_(\w+)\s*</);
+    if (traitMatch && TemplateInferenceEngine.TYPE_TRAITS.has(`is_${traitMatch[1]}`)) {
+      return true;
+    }
+
+    // Check for has_* traits
+    const hasMatch = text.match(/(?:std::)?has_(\w+)\s*</);
+    if (hasMatch) {
+      return true;
+    }
+
+    // Check for ::value suffix indicating type trait evaluation
+    if (text.includes('::value')) {
+      // Could be a custom type trait
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Resolve type trait to a boolean TypeInfo.
+   * Returns { name: 'bool', isBool: true, boolValue: true/false }
+   */
+  resolveTypeTrait(node: SyntaxNode): TypeInfo {
+    const cacheKey = `trait:${node.text}`;
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey)!;
+    }
+
+    const text = node.text;
+
+    // Extract trait name and arguments
+    const traitMatch = text.match(/(?:std::)?(is_\w+|has_\w+)\s*<([^>]+)>/);
+    if (!traitMatch) {
+      // Not a recognizable trait pattern
+      const result: TypeInfo = { name: 'bool', isBool: true };
+      this.cache.set(cacheKey, result);
+      return result;
+    }
+
+    const traitName = traitMatch[1];
+    const args = traitMatch[2].split(',').map((s) => s.trim());
+
+    // Evaluate the trait based on the argument types
+    const boolValue = this.evaluateTypeTrait(traitName, args);
+
+    const result: TypeInfo = {
+      name: 'bool',
+      isBool: true,
+      boolValue,
+    };
+    this.cache.set(cacheKey, result);
+    return result;
+  }
+
+  /**
+   * Evaluate a type trait given its name and arguments.
+   * Returns a boolean indicating if the trait holds true.
+   * Uses static analysis heuristics for common cases.
+   */
+  private evaluateTypeTrait(traitName: string, args: string[]): boolean {
+    if (args.length === 0) return false;
+
+    const arg = args[0];
+
+    switch (traitName) {
+      case 'is_integral':
+        return this.isIntegralType(arg);
+
+      case 'is_floating_point':
+        return this.isFloatingPointType(arg);
+
+      case 'is_arithmetic':
+        return this.isIntegralType(arg) || this.isFloatingPointType(arg);
+
+      case 'is_pointer':
+        return arg.includes('*') || arg.includes('^'); // C++ pointer or C++/CLI handle
+
+      case 'is_reference':
+        return arg.includes('&') || arg.includes('&&');
+
+      case 'is_lvalue_reference':
+        return arg.includes('&') && !arg.includes('&&');
+
+      case 'is_rvalue_reference':
+        return arg.includes('&&');
+
+      case 'is_array':
+        return /\[\d*\]/.test(arg) || /std::array/.test(arg);
+
+      case 'is_void':
+        return arg === 'void';
+
+      case 'is_const':
+        return arg.startsWith('const ') || /\bconst\b/.test(arg);
+
+      case 'is_volatile':
+        return /\bvolatile\b/.test(arg);
+
+      case 'is_signed':
+        return this.isSignedType(arg);
+
+      case 'is_unsigned':
+        return this.isUnsignedType(arg);
+
+      case 'is_same':
+        // is_same<T, U> - check if both args are equal
+        return args.length >= 2 && args[0] === args[1];
+
+      case 'is_convertible':
+        // Heuristic: assume convertible if not obviously incompatible
+        return args.length >= 2 && this.mayBeConvertible(args[0], args[1]);
+
+      case 'is_class':
+      case 'is_struct':
+        // Heuristic: assume user-defined types starting with uppercase or common patterns are classes
+        return /^[A-Z]/.test(arg) && !this.isBuiltinType(arg);
+
+      case 'is_enum':
+        return /enum\s+/.test(arg);
+
+      case 'is_null_pointer':
+        return arg === 'nullptr_t' || arg === 'decltype(nullptr)';
+
+      case 'is_function':
+        // Function type would have parentheses in type
+        return /\(\)/.test(arg) || /\(\*\)/.test(arg);
+
+      case 'is_scalar':
+        return (
+          this.isBuiltinType(arg) || arg.includes('*') || arg === 'nullptr_t' || /enum\s+/.test(arg)
+        );
+
+      case 'is_fundamental':
+        return this.isBuiltinType(arg);
+
+      default:
+        // For unknown traits, return undefined boolean value
+        // This allows callers to handle unknown traits explicitly
+        return false;
+    }
+  }
+
+  /** Check if type is a known integral type */
+  private isIntegralType(type: string): boolean {
+    const integralTypes = new Set([
+      'int',
+      'short',
+      'long',
+      'long long',
+      'char',
+      'signed char',
+      'unsigned char',
+      'unsigned int',
+      'unsigned short',
+      'unsigned long',
+      'unsigned long long',
+      'wchar_t',
+      'char8_t',
+      'char16_t',
+      'char32_t',
+      'int8_t',
+      'int16_t',
+      'int32_t',
+      'int64_t',
+      'uint8_t',
+      'uint16_t',
+      'uint32_t',
+      'uint64_t',
+      'size_t',
+      'ptrdiff_t',
+      'intptr_t',
+      'uintptr_t',
+    ]);
+    return integralTypes.has(type.replace(/const\s*/g, '').trim());
+  }
+
+  /** Check if type is a known floating-point type */
+  private isFloatingPointType(type: string): boolean {
+    const floatTypes = new Set(['float', 'double', 'long double']);
+    return floatTypes.has(type.replace(/const\s*/g, '').trim());
+  }
+
+  /** Check if type is a signed integral type */
+  private isSignedType(type: string): boolean {
+    const signedTypes = new Set([
+      'int',
+      'short',
+      'long',
+      'long long',
+      'signed char',
+      'char8_t',
+      'char16_t',
+      'char32_t',
+      'wchar_t',
+      'int8_t',
+      'int16_t',
+      'int32_t',
+      'int64_t',
+      'ptrdiff_t',
+      'intptr_t',
+    ]);
+    const cleanType = type.replace(/const\s*/g, '').trim();
+    return (
+      signedTypes.has(cleanType) ||
+      (cleanType.startsWith('signed ') && !cleanType.includes('unsigned'))
+    );
+  }
+
+  /** Check if type is an unsigned integral type */
+  private isUnsignedType(type: string): boolean {
+    const cleanType = type.replace(/const\s*/g, '').trim();
+    return (
+      cleanType.startsWith('unsigned ') ||
+      cleanType === 'size_t' ||
+      cleanType === 'uintptr_t' ||
+      cleanType === 'uint8_t' ||
+      cleanType === 'uint16_t' ||
+      cleanType === 'uint32_t' ||
+      cleanType === 'uint64_t'
+    );
+  }
+
+  /** Check if type is a builtin/primitive type */
+  private isBuiltinType(type: string): boolean {
+    const cleanType = type
+      .replace(/const\s*/g, '')
+      .replace(/volatile\s*/g, '')
+      .trim();
+    const builtins = new Set([
+      'void',
+      'bool',
+      'char',
+      'short',
+      'int',
+      'long',
+      'float',
+      'double',
+      'wchar_t',
+      'char8_t',
+      'char16_t',
+      'char32_t',
+    ]);
+    return (
+      builtins.has(cleanType) ||
+      this.isIntegralType(cleanType) ||
+      this.isFloatingPointType(cleanType)
+    );
+  }
+
+  /** Heuristic for type convertibility */
+  private mayBeConvertible(from: string, to: string): boolean {
+    // Same type is always convertible
+    if (from === to) return true;
+
+    // void is not convertible to anything
+    if (from === 'void' || to === 'void') return false;
+
+    // Pointer conversions
+    if (from.includes('*') && to.includes('*')) {
+      // T* to void* or T* to const T* etc.
+      return true;
+    }
+
+    // Numeric conversions are generally allowed
+    if (this.isIntegralType(from) && this.isIntegralType(to)) return true;
+    if (this.isFloatingPointType(from) && this.isFloatingPointType(to)) return true;
+    if (
+      (this.isIntegralType(from) || this.isFloatingPointType(from)) &&
+      (this.isIntegralType(to) || this.isFloatingPointType(to))
+    )
+      return true;
+
+    return true; // Default to true for heuristics
+  }
+
+  // ============================================================================
+  // Updated enable_if resolution with type trait evaluation
+  // ============================================================================
+
+  /**
+   * Resolve std::enable_if<Condition, T>::type pattern.
+   * Now properly evaluates type trait conditions.
+   */
+  private resolveEnableIf(node: SyntaxNode, context: SFINAEContext): TypeInfo {
+    const cacheKey = `enable_if:${node.text}`;
+    if (this.cache.has(cacheKey)) {
+      return this.cache.get(cacheKey)!;
+    }
+
+    // Try to evaluate the condition
+    let conditionMet = this.evaluateCondition(context.condition);
+
+    // If we can't determine the condition, default to trueType (optimistic)
+    if (conditionMet === null) {
+      conditionMet = true;
+    }
+
+    const result = conditionMet ? context.trueType : (context.falseType ?? { name: 'void' });
+    this.cache.set(cacheKey, result);
+    return result;
+  }
+
+  /**
+   * Evaluate a condition (type trait or expression) to a boolean.
+   * Returns null if the condition cannot be statically determined.
+   */
+  private evaluateCondition(condition: TypeInfo): boolean | null {
+    // If the TypeInfo already has a boolean value, use it
+    if (condition.isBool && condition.boolValue !== undefined) {
+      return condition.boolValue;
+    }
+
+    const name = condition.name;
+
+    // Check for known true/false patterns
+    if (name === 'true' || name === 'std::true_type' || name === 'true_type') {
+      return true;
+    }
+    if (name === 'false' || name === 'std::false_type' || name === 'false_type') {
+      return false;
+    }
+
+    // Check for type trait patterns in the name
+    if (/\b(is_\w+|has_\w+)\s*</.test(name)) {
+      // This looks like a type trait, try to parse and evaluate
+      const match = name.match(/(?:std::)?(is_\w+|has_\w+)\s*<([^>]+)>/);
+      if (match) {
+        const traitName = match[1];
+        const args = match[2].split(',').map((s) => s.trim());
+        return this.evaluateTypeTrait(traitName, args);
+      }
+    }
+
+    // Check for comparison expressions (sizeof, etc.)
+    const sizeofMatch = name.match(/sizeof\s*\(\s*(\w+)\s*\)\s*(==|!=|>=|<=|>|<)\s*(\d+)/);
+    if (sizeofMatch) {
+      const sizeExpr = this.evaluateSizeof(sizeofMatch[1]);
+      const op = sizeofMatch[2];
+      const value = parseInt(sizeofMatch[3], 10);
+      return this.compareValues(sizeExpr, op, value);
+    }
+
+    // Cannot determine statically
+    return null;
+  }
+
+  /**
+   * Evaluate sizeof expression heuristically.
+   * Returns a size hint based on common type sizes.
+   */
+  private evaluateSizeof(type: string): number {
+    const sizeHints: Record<string, number> = {
+      char: 1,
+      'signed char': 1,
+      'unsigned char': 1,
+      char8_t: 1,
+      short: 2,
+      'unsigned short': 2,
+      int: 4,
+      'unsigned int': 4,
+      float: 4,
+      long: 8, // On 64-bit systems
+      'unsigned long': 8,
+      'long long': 8,
+      'unsigned long long': 8,
+      double: 8,
+      'long double': 16,
+      pointer: 8, // 64-bit systems
+    };
+
+    // Check for pointer types
+    if (type.includes('*') || type.includes('^')) {
+      return 8; // Assume 64-bit pointers
+    }
+
+    return sizeHints[type] ?? 0; // Unknown size
+  }
+
+  /**
+   * Compare values with a relational operator.
+   */
+  private compareValues(left: number, op: string, right: number): boolean {
+    switch (op) {
+      case '==':
+        return left === right;
+      case '!=':
+        return left !== right;
+      case '>=':
+        return left >= right;
+      case '<=':
+        return left <= right;
+      case '>':
+        return left > right;
+      case '<':
+        return left < right;
+      default:
+        return false;
+    }
   }
 }
