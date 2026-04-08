@@ -75,12 +75,14 @@ function extractProtocolBinding(node: SyntaxNode): ObjCProtocolBinding | undefin
 
   const { requiredMethods, optionalMethods } = extractProtocolMethods(node);
   const properties = extractProtocolProperties(node);
+  const inherits = extractProtocolInheritance(node);
 
   return {
     type: 'objc-protocol',
     local: protocolName,
     exported: protocolName,
     protocolName,
+    inherits: inherits.length > 0 ? inherits : undefined,
     requiredMethods,
     optionalMethods,
     properties,

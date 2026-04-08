@@ -287,6 +287,44 @@ describe.skipIf(!objcAvailable)('extractObjCNamedBindings - Protocol extraction'
     expect(binding.requiredMethods[0].selector).toBe('numberOfItems');
     expect(binding.optionalMethods[0].selector).toBe('didSelectItemAtIndex:');
   });
+
+  it('extracts protocol with inheritance', () => {
+    const code = `
+      @protocol MyProtocol <NSObject, NSCopying>
+      - (void)doSomething;
+      @end
+    `;
+    const node = parseAndFindProtocol(parser, code);
+    if (!node) return;
+
+    const result = extractObjCNamedBindings(node);
+    expect(result).toBeDefined();
+
+    const binding = result![0] as ObjCProtocolBinding;
+    expect(binding.type).toBe('objc-protocol');
+    expect(binding.protocolName).toBe('MyProtocol');
+    expect(binding.inherits).toBeDefined();
+    expect(binding.inherits).toContain('NSObject');
+    expect(binding.inherits).toContain('NSCopying');
+  });
+
+  it('extracts protocol with properties', () => {
+    const code = `
+      @protocol NamedObject
+      @property (nonatomic, strong) NSString *name;
+      @property (readonly) NSInteger age;
+      @end
+    `;
+    const node = parseAndFindProtocol(parser, code);
+    if (!node) return;
+
+    const result = extractObjCNamedBindings(node);
+    expect(result).toBeDefined();
+
+    const binding = result![0] as ObjCProtocolBinding;
+    expect(binding.type).toBe('objc-protocol');
+    expect(binding.properties.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 // ============================================================================

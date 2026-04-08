@@ -71,6 +71,8 @@ export interface ObjCProtocolBinding extends ObjCNamedBindingBase {
   type: 'objc-protocol';
   /** The protocol name */
   protocolName: string;
+  /** Protocols that this protocol inherits from */
+  inherits?: string[];
   /** Methods that conforming classes must implement */
   requiredMethods: ObjCMethodSignature[];
   /** Methods that conforming classes may optionally implement */
