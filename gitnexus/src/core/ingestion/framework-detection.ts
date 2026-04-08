@@ -719,6 +719,45 @@ export const FRAMEWORK_AST_PATTERNS = {
     'subscribeNext',
     'subscribeError',
   ],
+  // Third-party Objective-C frameworks
+  afnetworking: [
+    'AFHTTPSessionManager',
+    'AFURLSessionManager',
+    'AFHTTPRequestOperation',
+    'AFHTTPRequestOperationManager',
+    'AFURLRequestSerialization',
+    'AFURLResponseSerialization',
+    'AFSecurityPolicy',
+    'AFNetworkReachabilityManager',
+    'multipartFormRequest',
+    'setDownloadTaskDidFinish',
+  ],
+  masonry: [
+    'mas_makeConstraints',
+    'mas_remakeConstraints',
+    'mas_updateConstraints',
+    'make.left',
+    'make.right',
+    'make.top',
+    'make.bottom',
+    'make.width',
+    'make.height',
+    'make.center',
+    'mas_equalTo',
+    'mas_greaterThanOrEqualTo',
+    'mas_lessThanOrEqualTo',
+  ],
+  sdwebimage: [
+    'sd_setImageWithURL',
+    'sd_setBackgroundImageWithURL',
+    'SDWebImageManager',
+    'SDImageCache',
+    'SDWebImageDownloader',
+    'SDWebImagePrefetcher',
+    'sd_cancelCurrentImageLoad',
+    'sd_animatedImageWithData',
+    'SDAnimatedImage',
+  ],
 
   // Ruby patterns (class-level macros in definition text)
   rails: [
@@ -1043,6 +1082,27 @@ export const AST_FRAMEWORK_PATTERNS_BY_LANGUAGE = {
       entryPointMultiplier: 2.2,
       reason: 'rac-signal',
       patterns: FRAMEWORK_AST_PATTERNS.reactiveObjC ?? [],
+    },
+    // AFNetworking patterns
+    {
+      framework: 'afnetworking',
+      entryPointMultiplier: 2.5,
+      reason: 'afnetworking-request',
+      patterns: FRAMEWORK_AST_PATTERNS.afnetworking ?? [],
+    },
+    // Masonry Auto Layout DSL
+    {
+      framework: 'masonry',
+      entryPointMultiplier: 1.8,
+      reason: 'masonry-constraints',
+      patterns: FRAMEWORK_AST_PATTERNS.masonry ?? [],
+    },
+    // SDWebImage patterns
+    {
+      framework: 'sdwebimage',
+      entryPointMultiplier: 1.8,
+      reason: 'sdwebimage-loading',
+      patterns: FRAMEWORK_AST_PATTERNS.sdwebimage ?? [],
     },
     // Cocoa/AppKit/UIKit patterns (general, checked last)
     {

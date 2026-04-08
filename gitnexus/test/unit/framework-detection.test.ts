@@ -385,7 +385,10 @@ describe('detectFrameworkFromAST', () => {
 
 describe('C/C++ framework detection', () => {
   it('should detect Boost framework from boost:: patterns', () => {
-    const result = detectFrameworkFromAST(SupportedLanguages.CPlusPlus, 'boost::asio::io_context io;');
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.CPlusPlus,
+      'boost::asio::io_context io;',
+    );
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('boost');
     expect(result!.entryPointMultiplier).toBe(2.5);
@@ -404,7 +407,10 @@ describe('C/C++ framework detection', () => {
   });
 
   it('should detect Qt framework from Qt patterns', () => {
-    const result = detectFrameworkFromAST(SupportedLanguages.CPlusPlus, 'class MyWidget : public QWidget { Q_OBJECT };');
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.CPlusPlus,
+      'class MyWidget : public QWidget { Q_OBJECT };',
+    );
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('qt');
     expect(result!.entryPointMultiplier).toBe(2.8);
@@ -422,7 +428,10 @@ describe('C/C++ framework detection', () => {
   });
 
   it('should detect Android NDK from ANativeActivity', () => {
-    const result = detectFrameworkFromAST(SupportedLanguages.C, 'void android_main(struct ANativeActivity* activity)');
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.C,
+      'void android_main(struct ANativeActivity* activity)',
+    );
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('android-ndk');
   });
@@ -430,7 +439,10 @@ describe('C/C++ framework detection', () => {
 
 describe('Objective-C framework detection', () => {
   it('should detect CoreData framework', () => {
-    const result = detectFrameworkFromAST(SupportedLanguages.ObjectiveC, '@interface User : NSManagedObject @end');
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.ObjectiveC,
+      '@interface User : NSManagedObject @end',
+    );
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('coredata');
     expect(result!.entryPointMultiplier).toBe(2.0);
@@ -449,14 +461,20 @@ describe('Objective-C framework detection', () => {
   });
 
   it('should detect Cocoa Touch lifecycle patterns', () => {
-    const result = detectFrameworkFromAST(SupportedLanguages.ObjectiveC, '@interface MyViewController : UIViewController @end');
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.ObjectiveC,
+      '@interface MyViewController : UIViewController @end',
+    );
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('cocoa-touch');
     expect(result!.entryPointMultiplier).toBe(2.0);
   });
 
   it('should detect NSPersistentContainer for CoreData', () => {
-    const result = detectFrameworkFromAST(SupportedLanguages.ObjectiveC, 'NSPersistentContainer *container = [[NSPersistentContainer alloc] initWithName:@"Model"]');
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.ObjectiveC,
+      'NSPersistentContainer *container = [[NSPersistentContainer alloc] initWithName:@"Model"]',
+    );
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('coredata');
   });
@@ -465,6 +483,39 @@ describe('Objective-C framework detection', () => {
     const result = detectFrameworkFromAST(SupportedLanguages.ObjectiveC, 'RAC(self, username)');
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('reactiveobjc');
+  });
+
+  it('should detect AFNetworking patterns', () => {
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.ObjectiveC,
+      '@interface ApiClient : AFHTTPSessionManager',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('afnetworking');
+    expect(result!.entryPointMultiplier).toBe(2.5);
+    expect(result!.reason).toBe('afnetworking-request');
+  });
+
+  it('should detect Masonry Auto Layout DSL patterns', () => {
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.ObjectiveC,
+      '[view mas_makeConstraints:^(MASConstraintMaker *make) { make.edges.equalTo(self); }]',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('masonry');
+    expect(result!.entryPointMultiplier).toBe(1.8);
+    expect(result!.reason).toBe('masonry-constraints');
+  });
+
+  it('should detect SDWebImage patterns', () => {
+    const result = detectFrameworkFromAST(
+      SupportedLanguages.ObjectiveC,
+      '[imageView sd_setImageWithURL:url placeholderImage:placeholder]',
+    );
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('sdwebimage');
+    expect(result!.entryPointMultiplier).toBe(1.8);
+    expect(result!.reason).toBe('sdwebimage-loading');
   });
 });
 

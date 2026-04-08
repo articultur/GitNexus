@@ -106,31 +106,33 @@ export function extractObjCMethodReturnType(
 // Task 2: block type extraction
 // ============================================================================
 
-/** Information about a block parameter. */
-export interface BlockParameterInfo {
-  name: string;
-  type: TypeInfo;
-}
-
 /** Complete block type information. */
 export interface BlockTypeInfo {
   returnType: TypeInfo;
-  parameters: BlockParameterInfo[];
+  /** Parameter types (spec-compliant: TypeInfo[] without parameter names) */
+  parameters: TypeInfo[];
 }
 
 /**
- * Extract block type information from block pointer declarator or block literal.
+ * Extract block type information from block pointer type, declarator, or block literal.
  * Block syntax: returnType (^blockName)(paramTypes)
  *
  * Supports:
- * - Block pointer declarations: void (^completion)(NSData *data, NSError *error)
+ * - Block pointer types: void (^)(NSData *data, NSError *error) - type-only context (spec-required)
+ * - Block pointer declarators: void (^completion)(NSData *data, NSError *error)
  * - Block literals: ^(NSString *s){ return s.length; }
  * - Block typedefs: typedef void (^Handler)(NSURL *url)
  */
 export function extractBlockType(node: SyntaxNode): BlockTypeInfo {
+  // Handle block_pointer_type (type-only context, no variable name)
+  // This is the spec-required AST node type for block type extraction
+  if (node.type === 'block_pointer_type') {
+    return extractBlockPointerType(node);
+  }
+
   // Handle block_pointer_declarator: void (^completion)(NSData *data, NSError *error)
   if (node.type === 'block_pointer_declarator') {
-    return extractBlockPointerType(node);
+    return extractBlockPointerDeclaratorType(node);
   }
 
   // Handle block_literal: ^{ ... } or ^(params){ ... }
@@ -152,8 +154,46 @@ export function extractBlockType(node: SyntaxNode): BlockTypeInfo {
   return { returnType: { name: 'void' }, parameters: [] };
 }
 
-/** Extract type from block pointer declarator. */
+/**
+ * Extract type from block_pointer_type node (type-only context, no variable name).
+ * This handles the spec-required AST node type.
+ *
+ * Tree-sitter-objc structure for block_pointer_type:
+ *   (type_identifier) "void"
+ *   (block_pointer_type)
+ *     (^)
+ *     (parameter_list)
+ *       (parameter_declaration) ...
+ */
 function extractBlockPointerType(node: SyntaxNode): BlockTypeInfo {
+  let returnType: TypeInfo = { name: 'void' };
+
+  // block_pointer_type typically follows the return type as a sibling
+  const parent = node.parent;
+  if (parent) {
+    // Look for return type as a preceding sibling
+    for (let i = 0; i < parent.namedChildCount; i++) {
+      const child = parent.namedChild(i);
+      if (child === node) break;
+      if (child?.type === 'type_identifier' || child?.type === 'primitive_type') {
+        const typeText = child.text.trim();
+        returnType = {
+          name: typeText,
+          isPointer: typeText.includes('*'),
+        };
+      }
+    }
+  }
+
+  // Find parameter list within the block_pointer_type
+  const paramListNode = findParameterList(node);
+  const parameters = paramListNode ? extractBlockParameterTypes(paramListNode) : [];
+
+  return { returnType, parameters };
+}
+
+/** Extract type from block_pointer_declarator (has variable name). */
+function extractBlockPointerDeclaratorType(node: SyntaxNode): BlockTypeInfo {
   // Block pointer declarator structure:
   // returnType (^name)(params)
   // In tree-sitter-objc, this is typically:
@@ -192,7 +232,7 @@ function extractBlockPointerType(node: SyntaxNode): BlockTypeInfo {
 
   // Find parameter list
   const paramListNode = findParameterList(node);
-  const parameters = paramListNode ? extractBlockParameters(paramListNode) : [];
+  const parameters = paramListNode ? extractBlockParameterTypes(paramListNode) : [];
 
   return { returnType, parameters };
 }
@@ -219,7 +259,7 @@ function extractBlockLiteralType(node: SyntaxNode): BlockTypeInfo {
 
   // Find parameter list
   const paramListNode = findParameterList(node);
-  const parameters = paramListNode ? extractBlockParameters(paramListNode) : [];
+  const parameters = paramListNode ? extractBlockParameterTypes(paramListNode) : [];
 
   return { returnType, parameters };
 }
@@ -232,7 +272,7 @@ function extractBlockDeclarationType(node: SyntaxNode): BlockTypeInfo {
   );
 
   if (blockPointer) {
-    return extractBlockPointerType(blockPointer);
+    return extractBlockPointerDeclaratorType(blockPointer);
   }
 
   // Try to extract directly
@@ -246,7 +286,7 @@ function extractBlockDeclarationType(node: SyntaxNode): BlockTypeInfo {
   }
 
   const paramListNode = findParameterList(node);
-  const parameters = paramListNode ? extractBlockParameters(paramListNode) : [];
+  const parameters = paramListNode ? extractBlockParameterTypes(paramListNode) : [];
 
   return { returnType, parameters };
 }
@@ -262,7 +302,7 @@ function extractTypedefBlockType(node: SyntaxNode): BlockTypeInfo {
   );
 
   if (blockDeclarator) {
-    return extractBlockPointerType(blockDeclarator);
+    return extractBlockPointerDeclaratorType(blockDeclarator);
   }
 
   // Try to find type and parameters
@@ -276,7 +316,7 @@ function extractTypedefBlockType(node: SyntaxNode): BlockTypeInfo {
   }
 
   const paramListNode = findParameterList(node);
-  const parameters = paramListNode ? extractBlockParameters(paramListNode) : [];
+  const parameters = paramListNode ? extractBlockParameterTypes(paramListNode) : [];
 
   return { returnType, parameters };
 }
@@ -298,57 +338,39 @@ function findParameterList(node: SyntaxNode): SyntaxNode | undefined {
   return undefined;
 }
 
-/** Extract parameters from a parameter list node. */
-function extractBlockParameters(paramList: SyntaxNode): BlockParameterInfo[] {
-  const params: BlockParameterInfo[] = [];
+/**
+ * Extract parameter types from a parameter list node.
+ * Returns TypeInfo[] (spec-compliant: type info only, no parameter names).
+ */
+function extractBlockParameterTypes(paramList: SyntaxNode): TypeInfo[] {
+  const types: TypeInfo[] = [];
 
   for (const child of paramList.children) {
     if (child.type === 'parameter_declaration') {
-      const param = extractParameterInfo(child);
-      if (param) params.push(param);
+      const typeInfo = extractParameterTypeInfo(child);
+      if (typeInfo) types.push(typeInfo);
     }
   }
 
-  return params;
+  return types;
 }
 
-/** Extract parameter info from a parameter declaration node. */
-function extractParameterInfo(node: SyntaxNode): BlockParameterInfo | undefined {
+/** Extract type info from a parameter declaration node (returns only type, no name). */
+function extractParameterTypeInfo(node: SyntaxNode): TypeInfo | undefined {
   const typeNode = node.childForFieldName('type');
-  const declarator = node.childForFieldName('declarator');
 
   if (!typeNode) return undefined;
 
   // Get type name
   const typeText = typeNode.text.trim();
   const typeName = extractSimpleTypeName(typeNode) ?? typeText.replace(/\*/g, '').trim();
+
+  // Skip void parameters
+  if (typeName === 'void') return undefined;
+
   const isPointer = typeText.includes('*');
 
-  // Get parameter name
-  let paramName: string;
-
-  if (declarator) {
-    // Handle pointer declarator wrapping
-    if (declarator.type === 'pointer_declarator') {
-      const inner = declarator.firstNamedChild;
-      paramName = inner ? extractVarName(inner) : declarator.text.trim();
-    } else {
-      paramName = extractVarName(declarator);
-    }
-  } else {
-    // Try to get name from 'name' field
-    const nameNode = node.childForFieldName('name');
-    paramName = nameNode ? extractVarName(nameNode) : '';
-  }
-
-  if (!paramName || typeName === 'void') {
-    return undefined;
-  }
-
-  return {
-    name: paramName,
-    type: { name: typeName, isPointer },
-  };
+  return { name: typeName, isPointer };
 }
 
 // ============================================================================
