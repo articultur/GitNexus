@@ -617,7 +617,7 @@ export const FRAMEWORK_AST_PATTERNS = {
   rocket: ['#[get', '#[post', '#[launch', 'rocket::'],
   tokio: ['#[tokio::main]', '#[tokio::test]'],
 
-  // C++ patterns (Qt, Boost)
+  // C++ patterns (Qt, Boost, LLVM)
   qt: [
     'Q_OBJECT',
     'Q_INVOKABLE',
@@ -628,6 +628,37 @@ export const FRAMEWORK_AST_PATTERNS = {
     'Q_SLOT',
     'QWidget',
     'QApplication',
+  ],
+  boost: [
+    'boost::asio',
+    'boost::spirit',
+    'boost::serialization',
+    'boost::filesystem',
+    'boost::thread',
+    'boost::optional',
+    'boost::variant',
+    'BOOST_ASIO',
+    'BOOST_SPIRIT',
+    'BOOST_SERIALIZATION',
+  ],
+  llvm: [
+    'llvm::Pass',
+    'llvm::FunctionPass',
+    'llvm::Module',
+    'llvm::IRBuilder',
+    'llvm::Value',
+    'llvm::BasicBlock',
+    'llvm::Function',
+    'llvm::Type',
+  ],
+  android_ndk: [
+    'JNI_OnLoad',
+    'android_main',
+    'ANativeActivity',
+    'JNIEXPORT',
+    'JNIEnv',
+    'ANativeWindow',
+    'JNI_OnUnload',
   ],
 
   // Swift/iOS
@@ -667,6 +698,26 @@ export const FRAMEWORK_AST_PATTERNS = {
     '@dynamic',
     '#import <UIKit',
     '#import <Foundation',
+  ],
+  coreData: [
+    'NSManagedObject',
+    'NSManagedObjectContext',
+    'NSPersistentContainer',
+    'NSEntityDescription',
+    'NSFetchRequest',
+    'NSFetchedResultsController',
+  ],
+  reactiveObjC: [
+    'RACSignal',
+    'RACSubject',
+    'RACDisposable',
+    'RACCommand',
+    'RAC(',
+    'RACObserve',
+    '@weakify',
+    '@strongify',
+    'subscribeNext',
+    'subscribeError',
   ],
 
   // Ruby patterns (class-level macros in definition text)
@@ -893,13 +944,32 @@ export const AST_FRAMEWORK_PATTERNS_BY_LANGUAGE = {
       patterns: FRAMEWORK_AST_PATTERNS.tokio,
     },
   ],
-  [SupportedLanguages.C]: [], // C has no framework-specific AST patterns (POSIX/socket patterns are in entry-point-scoring)
+  [SupportedLanguages.C]: [
+    {
+      framework: 'android-ndk',
+      entryPointMultiplier: 2.8,
+      reason: 'jni-entry',
+      patterns: FRAMEWORK_AST_PATTERNS.android_ndk,
+    },
+  ],
   [SupportedLanguages.CPlusPlus]: [
     {
       framework: 'qt',
       entryPointMultiplier: 2.8,
       reason: 'qt-macro',
       patterns: FRAMEWORK_AST_PATTERNS.qt,
+    },
+    {
+      framework: 'boost',
+      entryPointMultiplier: 2.5,
+      reason: 'boost-module',
+      patterns: FRAMEWORK_AST_PATTERNS.boost,
+    },
+    {
+      framework: 'llvm',
+      entryPointMultiplier: 2.5,
+      reason: 'llvm-pass',
+      patterns: FRAMEWORK_AST_PATTERNS.llvm,
     },
   ],
   [SupportedLanguages.Swift]: [
@@ -960,7 +1030,21 @@ export const AST_FRAMEWORK_PATTERNS_BY_LANGUAGE = {
   ],
   [SupportedLanguages.Cobol]: [], // Standalone regex processor — no AST framework patterns
   [SupportedLanguages.ObjectiveC]: [
-    // Cocoa/AppKit/UIKit patterns
+    // CoreData patterns (more specific, checked first)
+    {
+      framework: 'coredata',
+      entryPointMultiplier: 2.0,
+      reason: 'coredata-model',
+      patterns: FRAMEWORK_AST_PATTERNS.coreData ?? [],
+    },
+    // ReactiveObjC patterns
+    {
+      framework: 'reactiveobjc',
+      entryPointMultiplier: 2.2,
+      reason: 'rac-signal',
+      patterns: FRAMEWORK_AST_PATTERNS.reactiveObjC ?? [],
+    },
+    // Cocoa/AppKit/UIKit patterns (general, checked last)
     {
       framework: 'cocoa-touch',
       entryPointMultiplier: 2.0,
