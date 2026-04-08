@@ -1152,6 +1152,7 @@ export function extractCobolSymbolsWithRegex(
   // --- State ---
   let currentDivision: Division = null;
   let currentDataSection: DataSection = 'unknown';
+  let dataLevelStack: Array<{ level: number; name: string }> = [];
   let currentEnvSection: EnvironmentSection = null;
   let currentParagraph: string | null = null;
 
@@ -1480,6 +1481,7 @@ export function extractCobolSymbolsWithRegex(
         case 'DATA':
           currentDivision = 'data';
           currentDataSection = 'unknown';
+          dataLevelStack = [];
           break;
         case 'PROCEDURE': {
           currentDivision = 'procedure';
@@ -1517,22 +1519,27 @@ export function extractCobolSymbolsWithRegex(
         case 'WORKING-STORAGE':
           currentDivision = 'data';
           currentDataSection = 'working-storage';
+          dataLevelStack = [];
           break;
         case 'LINKAGE':
           currentDivision = 'data';
           currentDataSection = 'linkage';
+          dataLevelStack = [];
           break;
         case 'FILE':
           currentDivision = 'data';
           currentDataSection = 'file';
+          dataLevelStack = [];
           break;
         case 'LOCAL-STORAGE':
           currentDivision = 'data';
           currentDataSection = 'local-storage';
+          dataLevelStack = [];
           break;
         case 'SCREEN':
           currentDivision = 'data';
           currentDataSection = 'screen';
+          dataLevelStack = [];
           break;
         case 'INPUT-OUTPUT':
           currentDivision = 'environment';
@@ -1632,6 +1639,7 @@ export function extractCobolSymbolsWithRegex(
       // Reset state machine for new program (nested or sibling)
       currentDivision = 'identification';
       currentDataSection = 'unknown';
+      dataLevelStack = [];
       currentEnvSection = null;
       currentParagraph = null;
 
@@ -1922,12 +1930,14 @@ export function extractCobolSymbolsWithRegex(
     if (lv88Match) {
       const name = lv88Match[1];
       const values = parseConditionValues(lv88Match[2]);
+      const parent88 = dataLevelStack.length > 0 ? dataLevelStack[dataLevelStack.length - 1].name : undefined;
       result.dataItems.push({
         name,
         level: 88,
         line: lineNum,
         values,
         section: currentDataSection,
+        parentName: parent88,
       });
       return;
     }
@@ -1989,6 +1999,20 @@ export function extractCobolSymbolsWithRegex(
         if (clauses.value) item.values = [clauses.value];
         if (clauses.isExternal) item.isExternal = true;
         if (clauses.isGlobal) item.isGlobal = true;
+
+        // Level-stack: determine parentName
+        if (item.level === 77) {
+          item.parentName = undefined;
+        } else if (item.level === 1 || item.level === 66) {
+          dataLevelStack = dataLevelStack.filter((e) => e.level < item.level);
+          item.parentName = undefined;
+          dataLevelStack.push({ level: item.level, name: item.name });
+        } else {
+          dataLevelStack = dataLevelStack.filter((e) => e.level < item.level);
+          const parent = dataLevelStack.length > 0 ? dataLevelStack[dataLevelStack.length - 1] : undefined;
+          item.parentName = parent?.name;
+          dataLevelStack.push({ level: item.level, name: item.name });
+        }
 
         result.dataItems.push(item);
 
