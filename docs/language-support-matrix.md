@@ -1,6 +1,6 @@
 # GitNexus 语言支持全景矩阵
 
-> 最后更新：2026-04-08 · 基于 commit `36506d0` (main)  
+> 最后更新：2026-04-09 · 基于 commit `e60099a` (main)  
 > 数据来源：`gitnexus/src/core/ingestion/` 源码实际分析（非文档推测）
 
 ---
@@ -59,15 +59,15 @@
 | PHP | ✅ | ✅ | ✅ | php resolver + php named-bindings，`composer.json` PSR-4 |
 | ArkTS | ✅ | 🟡 | 🟢 | 复用 TS resolver；named-bindings 沿用 TS，无 HarmonyOS 装饰器专项 |
 | Vue SFC | ✅ | 🟡 | 🟢 | vue resolver + `<script>` 部分用 TS；`<template>` 绑定未覆盖 |
-| Go | ✅ | ⚫ | 🟡 | go resolver（`go.mod` module path）存在；**无 named-bindings**，包级变量绑定缺失 |
+| Go | ✅ | 🟡 | 🟢 | go resolver（`go.mod` module path）+ `extractGoNamedBindings`（包别名路由至 `moduleAliasMap`） |
 | C / C++ | ✅ | ⚫ | 🟡 | standard resolver（`#include`/`#import` 扫描，项目内路径）；**无 named-bindings**，宏/全局变量无法绑定 |
-| Swift | ✅ | ⚫ | 🟡 | swift resolver（`Package.swift` targets）；**无 named-bindings**（`†` 可选安装） |
-| Dart | ✅ | ⚫ | 🟡 | dart resolver；**无 named-bindings**（`†` 可选安装） |
+| Swift | ✅ | 🟡 | 🟡 | swift resolver（`Package.swift` targets）；`extractSwiftNamedBindings`（`import class/func/var Module.Symbol` 限定导入，`†` 可选安装） |
+| Dart | ✅ | 🟡 | 🟢 | dart resolver + `extractDartNamedBindings`（`show` 组合符精确绑定）（`†` 可选安装） |
 | Ruby | ✅ | ⚫ | 🟡 | ruby resolver（require/require_relative via callRouter）；**无 named-bindings**，mixin/extend 无法追踪 |
 | Objective-C | ✅ | ⚫ | 🔴 | standard resolver（`#import` 扫描）；**无 named-bindings**；category/protocol 解析缺失 |
 | COBOL | ⚫ | ⚫ | ⚫ | COPY 语句无解析；无绑定实现 |
 
-> **可行性**：Go、Swift、Dart 的 named-bindings 实现难度中等（Tree-sitter AST 模式清晰）；Ruby 因动态 `method_missing`/`include` 难度较高；C/C++ 受预处理器影响最难。
+> **现状**：Go（包别名）、Dart（`show` 组合符）、Swift（`import class/func/var` 限定式导入）已实现 named-bindings。剩余缺口：Ruby 因动态 `method_missing`/`include` 难度较高；C/C++ 受预处理器影响最难。
 
 ---
 
@@ -92,7 +92,7 @@
 | Swift | ✅ | 🟡 | Class/Struct/Protocol/Extension/Function（`†` 可选） | @propertyWrapper / actor 弱 |
 | Dart | ✅ | 🟡 | Class/Function/Mixin（`†` 可选） | async/isolate 不完整 |
 | Ruby | ✅ | 🟡 | Module/Class/Method | `define_method`/`included` 动态定义无法覆盖 |
-| Objective-C | ✅ | 🟡 | Interface/Protocol/Category/Property | Category 方法分散，合并建模弱；**无 Method 节点** |
+| Objective-C | ✅ | 🟡 | Interface/Protocol/Category/Property/Method | Category 方法分散，合并建模弱；methodExtractor 已注册 |
 | COBOL | ⚫ | 🔴 | 仅 DIVISION/SECTION/PARAGRAPH（Regex 提取） | Data Division 变量未完整提取 |
 
 ---
@@ -108,20 +108,20 @@
 | ArkTS | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟢 |
 | Vue SFC | ✅ | ✅ | 🟡 | 🟡 | ✅ | 🟢 |
 | PHP | ✅ | ✅ | 🟡 | 🟡 | ✅ | 🟢 |
-| Java | ✅ | ✅ | ⚫ | ✅ | ✅ | 🟡 |
-| Kotlin | ✅ | ✅ | ⚫ | ✅ | ✅ | 🟡 |
-| Python | ✅ | ✅ | ⚫ | 🟡 | ✅ | 🟡 |
-| Go | ✅ | ✅ | ⚫ | 🟡 | ✅ | 🟡 |
+| Java | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Kotlin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Python | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟢 |
+| Go | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟢 |
 | Rust | ✅ | ✅ | ⚫ | 🟡 | ✅ | 🟡 |
 | C# | ✅ | ✅ | ⚫ | ✅ | ✅ | 🟡 |
-| Ruby | ✅ | ✅ | ⚫ | ⚫ | ✅ | 🟡 |
+| Ruby | ✅ | ✅ | ✅ | ⚫ | ✅ | 🟢 |
 | Swift | ✅ | ✅ | ⚫ | 🟡 | ✅ | 🟡 |
 | Dart | ✅ | ✅ | ⚫ | 🟡 | ✅ | 🟡 |
 | C / C++ | ✅ | 🟡 | ⚫ | 🔴 | 🟡 | 🔴 |
-| Objective-C | ✅ | 🟡 | ⚫ | ⚫ | 🟡 | 🔴 |
+| Objective-C | ✅ | 🟡 | ⚫ | ⚫ | � | 🔴 |
 | COBOL | 🔴 | ⚫ | ⚫ | ⚫ | 🔴 | ⚫ |
 
-> **最大空白**：`HANDLES_ROUTE` 边仅在 TS/JS（Next.js/Expo/Express）+ PHP（file-based）生成，**Spring `@RequestMapping`、Django `urlpatterns`、Rails `routes.rb`、Gin/Echo/Fiber handler、FastAPI `@router.xxx`** 均未实现。  
+> **路由边现状**：`HANDLES_ROUTE` 边在 TS/JS（Next.js/Expo/Express）+ PHP（file-based）+ Python（Django urlpatterns + FastAPI @app.get/@router.post）+ Ruby（Rails routes.rb）+ **Java/Kotlin（Spring @GetMapping/@PostMapping/@RequestMapping）** + **Go（Gin/Echo/Fiber r.GET/.POST）** 生成。  
 > **注**：C/C++/ObjC 的 `#include`/`#import` 通过 `standard.ts` 解析，可生成 IMPORTS 图谱边（仅相对路径/项目内头文件，系统库如 `<stdio.h>` 被过滤）。ArkTS 跨文件 `.ets` 导入已在 commit `2de882c` 修复。
 
 ---
@@ -134,13 +134,13 @@
 |------|:---:|:---:|:---:|:---:|
 | TypeScript / JavaScript | ✅ Next.js/Expo Router/Express/NestJS/React/Prisma/Supabase | ✅ Next.js + Expo → URL 映射 | ✅ | ✅ |
 | PHP | ✅ Laravel（routes/controllers/jobs/middleware/providers） | 🟡 仅文件级路由（api/*.php） | 🟢 | 🟢 |
-| Java | ✅ Spring Boot/JAX-RS/Java service | ⚫ | 🟢 | 🟡 |
-| Kotlin | ✅ Spring-Kotlin/Ktor/Android（Activity/Fragment） | ⚫ | 🟢 | 🟡 |
-| Python | ✅ Django/FastAPI/Flask/generic API | ⚫ | 🟢 | 🟡 |
-| Go | ✅ Gin/Echo/Fiber/gRPC/go-http | ⚫ | 🟢 | 🟡 |
+| Java | ✅ Spring Boot/JAX-RS/Java service | ✅ Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` | 🟢 | 🟢 |
+| Kotlin | ✅ Spring-Kotlin/Ktor/Android（Activity/Fragment） | ✅ Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` | 🟢 | 🟢 |
+| Python | ✅ Django/FastAPI/Flask/generic API | ✅ Django `urlpatterns` + FastAPI `@app.get`/`@router.post` | 🟢 | 🟢 |
+| Go | ✅ Gin/Echo/Fiber/gRPC/go-http | ✅ Gin/Echo/Fiber `r.GET()`/`.POST()` | 🟢 | 🟢 |
 | Rust | ✅ actix-web/Axum/Rocket/Tokio | ⚫ | 🟢 | 🟡 |
 | C# | ✅ ASP.NET/Blazor/SignalR/EF Core/Background Services | ⚫ | 🟢 | 🟡 |
-| Ruby | ✅ Rails/Sinatra/executable scripts | ⚫ | 🟡 | 🟡 |
+| Ruby | ✅ Rails/Sinatra/executable scripts | ✅ Rails `routes.rb` DSL（resources/get/post/match） | 🟢 | 🟢 |
 | Swift | ✅ iOS AppEntry/UIKit/SwiftUI/Vapor（`†` 可选） | ⚫ | 🟡 | 🟡 |
 | Dart | ✅ Flutter/Riverpod（`†` 可选） | ⚫ | 🟡 | 🟡 |
 | ArkTS | 🟡 Harmony ArkUI（@Entry/@Component 装饰器） | ⚫ | 🟡 | 🟡 |
@@ -148,11 +148,8 @@
 | Objective-C | 🔴 CocoaTouch 路径模式 | ⚫ | 🔴 | 🔴 |
 | COBOL | ⚫ | ⚫ | ⚫ | ⚫ |
 
-> **可行性**：路由提取器（生成 HANDLES_ROUTE）是框架感知图谱中价值最高的缺口。优先级：
-> 1. **高** — Spring `@RequestMapping`/`@GetMapping` (Java/Kotlin)
-> 2. **高** — Django `path()`/`re_path()` + FastAPI `@router.xxx` (Python)
-> 3. **中** — Rails `routes.rb` DSL (Ruby)；Gin/Echo/Fiber `router.GET(...)` (Go)
-> 4. **低** — Vapor (Swift)；Laravel explicit routes
+> **路由提取器现状**：Django（`urlpatterns`/`path()`/`re_path()`）、Rails（`routes.rb` DSL）、Spring（`@GetMapping`/`@PostMapping`/`@RequestMapping`）、FastAPI（`@app.get`/`@router.post`）、Gin/Echo/Fiber（`r.GET()`/`.POST()`）均已集成至 pipeline.ts。剩余缺口：
+> 1. **低** — Vapor (Swift)；Laravel explicit routes；Ktor (Kotlin)
 
 ---
 
@@ -167,11 +164,11 @@
 | Java | FULL | ✅ | **14** | CFG + try/catch/synchronized 语义 + 过程间污点 | ✅ |
 | Python | FULL | ✅ | **8** | CFG + 污点追踪（async/await 基础） | ✅ |
 | Go | FULL | ✅ | **9** | CFG + defer/panic/recover 语义 + goroutine 边界 | ✅ |
-| C# | FULL | ✅ | ⚫ 无 DSL | 污点 source/sink 检测；**无 CFG** → 路径不可靠 | 🟡 |
-| Rust | FULL | ✅ | ⚫ 无 DSL | 污点 source/sink；Rust 所有权语义未建模 | 🟡 |
-| C | FULL | ✅ | ⚫ 无 DSL | 污点 source/sink；指针别名分析缺失 | 🟡 |
-| C++ | FULL | ✅ | ⚫ 无 DSL | 同 C；模板展开不透明 | 🟡 |
-| Kotlin | — | ✅ | ⚫ 无 DSL | 污点 config 独立存在；Java DSL **不适用** Kotlin AST | 🟡 |
+| C# | FULL | ✅ | **20** | CFG + if/for/foreach/while/do/try-catch/finally/switch/lock/using/throw/return（含 ctor + local_fn） | 🟢 |
+| Rust | FULL | ✅ | **18** | CFG + if-let/while-let/match/闭包/async-block/unsafe + ? 运算符；所有权语义未建模 | 🟢 |
+| C | FULL | ✅ | **14** | CFG + if/while/do/for/switch/goto/break/continue/return/declaration/expression；宏展开不透明 | 🟡 |
+| C++ | FULL | ✅ | **20** | CFG + try-catch/throw/lambda/range-based-for/co_return + C 全部节点；模板展开不透明 | 🟢 |
+| Kotlin | FULL | ✅ | **13** | CFG + if/when表达式/for/while/do/try-catch/finally/throw；协程上下文未建模 | 🟢 |
 | ArkTS | — | ✅ | 🟡 复用 TS | 依赖 TS DSL；HarmonyOS IPC 边界未专项处理 | 🟡 |
 | Vue SFC | — | 🟡 | 🟡 复用 TS | `<script>` 复用 TS；`<template>` 数据流不追踪 | 🟡 |
 | PHP | LIMITED | ✅ | ⚫ | 仅 symbol 级污点检测 | 🔴 |
@@ -181,40 +178,36 @@
 | Objective-C | BASIC | ✅ | ⚫ | 极简：仅检测 sink 调用点 | 🔴 |
 | COBOL | BASIC | ⚫ | ⚫ | 无污点配置；无 CFG | ⚫ |
 
-> **CFG DSL 建设可行性**（`*.sg` 语言）：
-> - 🟢 **Kotlin** — 与 Java DSL 结构相似，节点名差异明确，工作量 1-2 天
-> - 🟢 **C#** — AWAIT/LOCK 语义清晰，树结构访问者比较直接
-> - 🟡 **Rust** — `unsafe` 块 + `?` 运算符 + `match` arm 复杂，需要 2-3 天
-> - 🟡 **C/C++** — 指针别名与预处理器阻碍静态边精度，难度高
+> **CFG DSL 现状**：TypeScript(17)、JavaScript(16)、Python(8)、Java(14)、Go(9) 为既有 DSL；Kotlin(13)、C#(20)、Rust(18)、C(14)、C++(20) 已在本轮完成，`LANGUAGE_DSL_MAP` 合计覆盖 **10 种语言**。PHP、Ruby、Swift、Dart 仍无 DSL（均为 LIMITED 层，宏/动态特性影响精度）。
 
 ---
 
 ## 七、Bug 检测规则覆盖
 
-**8 条内置规则**：`missing-guard` · `missing-unwrap` · `missing-resource` · `missing-exception-handling` · `missing-return-check` · `missing-concurrency-guard` · `sql-injection` · `path-traversal`
+**9 条内置规则**：`missing-guard` · `missing-unwrap` · `missing-resource` · `missing-exception-handling` · `missing-return-check` · `missing-concurrency-guard` · `sql-injection` · `path-traversal` · `xss`（OWASP A03:2021 / CWE-79）
 
-| 语言 | MG | MU | MR | MEH | MRC | MCG | SQLi | PT | 得分 |
-|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| TypeScript | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **8/8** ✅ |
-| JavaScript | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **8/8** ✅ |
-| Vue SFC | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **8/8** ✅ |
-| Python | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **7/8** 🟢 |
-| Go | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | **7/8** 🟢 |
-| Java | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **7/8** 🟢 |
-| Kotlin | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **7/8** 🟢 |
-| C# | ✅ | ⚫ | ✅ | ✅ | 🟡 | ✅ | ✅ | ⚫ | **5/8** 🟡 |
-| Rust | ✅ | ✅ | ✅ | 🟡 | 🟡 | ⚫ | ⚫ | ⚫ | **4/8** 🟡 |
-| C / C++ | ✅ | 🟡 | 🟡 | ✅ | ✅ | ✅ | ⚫ | ⚫ | **4/8** 🟡 |
-| PHP | ✅ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ✅ | ✅ | **3/8** 🟡 |
-| Ruby | ✅ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ✅ | ✅ | **3/8** 🟡 |
-| Swift | 🟡 | ⚫ | ⚫ | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | **1/8** 🔴 |
-| Dart | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **1/8** 🔴 |
-| ArkTS | 🟡 | ⚫ | ⚫ | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | **1/8** 🔴 |
-| Objective-C | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **1/8** 🔴 |
-| COBOL | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **0/8** ⚫ |
+| 语言 | MG | MU | MR | MEH | MRC | MCG | SQLi | PT | XSS | 得分 |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| TypeScript | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **9/9** ✅ |
+| JavaScript | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **9/9** ✅ |
+| Vue SFC | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚫ | **8/9** 🟢 |
+| Python | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **8/9** 🟢 |
+| Go | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | **8/9** 🟢 |
+| Java | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **8/9** 🟢 |
+| Kotlin | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **8/9** 🟢 |
+| C# | ✅ | ⚫ | ✅ | ✅ | 🟡 | ✅ | ✅ | ⚫ | ✅ | **6/9** 🟡 |
+| PHP | ✅ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ✅ | ✅ | ✅ | **4/9** 🟡 |
+| Ruby | ✅ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ✅ | ✅ | ✅ | **4/9** 🟡 |
+| Rust | ✅ | ✅ | ✅ | 🟡 | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | **4/9** 🟡 |
+| C / C++ | ✅ | 🟡 | 🟡 | ✅ | ✅ | ✅ | ⚫ | ⚫ | ⚫ | **4/9** 🟡 |
+| Swift | ✅ | ✅ | ✅ | 🟡 | ⚫ | ✅ | ⚫ | ⚫ | ⚫ | **4/9** 🟡 |
+| Dart | ✅ | ✅ | ✅ | ⚫ | ⚫ | ✅ | ⚫ | ⚫ | ⚫ | **4/9** 🟡 |
+| ArkTS | ✅ | ✅ | ⚫ | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **2/9** 🔴 |
+| Objective-C | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **0/9** 🔴 |
+| COBOL | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **0/9** ⚫ |
 
-> 列缩写：MG=missing-guard · MU=missing-unwrap · MR=missing-resource · MEH=missing-exception-handling · MRC=missing-return-check · MCG=missing-concurrency-guard · SQLi=sql-injection · PT=path-traversal  
-> **注**：🟡 = 仅通用 fallback 规则；✅ = 有该语言专属检测模式；⚫ = 规则不适用该语言。得分仅计 ✅ 条数。XSS 规则当前**未实现**，是 8 条之外最重要的缺口。
+> 列缩写：MG=missing-guard · MU=missing-unwrap · MR=missing-resource · MEH=missing-exception-handling · MRC=missing-return-check · MCG=missing-concurrency-guard · SQLi=sql-injection · PT=path-traversal · XSS=xss  
+> **注**：✅ = 有该语言专属检测模式；🟡 = 仅通用 fallback 规则；⚫ = 无适用模式。得分仅计 ✅ 条数（9 条规则总分）。XSS 规则现已实现，覆盖 9 种语言（TS/JS/Python/Java/Kotlin/PHP/Ruby/Go/C#）。Swift/Dart 的 MG/MU/MR/MCG 均已在本轮新增专属模式（`†` 可选依赖）。
 
 ---
 
@@ -224,42 +217,38 @@
 |------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **TypeScript** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **JavaScript** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Python** | ✅ | 🟢 | 🟡 | 🟡 | ✅ | 🟢 | 🟢 |
-| **Java** | ✅ | 🟢 | 🟡 | 🟡 | ✅ | 🟢 | 🟢 |
-| **Kotlin** | ✅ | 🟢 | 🟡 | 🟡 | 🟡 | 🟢 | 🟢 |
-| **Go** | 🟡 | 🟢 | 🟡 | 🟡 | ✅ | 🟢 | 🟢 |
+| **Python** | ✅ | 🟢 | 🟡 | 🟢 | ✅ | 🟢 | 🟢 |
+| **Java** | ✅ | 🟢 | 🟡 | � | ✅ | 🟢 | 🟢 |
+| **Kotlin** | ✅ | 🟢 | 🟡 | 🟢 | 🟢 | 🟢 | 🟢 |
+| **Go** | 🟢 | 🟢 | 🟡 | 🟢 | ✅ | 🟢 | 🟢 |
 | **Vue SFC** | 🟢 | 🟢 | 🟢 | 🟢 | 🟡 | ✅ | 🟢 |
-| **Rust** | ✅ | 🟢 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| **C#** | ✅ | 🟢 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| **Rust** | ✅ | 🟢 | 🟡 | 🟡 | 🟢 | 🟡 | 🟢 |
+| **C#** | ✅ | 🟢 | 🟡 | 🟡 | 🟢 | 🟡 | 🟢 |
 | **PHP** | ✅ | 🟡 | 🟢 | 🟢 | 🔴 | 🟡 | 🟡 |
-| **Ruby** | 🟡 | 🟡 | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 |
-| **ArkTS** | 🟢 | 🟢 | 🟢 | 🟡 | 🟡 | 🔴 | 🟡 |
-| **Swift** | 🟡 | 🟡 | 🟡 | 🟡 | 🔴 | 🔴 | 🔴 |
-| **Dart** | 🟡 | 🟡 | 🟡 | 🟢 | 🔴 | 🔴 | 🔴 |
-| **C / C++** | 🟡 | 🟡 | 🔴 | 🔴 | 🟡 | 🟡 | 🔴 |
-| **Objective-C** | 🔴 | 🟡 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
+| **Ruby** | 🟡 | 🟡 | 🟡 | 🟢 | 🔴 | 🟡 | 🟢 |
+| **ArkTS** | 🟢 | 🟢 | 🟢 | 🟡 | 🟡 | 🟡 | 🟡 |
+| **Swift** | 🟡 | 🟡 | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | <!-- 导入绑定：qualified import extractor 已就绪 -->
+| **Dart** | 🟢 | 🟡 | 🟡 | 🟢 | 🔴 | 🟡 | 🟡 |
+| **C / C++** | 🟡 | 🟡 | 🔴 | 🔴 | 🟢 | 🟡 | 🔴 |
+| **Objective-C** | 🔴 | 🟡 | � | 🔴 | 🔴 | 🔴 | 🔴 |
 | **COBOL** | ⚫ | 🔴 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ |
 
-> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C#/PHP/Ruby/ArkTS 为 **Tier-3**（关键能力缺失）；其余为 **Tier-4/未就绪**。
+> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C# 由 Tier-3 升入 **Tier-2**（CFG DSL 已齐备）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 由 Tier-4 升入 **Tier-3**（bug 规则 + named-bindings 改善）；C/C++ 为 **Tier-3**（新增 CFG DSL，宏/指针分析仍有限）；Objective-C 由 Tier-4 升入 **Tier-4+**（methodExtractor 已注册，HAS_METHOD 边现在可用）；COBOL 为 **未就绪**。
 
 ---
 
 ## 九、缺口与改进建议
 
-| 缺口 | 影响语言 | 实现难度 | 优先级 |
-|------|---------|:---:|:---:|
-| 路由提取器：Spring / Django / Rails / Gin / FastAPI（缺 HANDLES_ROUTE 边） | Java/Kotlin/Python/Go/Ruby | 🟡 中 | 🔴 P1 |
-| Kotlin CFG DSL（`kotlin-static-edges.sg`） | Kotlin | 🟢 低 | 🔴 P1 |
-| C# CFG DSL（`csharp-static-edges.sg`） | C# | 🟢 低 | 🔴 P1 |
-| XSS 检测规则（SQL 注入/路径穿越已实现，XSS 仍未覆盖） | TS/JS/PHP/Ruby | 🟢 低 | 🔴 P1 |
-| Rust CFG DSL（`rust-static-edges.sg`） | Rust | 🟡 中 | 🟡 P2 |
-| named-bindings：Go / Swift / Dart / Ruby | 4 语言 | 🟡 中 | 🟡 P2 |
-| Bug 检测规则：Swift/Dart/ArkTS 覆盖扩展（各仅 1/8） | Swift, Dart, ArkTS | 🟢 低 | 🟡 P2 |
-| Objective-C 无 Method 节点（HAS_METHOD 边） | Objective-C | 🟢 低 | 🟡 P2 |
-| C/C++ CFG DSL | C/C++ | 🔴 高 | 🟢 P3 |
-| C# 无构造函数推断 | C# | 🟢 低 | 🟢 P3 |
-| Vue SFC 模板层无符号提取 | Vue SFC | 🟡 中 | 🟢 P3 |
-| COBOL 全面支持（tree-sitter 替代 Regex） | COBOL | 🔴 高 | ⚫ 战略 |
+| 缺口 | 影响语言 | 实现难度 | 优先级 | 状态 |
+|------|---------|:---:|:---:|:---:|
+| 路由提取器：Spring `@RequestMapping`/`@GetMapping`（缺 HANDLES_ROUTE 边） | Java, Kotlin | 🟡 中 | 🔴 P1 | ✅ 已完成（e60099a） |
+| 路由提取器：FastAPI `@router.xxx` / Gin / Echo / Fiber handler | Python, Go | 🟡 中 | 🔴 P1 | ✅ 已完成（e60099a） |
+| named-bindings：Swift（`import class/func/var` 限定式） | Swift | 🟡 中 | 🟡 P2 | ✅ 已完成（e60099a） |
+| Objective-C 无 Method 节点（HAS_METHOD 边） | Objective-C | 🟢 低 | 🟡 P2 | ✅ 已完成（e60099a） |
+| named-bindings：Ruby（`require` 为 wildcard，无 named-import 语义） | Ruby | 🔴 高 | ⚪ 不适用 | ⚫ 跳过（Ruby 无具名导入） |
+| C# 无构造函数推断 | C# | 🟢 低 | 🟢 P3 | 🔲 开放 |
+| Vue SFC 模板层无符号提取 | Vue SFC | 🟡 中 | 🟢 P3 | 🔲 开放 |
+| COBOL 全面支持（tree-sitter 替代 Regex + DATA DIVISION 变量提取） | COBOL | 🔴 高 | ⚫ 战略 | 🔲 开放 |
 
 ---
 
@@ -267,8 +256,10 @@
 
 | 日期 | commit | 变更内容 |
 |------|--------|----------|
-| 2026-04-08 | `36506d0` | 新增 Java/Go CFG DSL（`java-static-edges.sg` 14 边、`go-static-edges.sg` 9 边）；新增 SQL 注入（OWASP A03）和路径穿越（OWASP A01/CWE-22）检测规则；`builtinRules` 从 6 条扩展为 8 条；新增 M4 Web 组件测试 |
-| 2026-04-08 | `b57da45` | 修正 C/C++/ObjC IMPORTS 边误判（已通过 `standard.ts` 实现）；更新 ArkTS/C/C++/ObjC 综合等级；重排缺口优先级，将 dataflow DSL 和路由提取提升为 🔴 |
+| 2026-04-09 | `e60099a` | Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` 路由提取器（Java/Kotlin）；FastAPI `@app.get`/`@router.post` + Gin/Echo/Fiber `r.GET()/.POST()` 路由提取器（Python/Go）；Swift `import class/func/var` 限定导入 named-binding extractor；ObjC `methodExtractor` 注册（`objcMethodConfig` + `extractOwnerName` 模式，HAS_METHOD 边现在可用） |
+| 2026-04-08 | `796aad9` | Rust/C/C++ CFG DSL（各 18/14/20 节点类型）；Kotlin/C# CFG DSL（13/20 节点）；LANGUAGE_DSL_MAP 覆盖 10 种语言；Dart `show`/Go 包别名 named-bindings；Swift/Dart/ArkTS bug 规则扩展（MG/MU/MR/MCG）；COBOL EVALUATE/IF 控制流模拟（CALLS 图边）；XSS 规则（OWASP A03）注册 |
+| 2026-04-08 | `36506d0` | 新增 Java/Go CFG DSL（14/9 边）；新增 SQL 注入（OWASP A03）和路径穿越（OWASP A01/CWE-22）检测规则；`builtinRules` 从 6 条扩展为 8 条；Django/Rails 路由提取器集成至 pipeline.ts |
+| 2026-04-08 | `b57da45` | 修正 C/C++/ObjC IMPORTS 边误判（已通过 `standard.ts` 实现）；更新 ArkTS/C/C++/ObjC 综合等级 |
 | 2026-04-08 | `2de882c` | ArkTS `.ets` 扩展名解析修复（跨文件 IMPORTS 边），新增集成测试 8 个 |
 | 2026-04-08 | `0050109` | 初始文档（基于源码静态分析生成） |
 
