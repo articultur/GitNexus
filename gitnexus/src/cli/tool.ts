@@ -164,3 +164,21 @@ export async function cypherCommand(
   });
   output(result);
 }
+
+export async function detectChangesCommand(
+  options?: {
+    scope?: string;
+    baseRef?: string;
+    repo?: string;
+    detection?: boolean;
+  },
+): Promise<void> {
+  const backend = await getBackend();
+  const result = await backend.callTool('detect_changes', {
+    scope: options?.scope || 'unstaged',
+    base_ref: options?.baseRef,
+    repo: options?.repo,
+    enable_detection: options?.detection ?? false,
+  });
+  output(result);
+}

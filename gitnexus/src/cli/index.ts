@@ -107,6 +107,15 @@ program
 // These invoke LocalBackend directly for use in eval, scripts, and CI.
 
 program
+  .command('detect-changes')
+  .description('Detect execution flows affected by git changes (pre-commit review)')
+  .option('-s, --scope <scope>', 'What to analyze: "unstaged" (default), "staged", "all", or "compare"', 'unstaged')
+  .option('--base-ref <ref>', 'For "compare" scope: base branch to compare against (default: main)')
+  .option('-r, --repo <name>', 'Target repository (omit if only one indexed)')
+  .option('--detection', 'Enable bug detection rules on changed symbols (off by default)')
+  .action(createLazyAction(() => import('./tool.js'), 'detectChangesCommand'));
+
+program
   .command('query <search_query>')
   .description('Search the knowledge graph for execution flows related to a concept')
   .option('-r, --repo <name>', 'Target repository (omit if only one indexed)')

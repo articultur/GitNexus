@@ -1840,6 +1840,8 @@ export class LocalBackend {
       base_ref?: string;
       /** When false, omit the `evidence` block from the response. Default: true */
       include_evidence?: boolean;
+      /** When true, run bug detection rules on changed symbols. Default: false */
+      enable_detection?: boolean;
     },
   ): Promise<any> {
     await this.ensureInitialized(repo.id);
@@ -1972,15 +1974,54 @@ export class LocalBackend {
             ? 'high'
             : 'critical';
 
+    // ── Bug detection on changed symbols ────────────────────────────────
+    let detection_findings: any[] | undefined;
+    if (params.enable_detection && changedSymbols.length > 0) {
+      try {
+        const { RuleEngine } = await import('../../core/detection/rule-engine.js');
+        const { builtinRules } = await import('../../core/detection/rules/index.js');
+        const engine = new RuleEngine();
+        for (const rule of builtinRules) engine.register(rule);
+
+        const findings: any[] = [];
+        for (const sym of changedSymbols) {
+          // Fetch full node content for rule evaluation
+          const rows = await executeParameterized(
+            repo.id,
+            `MATCH (n {id: $nodeId}) RETURN n.id AS id, n.name AS name, labels(n)[0] AS label, n.filePath AS filePath, n.content AS content LIMIT 1`,
+            { nodeId: sym.id },
+          );
+          if (!rows?.[0]?.content) continue;
+
+          const row = rows[0];
+          const ctx = {
+            node: { id: row.id || row[0], label: (row.label || row[2]) as any, properties: { name: row.name || row[1], filePath: row.filePath || row[3], content: row.content || row[4] } },
+            outgoingRelationships: [],
+            incomingRelationships: [],
+            outgoingTargets: new Map(),
+            language: (row.filePath || row[3] || '').split('.').pop()?.toLowerCase() ?? '',
+          };
+          const results = engine.evaluateNode(ctx);
+          findings.push(...results);
+        }
+        detection_findings = findings;
+      } catch (e) {
+        // Detection is best-effort — don't fail the whole detect_changes
+        logQueryError('detect-changes:detection', e);
+      }
+    }
+
     return {
       summary: {
         changed_count: changedSymbols.length,
         affected_count: processCount,
         changed_files: changedFiles.length,
         risk_level: risk,
+        ...(detection_findings && { detection_count: detection_findings.length }),
       },
       changed_symbols: changedSymbols,
       affected_processes: Array.from(affectedProcesses.values()),
+      ...(detection_findings && detection_findings.length > 0 && { detection_findings }),
       ...(include_evidence && {
         evidence: {
           explanation:
