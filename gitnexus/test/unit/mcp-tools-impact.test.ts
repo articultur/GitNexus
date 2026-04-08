@@ -191,8 +191,13 @@ describe('runImpactBFS — risk scoring', () => {
       include_content: false,
     });
 
-    expect(result.risk).toBe('MEDIUM');
+    // New unified scoring model: 7 direct callers gives score ~10.7 (LOW)
+    // The new model is more conservative than the old thresholds
+    expect(result.risk).toBe('LOW');
     expect(result.summary.direct).toBe(7);
+    // Verify score_v2 is present
+    expect(result.score_v2).toBeDefined();
+    expect(result.score_v2.score).toBeLessThan(25);
   });
 
   it('risk is HIGH when 15–29 direct callers', async () => {
@@ -210,14 +215,22 @@ describe('runImpactBFS — risk scoring', () => {
       include_content: false,
     });
 
-    expect(result.risk).toBe('HIGH');
+    // New unified scoring model: 20 direct callers gives score ~30.7 (MEDIUM)
+    // The new model requires more impact for HIGH risk
+    expect(result.risk).toBe('MEDIUM');
+    expect(result.score_v2).toBeDefined();
+    expect(result.score_v2.score).toBeGreaterThanOrEqual(25);
+    expect(result.score_v2.score).toBeLessThan(50);
   });
 
-  it('risk is CRITICAL when >= 30 direct callers', async () => {
+  it('risk is HIGH with 30 direct callers (no processes/modules)', async () => {
     const directRows = Array.from({ length: 30 }, (_, i) =>
       makeRelRow(`id-${i}`, `caller${i}`, `src/mod${i}.ts`),
     );
-    mockExecuteParameterized.mockResolvedValueOnce(directRows).mockResolvedValue([]);
+    // Explicitly mock all queries to return empty except the first
+    mockExecuteParameterized
+      .mockResolvedValueOnce(directRows) // depth=1 BFS
+      .mockResolvedValue([]); // All subsequent calls (process, module enrichment)
 
     const result = await runImpactBFS(REPO, TARGET_SYM, 'Function', 'upstream', {
       maxDepth: 3,
@@ -228,8 +241,59 @@ describe('runImpactBFS — risk scoring', () => {
       include_content: false,
     });
 
-    expect(result.risk).toBe('CRITICAL');
+    // With 30 direct callers: direct_impact=50 (capped), total_impact~17.2
+    // rawSum ≈ 67.2, score ≈ 52 (HIGH)
+    expect(result.risk).toBe('HIGH');
     expect(result.impactedCount).toBe(30);
+    expect(result.score_v2).toBeDefined();
+    expect(result.score_v2.score).toBeGreaterThanOrEqual(50);
+    expect(result.score_v2.score).toBeLessThan(80);
+  });
+
+  it('risk is HIGH when multiple dimensions are affected', async () => {
+    // Create scenario with direct callers, processes, and modules
+    const directRows = Array.from({ length: 25 }, (_, i) =>
+      makeRelRow(`id-${i}`, `caller${i}`, `src/mod${i}.ts`),
+    );
+    // Mock process enrichment
+    const processRows = Array.from({ length: 5 }, (_, i) => ({
+      pId: `proc-${i}`,
+      name: `Process ${i}`,
+      processType: 'HTTP',
+      entryPointId: `ep-${i}`,
+      hits: 5,
+      minStep: 1,
+      stepCount: 10,
+      epName: `entry${i}`,
+      epType: 'Function',
+      epFilePath: `src/entry${i}.ts`,
+    }));
+    // Mock module enrichment
+    const moduleRows = Array.from({ length: 5 }, (_, i) => ({
+      name: `module${i}`,
+      hits: 5,
+    }));
+
+    mockExecuteParameterized
+      .mockResolvedValueOnce(directRows) // depth=1 BFS
+      .mockResolvedValueOnce(processRows) // process enrichment
+      .mockResolvedValueOnce([]) // process backfill
+      .mockResolvedValueOnce(moduleRows) // module enrichment
+      .mockResolvedValueOnce([]); // direct module enrichment
+
+    const result = await runImpactBFS(REPO, TARGET_SYM, 'Function', 'upstream', {
+      maxDepth: 3,
+      relationTypes: ['CALLS'],
+      includeTests: false,
+      minConfidence: 0,
+      include_evidence: false,
+      include_content: false,
+    });
+
+    // With 25 direct, 5 processes, 5 modules: score should be HIGH
+    expect(result.risk).toBe('HIGH');
+    expect(result.score_v2).toBeDefined();
+    expect(result.score_v2.score).toBeGreaterThanOrEqual(50);
   });
 });
 
