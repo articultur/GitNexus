@@ -145,7 +145,7 @@
 | Dart | ✅ Flutter/Riverpod（`†` 可选） | ⚫ | 🟡 | 🟡 |
 | ArkTS | 🟡 Harmony ArkUI（@Entry/@Component 装饰器） | ⚫ | 🟡 | 🟡 |
 | C / C++ | 🟢 路径模式/Qt 入口 | ⚫ | 🟢 | 🟢 |
-| Objective-C | 🔴 CocoaTouch 路径模式 | ⚫ | 🔴 | 🔴 |
+| Objective-C | 🟢 CoreData/ReactiveObjC/CocoaTouch | ⚫ | 🟢 | 🟢 |
 | COBOL | ⚫ | ⚫ | ⚫ | ⚫ |
 
 > **路由提取器现状**：Django（`urlpatterns`/`path()`/`re_path()`）、Rails（`routes.rb` DSL）、Spring（`@GetMapping`/`@PostMapping`/`@RequestMapping`）、FastAPI（`@app.get`/`@router.post`）、Gin/Echo/Fiber（`r.GET()`/`.POST()`）均已集成至 pipeline.ts。剩余缺口：
@@ -230,7 +230,7 @@
 | **Swift** | 🟡 | 🟡 | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | <!-- 导入绑定：qualified import extractor 已就绪 -->
 | **Dart** | 🟢 | 🟡 | 🟡 | 🟢 | 🔴 | 🟡 | 🟡 |
 | **C / C++** | 🟡 | 🟢 | 🔴 | 🟢 | 🟢 | 🟡 | 🟢 |
-| **Objective-C** | 🟢 | 🟢 | 🟡 | 🔴 | 🟢 | 🟡 | 🟢 |
+| **Objective-C** | 🟢 | 🟢 | 🟡 | 🟢 | 🟢 | 🟡 | 🟢 |
 | **COBOL** | ⚫ | 🔴 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ |
 
 > **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C#/C/C++/Objective-C 升入 **Tier-2**（CFG DSL + named-bindings + taint 扩展完成）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 为 **Tier-3**（bug 规则 + named-bindings 改善）；COBOL 为 **未就绪**。
