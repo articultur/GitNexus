@@ -263,14 +263,12 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
       const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
-      expect(result).toEqual({
-        getter: { selector: 'name', returnType: { name: 'NSString', isPointer: true } },
-        setter: {
-          selector: 'setName:',
-          returnType: { name: 'void' },
-          paramType: { name: 'NSString', isPointer: true },
-        },
-      });
+      expect(result.getter.selector).toBe('name');
+      expect(result.getter.returnType).toEqual({ name: 'NSString', isPointer: true });
+      expect(result.getter.isClassMethod).toBe(false);
+      expect(result.setter?.selector).toBe('setName:');
+      expect(result.setter?.returnType).toEqual({ name: 'void' });
+      expect(result.setter?.parameters?.[0]?.type).toEqual({ name: 'NSString', isPointer: true });
     });
 
     it('should synthesize only getter for readonly property', async () => {
@@ -278,10 +276,10 @@ describe.skipIf(!objcAvailable)('Objective-C type extractor', () => {
       const rootNode = parsePropertyCode(code);
       expect(rootNode).not.toBeNull();
       const result = synthesizePropertyAccessors(rootNode!);
-      expect(result).toEqual({
-        getter: { selector: 'age', returnType: { name: 'NSInteger', isPointer: false } },
-        setter: null,
-      });
+      expect(result.getter.selector).toBe('age');
+      expect(result.getter.returnType).toEqual({ name: 'NSInteger', isPointer: false });
+      expect(result.getter.isClassMethod).toBe(false);
+      expect(result.setter).toBeNull();
     });
 
     it('should handle custom getter attribute', async () => {
