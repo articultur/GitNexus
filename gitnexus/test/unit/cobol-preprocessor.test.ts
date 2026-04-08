@@ -413,6 +413,161 @@ describe('extractCobolSymbolsWithRegex', () => {
   });
 
   // -------------------------------------------------------------------------
+  // parentName extraction (level-stack tracking)
+  // -------------------------------------------------------------------------
+  describe('parentName extraction', () => {
+    it('top-level 01 items have no parentName', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-VAR               PIC X(10).',
+        '       01 WS-OTHER             PIC 9(5).',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find((d) => d.name === 'WS-VAR')?.parentName).toBeUndefined();
+      expect(r.dataItems.find((d) => d.name === 'WS-OTHER')?.parentName).toBeUndefined();
+    });
+
+    it('05-level under 01 gets parentName of the 01 group', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-RECORD.',
+        '           05 WS-NAME          PIC X(30).',
+        '           05 WS-AMOUNT        PIC 9(7).',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find((d) => d.name === 'WS-RECORD')?.parentName).toBeUndefined();
+      expect(r.dataItems.find((d) => d.name === 'WS-NAME')?.parentName).toBe('WS-RECORD');
+      expect(r.dataItems.find((d) => d.name === 'WS-AMOUNT')?.parentName).toBe('WS-RECORD');
+    });
+
+    it('10-level under 05 gets parentName of the 05 item', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-RECORD.',
+        '           05 WS-NAME.',
+        '               10 WS-FIRST     PIC X(15).',
+        '               10 WS-LAST      PIC X(15).',
+        '           05 WS-AMOUNT        PIC 9(7).',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find((d) => d.name === 'WS-FIRST')?.parentName).toBe('WS-NAME');
+      expect(r.dataItems.find((d) => d.name === 'WS-LAST')?.parentName).toBe('WS-NAME');
+      expect(r.dataItems.find((d) => d.name === 'WS-AMOUNT')?.parentName).toBe('WS-RECORD');
+    });
+
+    it('88-level gets parentName of preceding non-88 data item', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-STATUS             PIC X.',
+        '           88 IS-ACTIVE         VALUE "A".',
+        '           88 IS-INACTIVE       VALUE "I".',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find((d) => d.name === 'IS-ACTIVE')?.parentName).toBe('WS-STATUS');
+      expect(r.dataItems.find((d) => d.name === 'IS-INACTIVE')?.parentName).toBe('WS-STATUS');
+    });
+
+    it('level stack resets on section transition', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-RECORD.',
+        '           05 WS-NAME          PIC X(30).',
+        '      LINKAGE SECTION.',
+        '       01 LS-PARAM             PIC X(10).',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find((d) => d.name === 'WS-NAME')?.parentName).toBe('WS-RECORD');
+      expect(r.dataItems.find((d) => d.name === 'LS-PARAM')?.parentName).toBeUndefined();
+    });
+
+    it('sibling items at same level get same parent', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-RECORD.',
+        '           05 WS-A             PIC X(10).',
+        '           05 WS-B             PIC X(10).',
+        '           05 WS-C             PIC X(10).',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find((d) => d.name === 'WS-A')?.parentName).toBe('WS-RECORD');
+      expect(r.dataItems.find((d) => d.name === 'WS-B')?.parentName).toBe('WS-RECORD');
+      expect(r.dataItems.find((d) => d.name === 'WS-C')?.parentName).toBe('WS-RECORD');
+    });
+
+    it('77-level is always top-level (no parentName)', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-RECORD.',
+        '           05 WS-NAME          PIC X(30).',
+        '       77 WS-STANDALONE         PIC 9(5).',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find((d) => d.name === 'WS-STANDALONE')?.parentName).toBeUndefined();
+    });
+
+    it('nested program level stack is scoped per program', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. OUTER.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-OUTER-REC.',
+        '           05 WS-OUTER-FIELD   PIC X(10).',
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. INNER.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-INNER-REC.',
+        '           05 WS-INNER-FIELD   PIC X(10).',
+        '       END PROGRAM INNER.',
+        '       END PROGRAM OUTER.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.dataItems.find((d) => d.name === 'WS-OUTER-FIELD')?.parentName).toBe('WS-OUTER-REC');
+      expect(r.dataItems.find((d) => d.name === 'WS-INNER-FIELD')?.parentName).toBe('WS-INNER-REC');
+    });
+
+    it('REDEFINES item has parentName and redefines both set', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. TESTPROG.',
+        '      DATA DIVISION.',
+        '      WORKING-STORAGE SECTION.',
+        '       01 WS-RECORD.',
+        '           05 WS-NAME          PIC X(30).',
+        '       01 WS-ALT REDEFINES WS-RECORD.',
+        '           05 WS-CODE          PIC X(30).',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      const alt = r.dataItems.find((d) => d.name === 'WS-ALT');
+      expect(alt?.parentName).toBeUndefined();
+      expect(alt?.redefines).toBe('WS-RECORD');
+      expect(r.dataItems.find((d) => d.name === 'WS-CODE')?.parentName).toBe('WS-ALT');
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Environment Division
   // -------------------------------------------------------------------------
   describe('Environment Division', () => {
