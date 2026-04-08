@@ -1,6 +1,6 @@
 # GitNexus 语言支持全景矩阵
 
-> 最后更新：2026-04-09 · 基于 commit `e60099a` (main)  
+> 最后更新：2026-04-08 · 基于 commit `e60099a` (main)  
 > 数据来源：`gitnexus/src/core/ingestion/` 源码实际分析（非文档推测）
 
 ---
@@ -64,7 +64,7 @@
 | Swift | ✅ | 🟡 | 🟡 | swift resolver（`Package.swift` targets）；`extractSwiftNamedBindings`（`import class/func/var Module.Symbol` 限定导入，`†` 可选安装） |
 | Dart | ✅ | 🟡 | 🟢 | dart resolver + `extractDartNamedBindings`（`show` 组合符精确绑定）（`†` 可选安装） |
 | Ruby | ✅ | ⚫ | 🟡 | ruby resolver（require/require_relative via callRouter）；**无 named-bindings**，mixin/extend 无法追踪 |
-| Objective-C | ✅ | ⚫ | 🔴 | standard resolver（`#import` 扫描）；**无 named-bindings**；category/protocol 解析缺失 |
+| Objective-C | ✅ | ⚫ | 🔴 | standard resolver（`#import` 扫描）；**无 named-bindings**；category 合并语义仍有限 |
 | COBOL | ⚫ | ⚫ | ⚫ | COPY 语句无解析；无绑定实现 |
 
 > **现状**：Go（包别名）、Dart（`show` 组合符）、Swift（`import class/func/var` 限定式导入）已实现 named-bindings。剩余缺口：Ruby 因动态 `method_missing`/`include` 难度较高；C/C++ 受预处理器影响最难。
@@ -244,7 +244,7 @@
 | 路由提取器：Spring `@RequestMapping`/`@GetMapping`（缺 HANDLES_ROUTE 边） | Java, Kotlin | 🟡 中 | 🔴 P1 | ✅ 已完成（e60099a） |
 | 路由提取器：FastAPI `@router.xxx` / Gin / Echo / Fiber handler | Python, Go | 🟡 中 | 🔴 P1 | ✅ 已完成（e60099a） |
 | named-bindings：Swift（`import class/func/var` 限定式） | Swift | 🟡 中 | 🟡 P2 | ✅ 已完成（e60099a） |
-| Objective-C 无 Method 节点（HAS_METHOD 边） | Objective-C | 🟢 低 | 🟡 P2 | ✅ 已完成（e60099a） |
+| Objective-C 无 Method 节点（HAS_METHOD 边） | Objective-C | 🟢 低 | 🟡 P2 | ✅ 已完成（未发布） |
 | named-bindings：Ruby（`require` 为 wildcard，无 named-import 语义） | Ruby | 🔴 高 | ⚪ 不适用 | ⚫ 跳过（Ruby 无具名导入） |
 | C# 无构造函数推断 | C# | 🟢 低 | 🟢 P3 | ✅ 已完成 |
 | Vue SFC 模板层无符号提取 | Vue SFC | 🟡 中 | 🟢 P3 | ✅ 已完成 |
@@ -258,7 +258,7 @@
 
 | 日期 | commit | 变更内容 |
 |------|--------|----------|
-| 2026-04-08 | 未发布 | ObjC CFG DSL（`objectivec-static-edges.sg`，覆盖 if/while/for/switch/@try/@catch/@synchronized 等）；ObjC 升入 LANGUAGE_TIERS.LIMITED；missing-guard/resource/return-check 新增 ObjC 专属规则；taint.ts 扩展 ObjC source/sink/sanitizer（SQL/JS/HTML/路径穿越/动态分派/KVC 注入等） |
+| 2026-04-08 | 未发布 | ObjC CFG DSL（`objectivec-static-edges.sg`，覆盖 if/while/for/switch/@try/@catch/@synchronized 等）；ObjC 升入 LANGUAGE_TIERS.LIMITED；missing-guard/resource/return-check 新增 ObjC 专属规则；taint.ts 扩展 ObjC source/sink/sanitizer（SQL/JS/HTML/路径穿越/动态分派/KVC 注入等）；修复 ObjC 容器 AST 节点映射并补充 `test/integration/resolvers/objc.test.ts`（9/9 通过） |
 | 2026-04-09 | `e60099a` | Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` 路由提取器（Java/Kotlin）；FastAPI `@app.get`/`@router.post` + Gin/Echo/Fiber `r.GET()/.POST()` 路由提取器（Python/Go）；Swift `import class/func/var` 限定导入 named-binding extractor；ObjC `methodExtractor` 注册（`objcMethodConfig` + `extractOwnerName` 模式，HAS_METHOD 边现在可用） |
 | 2026-04-08 | `796aad9` | Rust/C/C++ CFG DSL（各 18/14/20 节点类型）；Kotlin/C# CFG DSL（13/20 节点）；LANGUAGE_DSL_MAP 覆盖 10 种语言；Dart `show`/Go 包别名 named-bindings；Swift/Dart/ArkTS bug 规则扩展（MG/MU/MR/MCG）；COBOL EVALUATE/IF 控制流模拟（CALLS 图边）；XSS 规则（OWASP A03）注册 |
 | 2026-04-08 | `36506d0` | 新增 Java/Go CFG DSL（14/9 边）；新增 SQL 注入（OWASP A03）和路径穿越（OWASP A01/CWE-22）检测规则；`builtinRules` 从 6 条扩展为 8 条；Django/Rails 路由提取器集成至 pipeline.ts |
