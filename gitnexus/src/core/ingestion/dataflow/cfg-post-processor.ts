@@ -6,6 +6,7 @@
  * 2. BREAK/CONTINUE routing to nearest enclosing loop header
  * 3. THROW routing to nearest enclosing catch clause
  * 4. CATCH edges from try_statement to catch_clause
+ * 5. DYNAMIC_DISPATCH edges for performSelector-style dynamic calls
  *
  * TSG JSON format:
  * [
@@ -42,6 +43,10 @@ export interface CFGNode {
   label: string;
   statementType?: string;
   sourceText?: string;
+  /** For message expressions: the method name */
+  method?: string;
+  /** For message expressions: the receiver expression */
+  receiver?: string;
 }
 
 export interface CFGEdge {
@@ -67,7 +72,15 @@ export function parseTSGOutput(json: string): { nodes: CFGNode[]; edges: CFGEdge
   // Ties: prefer nodes with statementType (more complete metadata)
   const bestByLabel = new Map<
     string,
-    { id: number; label: string; statementType?: string; sourceText?: string; edgeCount: number }
+    {
+      id: number;
+      label: string;
+      statementType?: string;
+      sourceText?: string;
+      method?: string;
+      receiver?: string;
+      edgeCount: number;
+    }
   >();
   for (const n of graph) {
     const label = getString(n.attrs, 'label') ?? '';
@@ -83,6 +96,8 @@ export function parseTSGOutput(json: string): { nodes: CFGNode[]; edges: CFGEdge
         label,
         statementType: st,
         sourceText: getString(n.attrs, 'sourceText'),
+        method: getString(n.attrs, 'method'),
+        receiver: getString(n.attrs, 'receiver'),
         edgeCount: n.edges.length,
       });
     }
@@ -355,6 +370,45 @@ function resolveCatchEdges(
 }
 
 /**
+ * Resolve DYNAMIC_DISPATCH edges for performSelector-style dynamic calls.
+ *
+ * Objective-C performSelector: and similar methods dynamically determine
+ * the target method at runtime based on the selector argument. We create
+ * DYNAMIC_DISPATCH edges from these call sites to indicate that control
+ * flow cannot be statically determined.
+ *
+ * Detection criteria:
+ * - statementType === "message" (ObjC message expression)
+ * - method attribute starts with "performSelector"
+ */
+function resolveDynamicDispatch(nodes: CFGNode[], edges: CFGEdge[]): CFGEdge[] {
+  const newEdges = [...edges];
+  const existingKeys = new Set(newEdges.map((e) => `${e.sourceId}|${e.targetId}|${e.type}`));
+
+  // Find performSelector message nodes
+  const dynamicDispatchNodes = nodes.filter(
+    (n) => n.statementType === 'message' && n.method && /^performSelector/.test(n.method),
+  );
+
+  for (const node of dynamicDispatchNodes) {
+    // Create a self-referential DYNAMIC_DISPATCH edge to mark this node
+    // as having dynamic dispatch. The target is the same node to indicate
+    // "the target is undetermined at static analysis time".
+    const key = `${node.id}|${node.id}|DYNAMIC_DISPATCH`;
+    if (!existingKeys.has(key)) {
+      newEdges.push({
+        sourceId: node.id,
+        targetId: node.id,
+        type: 'DYNAMIC_DISPATCH',
+      });
+      existingKeys.add(key);
+    }
+  }
+
+  return newEdges;
+}
+
+/**
  * Main post-processing pipeline
  */
 export function postProcessTSGGraph(
@@ -375,6 +429,9 @@ export function postProcessTSGGraph(
 
   // 4. Add CATCH edges to nearest catch
   resultEdges = resolveCatchEdges(nodes, resultEdges, tree);
+
+  // 5. Add DYNAMIC_DISPATCH edges for performSelector-style calls
+  resultEdges = resolveDynamicDispatch(nodes, resultEdges);
 
   return { nodes, edges: resultEdges };
 }
