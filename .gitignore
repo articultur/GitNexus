@@ -59,6 +59,7 @@ GitNexus.sln
 
 # Python
 /github/scripts/triage/__pycache__/
+eval/data/
 
 # Local documentation
 docs/plans/
@@ -70,6 +71,7 @@ local_docs/
 
 # Assets
 assets/
+gitnexus/*.tgz
 
 # Swarm
 .swarm/

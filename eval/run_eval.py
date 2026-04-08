@@ -60,6 +60,7 @@ CONFIGS_DIR = EVAL_DIR / "configs"
 MODELS_DIR = CONFIGS_DIR / "models"
 MODES_DIR = CONFIGS_DIR / "modes"
 DEFAULT_OUTPUT_DIR = EVAL_DIR / "results"
+DEFAULT_DATASET_DIR = EVAL_DIR / "data" / "hf_datasets"
 
 # Available models and modes (discovered from config files)
 AVAILABLE_MODELS = sorted([p.stem for p in MODELS_DIR.glob("*.yaml")])
@@ -113,10 +114,106 @@ def load_instances(subset: str, split: str, slice_spec: str = "", filter_spec: s
     """Load SWE-bench instances."""
     from datasets import load_dataset
     import re
+    import time
+    import subprocess
 
     dataset_path = DATASET_MAPPING.get(subset, subset)
     logger.info(f"Loading dataset: {dataset_path}, split: {split}")
-    instances = list(load_dataset(dataset_path, split=split))
+
+    def _try_load_from_gitee_mirror(path: str):
+        """Best-effort mirror fetch from Gitee org hf-datasets.
+
+        Mirror naming follows the repo name part of the HF dataset path, e.g.:
+        princeton-nlp/SWE-Bench_Lite -> https://gitee.com/hf-datasets/SWE-Bench_Lite.git
+        """
+        mirror_base = os.environ.get("GITNEXUS_DATASET_MIRROR", "https://gitee.com/hf-datasets").rstrip("/")
+        mirror_root = Path(os.environ.get("GITNEXUS_DATASET_LOCAL_DIR", str(DEFAULT_DATASET_DIR)))
+        refresh_mirror = os.environ.get("GITNEXUS_REFRESH_DATASET_MIRROR", "0") == "1"
+        repo_name = path.split("/")[-1]
+        mirror_url = f"{mirror_base}/{repo_name}.git"
+        mirror_cache = mirror_root / repo_name
+        mirror_cache.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            if mirror_cache.exists():
+                if refresh_mirror:
+                    # Refresh is opt-in so existing local datasets remain usable offline.
+                    subprocess.run(
+                        ["git", "-C", str(mirror_cache), "fetch", "--depth", "1", "origin", "main"],
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+            else:
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", mirror_url, str(mirror_cache)],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+
+            # Gitee dataset mirrors commonly store large parquet files via Git LFS.
+            # Pulling LFS is best-effort; if git-lfs is unavailable we still continue.
+            subprocess.run(
+                ["git", "-C", str(mirror_cache), "lfs", "pull"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            logger.info("Trying dataset mirror from local store: %s", mirror_cache)
+            return list(load_dataset(str(mirror_cache), split=split))
+        except Exception as exc:
+            logger.warning("Dataset mirror load failed (%s): %s", mirror_url, exc)
+            return None
+
+    # Mirror-first strategy: prefer Gitee mirror when enabled, fallback to HF.
+    use_mirror = os.environ.get("GITNEXUS_USE_GITEE_MIRROR", "1") == "1"
+    if use_mirror:
+        mirror_instances = _try_load_from_gitee_mirror(dataset_path)
+        if mirror_instances is not None:
+            instances = mirror_instances
+        else:
+            last_error: Exception | None = None
+            for attempt in range(1, 6):
+                try:
+                    instances = list(load_dataset(dataset_path, split=split))
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if attempt == 5:
+                        raise
+                    wait_s = 2 ** (attempt - 1)
+                    logger.warning(
+                        "Dataset load failed (attempt %s/5): %s. Retrying in %ss",
+                        attempt,
+                        exc,
+                        wait_s,
+                    )
+                    time.sleep(wait_s)
+            else:
+                raise RuntimeError(f"Failed to load dataset after retries: {last_error}")
+    else:
+        last_error: Exception | None = None
+        for attempt in range(1, 6):
+            try:
+                instances = list(load_dataset(dataset_path, split=split))
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt == 5:
+                    raise
+                wait_s = 2 ** (attempt - 1)
+                logger.warning(
+                    "Dataset load failed (attempt %s/5): %s. Retrying in %ss",
+                    attempt,
+                    exc,
+                    wait_s,
+                )
+                time.sleep(wait_s)
+        else:
+            raise RuntimeError(f"Failed to load dataset after retries: {last_error}")
 
     if filter_spec:
         instances = [i for i in instances if re.match(filter_spec, i["instance_id"])]
