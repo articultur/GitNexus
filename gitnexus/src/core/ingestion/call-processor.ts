@@ -996,12 +996,8 @@ export const processCalls = async (
           if (
             isSubclassOf(ctorType, receiverTypeName, parentMap) ||
             isSubclassOf(ctorType, receiverTypeName, globalParentMap) ||
-            (ctx.symbols
-              .lookupFuzzy(ctorType)
-              .some((d) => d.type === 'Class' || d.type === 'Struct') &&
-              ctx.symbols
-                .lookupFuzzy(receiverTypeName)
-                .some((d) => d.type === 'Class' || d.type === 'Struct' || d.type === 'Interface'))
+            (ctx.symbols.lookupClassByName(ctorType).length > 0 &&
+              ctx.symbols.lookupClassByName(receiverTypeName).length > 0)
           ) {
             receiverTypeName = ctorType;
           }
