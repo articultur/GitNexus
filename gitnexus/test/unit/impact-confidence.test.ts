@@ -14,6 +14,7 @@ import {
   IMPACT_RELATION_CONFIDENCE,
   VALID_RELATION_TYPES,
 } from '../../src/mcp/local/local-backend.js';
+import { confidenceForRelType } from '../../src/mcp/local/tools/shared.js';
 
 // ─── IMPACT_RELATION_CONFIDENCE — value assertions ────────────────────────
 
@@ -68,11 +69,7 @@ describe('IMPACT_RELATION_CONFIDENCE', () => {
 
 // ─── confidenceForRelType — fallback semantics ────────────────────────────
 //
-// confidenceForRelType is not exported, so we replicate its logic here to
-// verify the semantics that the production code must uphold.
-
-const confidenceForRelType = (relType: string | undefined): number =>
-  IMPACT_RELATION_CONFIDENCE[relType ?? ''] ?? 0.5;
+// Now imported directly from shared.ts where it is exported.
 
 describe('confidenceForRelType', () => {
   it('returns the correct floor for known types', () => {
