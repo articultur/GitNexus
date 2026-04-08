@@ -355,17 +355,13 @@ function extractParameterInfo(node: SyntaxNode): BlockParameterInfo | undefined 
 // Task 3: property synthesis
 // ============================================================================
 
+/** Re-export ObjCMethodSignature from named-bindings/types for use here. */
+export type { ObjCMethodSignature } from '../named-bindings/types.js';
+
 /** Information about synthesized accessor methods. */
 export interface PropertyInfo {
-  getter: {
-    selector: string;
-    returnType: TypeInfo;
-  };
-  setter: {
-    selector: string;
-    returnType: TypeInfo;
-    paramType: TypeInfo;
-  } | null;
+  getter: import('../named-bindings/types.js').ObjCMethodSignature;
+  setter: import('../named-bindings/types.js').ObjCMethodSignature | null;
 }
 
 /**
@@ -461,16 +457,21 @@ export function synthesizePropertyAccessors(node: SyntaxNode): PropertyInfo {
     }
   }
 
+  const propertyType: TypeInfo = { name: typeName, isPointer };
+
   return {
     getter: {
       selector: getterSelector,
-      returnType: { name: typeName, isPointer },
+      returnType: propertyType,
+      parameters: [],
+      isClassMethod: false,
     },
     setter: setterSelector
       ? {
           selector: setterSelector,
           returnType: { name: 'void' },
-          paramType: { name: typeName, isPointer },
+          parameters: [{ name: propertyName, type: propertyType }],
+          isClassMethod: false,
         }
       : null,
   };
