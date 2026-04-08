@@ -280,3 +280,20 @@
   attr (@expr.cfg) label = "expr"
   attr (@expr.cfg) statementType = "expression"
 }
+
+; ============================================================
+; @AUTORELEASEPOOL STATEMENT
+; ============================================================
+(autoreleasepool_statement
+  (compound_statement) @pool_body
+) @pool
+{
+  node @pool.cfg
+  attr (@pool.cfg) label = "autoreleasepool"
+  attr (@pool.cfg) statementType = "autoreleasepool"
+
+  node @pool.body_node
+  attr (@pool.body_node) label = (source-text @pool_body)
+  edge @pool.cfg -> @pool.body_node
+  attr (@pool.cfg -> @pool.body_node) type = "AUTORELEASEPOOL_BODY"
+}
