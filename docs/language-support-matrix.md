@@ -175,10 +175,10 @@
 | Ruby | LIMITED | ✅ | ⚫ | 同上 | 🔴 |
 | Swift | LIMITED | ✅ | ⚫ | 同上；actor 并发模型未建模（`†` 可选） | 🔴 |
 | Dart | LIMITED | ✅ | ⚫ | 同上（`†` 可选） | 🔴 |
-| Objective-C | BASIC | ✅ | ⚫ | 极简：仅检测 sink 调用点 | 🔴 |
+| Objective-C | LIMITED | ✅ | **ObjC** | CFG DSL 就绪（@try/@catch/@synchronized/fast-enum）；taint source/sink/sanitizer 已配置 | 🟡 |
 | COBOL | BASIC | ⚫ | ⚫ | 无污点配置；无 CFG | ⚫ |
 
-> **CFG DSL 现状**：TypeScript(17)、JavaScript(16)、Python(8)、Java(14)、Go(9) 为既有 DSL；Kotlin(13)、C#(20)、Rust(18)、C(14)、C++(20) 已在本轮完成，`LANGUAGE_DSL_MAP` 合计覆盖 **10 种语言**。PHP、Ruby、Swift、Dart 仍无 DSL（均为 LIMITED 层，宏/动态特性影响精度）。
+> **CFG DSL 现状**：TypeScript(17)、JavaScript(16)、Python(8)、Java(14)、Go(9) 为既有 DSL；Kotlin(13)、C#(20)、Rust(18)、C(14)、C++(20) 已在本轮完成，`LANGUAGE_DSL_MAP` 合计覆盖 **11 种语言**（含 Objective-C）。PHP、Ruby、Swift、Dart 仍无 DSL（均为 LIMITED 层，宏/动态特性影响精度）。
 
 ---
 
@@ -203,7 +203,7 @@
 | Swift | ✅ | ✅ | ✅ | 🟡 | ⚫ | ✅ | ⚫ | ⚫ | ⚫ | **4/9** 🟡 |
 | Dart | ✅ | ✅ | ✅ | ⚫ | ⚫ | ✅ | ⚫ | ⚫ | ⚫ | **4/9** 🟡 |
 | ArkTS | ✅ | ✅ | ⚫ | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **2/9** 🔴 |
-| Objective-C | 🟡 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **0/9** 🔴 |
+| Objective-C | ✅ | ⚫ | ✅ | ⚫ | ✅ | ⚫ | 🟡 | 🟡 | 🟡 | **3/9** 🟡 |
 | COBOL | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ | **0/9** ⚫ |
 
 > 列缩写：MG=missing-guard · MU=missing-unwrap · MR=missing-resource · MEH=missing-exception-handling · MRC=missing-return-check · MCG=missing-concurrency-guard · SQLi=sql-injection · PT=path-traversal · XSS=xss  
@@ -230,10 +230,10 @@
 | **Swift** | 🟡 | 🟡 | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | <!-- 导入绑定：qualified import extractor 已就绪 -->
 | **Dart** | 🟢 | 🟡 | 🟡 | 🟢 | 🔴 | 🟡 | 🟡 |
 | **C / C++** | 🟡 | 🟡 | 🔴 | 🔴 | 🟢 | 🟡 | 🔴 |
-| **Objective-C** | 🔴 | 🟡 | 🟡 | 🔴 | 🔴 | 🔴 | 🔴 |
+| **Objective-C** | 🔴 | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | 🟡 |
 | **COBOL** | ⚫ | 🔴 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ |
 
-> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C# 由 Tier-3 升入 **Tier-2**（CFG DSL 已齐备）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 由 Tier-4 升入 **Tier-3**（bug 规则 + named-bindings 改善）；C/C++ 为 **Tier-3**（新增 CFG DSL，宏/指针分析仍有限）；Objective-C 由 Tier-4 升入 **Tier-4+**（methodExtractor 已注册，HAS_METHOD 边现在可用）；COBOL 为 **未就绪**。
+> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C# 由 Tier-3 升入 **Tier-2**（CFG DSL 已齐备）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 由 Tier-4 升入 **Tier-3**（bug 规则 + named-bindings 改善）；C/C++ 为 **Tier-3**（新增 CFG DSL，宏/指针分析仍有限）；Objective-C 由 Tier-4+ 升入 **Tier-3**（CFG DSL 完成，ObjC bug 规则 + taint sinks 就绪，数据流/Bug检测均达 🟡）；COBOL 为 **未就绪**。
 
 ---
 
@@ -248,6 +248,8 @@
 | named-bindings：Ruby（`require` 为 wildcard，无 named-import 语义） | Ruby | 🔴 高 | ⚪ 不适用 | ⚫ 跳过（Ruby 无具名导入） |
 | C# 无构造函数推断 | C# | 🟢 低 | 🟢 P3 | ✅ 已完成 |
 | Vue SFC 模板层无符号提取 | Vue SFC | 🟡 中 | 🟢 P3 | ✅ 已完成 |
+| ObjC CFG DSL（控制流图 + limited-tier 数据流分析） | Objective-C | 🟢 低 | 🟡 P2 | ✅ 已完成 |
+| ObjC bug 规则（missing-guard / resource / return-check + taint sinks） | Objective-C | 🟡 中 | 🟡 P2 | ✅ 已完成 |
 | COBOL 全面支持（tree-sitter 替代 Regex + DATA DIVISION 变量提取） | COBOL | 🔴 高 | ⚫ 战略 | 🔲 开放 |
 
 ---
@@ -256,6 +258,7 @@
 
 | 日期 | commit | 变更内容 |
 |------|--------|----------|
+| 2026-04-08 | 未发布 | ObjC CFG DSL（`objectivec-static-edges.sg`，覆盖 if/while/for/switch/@try/@catch/@synchronized 等）；ObjC 升入 LANGUAGE_TIERS.LIMITED；missing-guard/resource/return-check 新增 ObjC 专属规则；taint.ts 扩展 ObjC source/sink/sanitizer（SQL/JS/HTML/路径穿越/动态分派/KVC 注入等） |
 | 2026-04-09 | `e60099a` | Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` 路由提取器（Java/Kotlin）；FastAPI `@app.get`/`@router.post` + Gin/Echo/Fiber `r.GET()/.POST()` 路由提取器（Python/Go）；Swift `import class/func/var` 限定导入 named-binding extractor；ObjC `methodExtractor` 注册（`objcMethodConfig` + `extractOwnerName` 模式，HAS_METHOD 边现在可用） |
 | 2026-04-08 | `796aad9` | Rust/C/C++ CFG DSL（各 18/14/20 节点类型）；Kotlin/C# CFG DSL（13/20 节点）；LANGUAGE_DSL_MAP 覆盖 10 种语言；Dart `show`/Go 包别名 named-bindings；Swift/Dart/ArkTS bug 规则扩展（MG/MU/MR/MCG）；COBOL EVALUATE/IF 控制流模拟（CALLS 图边）；XSS 规则（OWASP A03）注册 |
 | 2026-04-08 | `36506d0` | 新增 Java/Go CFG DSL（14/9 边）；新增 SQL 注入（OWASP A03）和路径穿越（OWASP A01/CWE-22）检测规则；`builtinRules` 从 6 条扩展为 8 条；Django/Rails 路由提取器集成至 pipeline.ts |
