@@ -23,6 +23,7 @@ import { createFieldExtractor } from '../field-extractors/generic.js';
 import { dartConfig as dartFieldConfig } from '../field-extractors/configs/dart.js';
 import { createMethodExtractor } from '../method-extractors/generic.js';
 import { dartMethodConfig } from '../method-extractors/configs/dart.js';
+import { extractDartNamedBindings } from '../named-bindings/dart.js';
 
 /**
  * Resolve the enclosing function from a `function_body` node by looking at its
@@ -90,6 +91,7 @@ export const dartProvider = defineLanguage({
   exportChecker: dartExportChecker,
   importResolver: resolveDartImport,
   importSemantics: 'wildcard',
+  namedBindingExtractor: extractDartNamedBindings,
   fieldExtractor: createFieldExtractor(dartFieldConfig),
   methodExtractor: createMethodExtractor(dartMethodConfig),
   enclosingFunctionFinder: dartEnclosingFunctionFinder,

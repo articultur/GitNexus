@@ -37,6 +37,18 @@ const MUTABLE_ACCESS: Array<{
     languages: ['python'],
     description: 'mutable state in Python without Lock',
   },
+  // Swift: shared mutable state accessed without DispatchQueue/NSLock/actor
+  {
+    pattern: /\bvar\s+\w+\s*=.*(?:DispatchQueue|DispatchGroup|NotificationCenter|Thread)/,
+    languages: ['swift'],
+    description: 'shared mutable state in Swift without DispatchQueue barrier or actor',
+  },
+  // Dart: shared mutable state accessed without Isolate-level protection
+  {
+    pattern: /\bvar\s+\w+\s*=.*(?:Isolate\.spawn|compute\(|Future\.wait|Stream\.fromFutures)/,
+    languages: ['dart'],
+    description: 'shared mutable state in Dart async/Isolate context',
+  },
 ];
 
 // Patterns indicating synchronization IS present
@@ -58,6 +70,17 @@ const SYNC_PATTERNS: RegExp[] = [
   /\bCriticalSection\b/,
   /\bMonitor\b/,
   /\bvolatile\b/,
+  // Swift synchronization primitives
+  /\bDispatchQueue\b/,
+  /\bNSLock\b/,
+  /\bNSRecursiveLock\b/,
+  /\bOSAllocatedUnfairLock\b/,
+  /\b@MainActor\b/,
+  /\bactor\s+\w/,
+  // Dart: Mutex / Completer / StreamController with synchronization
+  /\bMutex\b/,
+  /\bReadWriteMutex\b/,
+  /\bIsolate\./,
 ];
 
 export const missingConcurrencyGuardRule: Rule = {
@@ -71,9 +94,7 @@ export const missingConcurrencyGuardRule: Rule = {
     confidence: 0.6,
     languages: ['*'],
     trigger: {
-      propertyConditions: [
-        { property: 'content', operator: 'not_contains', value: '""' },
-      ],
+      propertyConditions: [{ property: 'content', operator: 'not_contains', value: '""' }],
     },
     missing: {},
   },
@@ -86,7 +107,10 @@ export const missingConcurrencyGuardRule: Rule = {
     const findings: string[] = [];
 
     // Only flag if the code has async/threading indicators
-    const hasConcurrency = /\b(?:async|await|Promise|setTimeout|setInterval|thread|Thread|goroutine|go\s+func|spawn|\.fork|multiprocessing|concurrent)/.test(content);
+    const hasConcurrency =
+      /\b(?:async|await|Promise|setTimeout|setInterval|thread|Thread|goroutine|go\s+func|spawn|\.fork|multiprocessing|concurrent)/.test(
+        content,
+      );
     if (!hasConcurrency) return null;
 
     // If sync primitives are present, assume proper handling

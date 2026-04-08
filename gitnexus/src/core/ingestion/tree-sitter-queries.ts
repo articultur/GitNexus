@@ -368,6 +368,17 @@ export const JAVA_QUERIES = `
     object: (_) @assignment.receiver
     field: (identifier) @assignment.property)
   right: (_)) @assignment
+
+; Spring route annotations with path argument: @GetMapping("/api/users")
+; tree-sitter-java: annotation  with annotation_argument_list
+(annotation
+  name: (identifier) @decorator.name
+  arguments: (annotation_argument_list
+    (string_literal (string_fragment) @decorator.arg)?)) @decorator
+
+; Spring route annotations without argument: @RestController, @RequestMapping on class
+(marker_annotation
+  name: (identifier) @decorator.name) @decorator
 `;
 
 // C queries - works with tree-sitter-c
@@ -453,6 +464,15 @@ export const GO_QUERIES = `
   (selector_expression
     operand: (_) @assignment.receiver
     field: (field_identifier) @assignment.property)) @assignment
+
+; Gin / Echo / Fiber route registration: r.GET("/path", handler), e.POST("/path", fn)
+; Uses the same express_route capture names as the TypeScript handler so the
+; existing express_route dispatch in parse-worker works unchanged.
+(call_expression
+  function: (selector_expression
+    field: (field_identifier) @express_route.method)
+  arguments: (argument_list
+    (interpreted_string_literal) @express_route.path)) @express_route
 `;
 
 // C++ queries - works with tree-sitter-cpp
@@ -947,6 +967,14 @@ export const KOTLIN_QUERIES = `
     (navigation_suffix
       (simple_identifier) @assignment.property))
   (_)) @assignment
+
+; Spring / Ktor route annotations with path argument: @GetMapping("/api/users")
+; tree-sitter-kotlin (fwcd): annotation  with value_arguments
+(annotation
+  (user_type (type_identifier) @decorator.name)
+  (value_arguments
+    (value_argument
+      (string_literal (string_content) @decorator.arg))?)) @decorator
 
 `;
 

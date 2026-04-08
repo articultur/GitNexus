@@ -14,7 +14,8 @@ const OPTIONAL_RETURN_PATTERNS: Array<{
   description: string;
 }> = [
   {
-    pattern: /\b(?:Map|WeakMap|WeakSet)\.prototype\.get|array\.find|\.find\(|\.at\(|\.pop\(|\.shift\(/i,
+    pattern:
+      /\b(?:Map|WeakMap|WeakSet)\.prototype\.get|array\.find|\.find\(|\.at\(|\.pop\(|\.shift\(/i,
     languages: ['typescript', 'javascript'],
     description: 'nullable return value used without null check',
   },
@@ -22,6 +23,21 @@ const OPTIONAL_RETURN_PATTERNS: Array<{
     pattern: /\.unwrap\(\)|\.expect\(/,
     languages: ['rust'],
     description: 'Result/Option unwrapped without prior check',
+  },
+  {
+    pattern: /\w+!/,
+    languages: ['swift'],
+    description: 'Swift force-unwrap (!) without prior nil check',
+  },
+  {
+    pattern: /\w+!/,
+    languages: ['dart'],
+    description: 'Dart null assertion (!) without prior null check',
+  },
+  {
+    pattern: /\w+!/,
+    languages: ['arkts'],
+    description: 'ArkTS non-null assertion (!) without prior null check',
   },
   {
     pattern: /\.get\(\)/,
@@ -57,9 +73,7 @@ export const missingUnwrapRule: Rule = {
     confidence: 0.75,
     languages: ['*'],
     trigger: {
-      propertyConditions: [
-        { property: 'content', operator: 'not_contains', value: '""' },
-      ],
+      propertyConditions: [{ property: 'content', operator: 'not_contains', value: '""' }],
     },
     missing: {},
   },
@@ -84,7 +98,10 @@ export const missingUnwrapRule: Rule = {
     // Language-specific: Rust .unwrap() without .is_some() / .is_ok()
     if (language === 'rust') {
       const unwrapCount = (content.match(/\.unwrap\(\)/g) || []).length;
-      const hasCheck = /\b(?:is_some|is_ok|if let|match|\.map\(|and_then|\.unwrap_or|\.unwrap_or_else)\b/.test(content);
+      const hasCheck =
+        /\b(?:is_some|is_ok|if let|match|\.map\(|and_then|\.unwrap_or|\.unwrap_or_else)\b/.test(
+          content,
+        );
       if (unwrapCount > 0 && !hasCheck) {
         findings.push(`Rust: ${unwrapCount} .unwrap() call(s) without prior check`);
       }
@@ -93,7 +110,9 @@ export const missingUnwrapRule: Rule = {
     // Language-specific: TS/JS - array.find / Map.get without null check
     if (language === 'typescript' || language === 'javascript') {
       const riskyAccess = content.match(/\.find\([^)]*\)/g);
-      const hasNullCheck = /\b(?:if\s*\(.*null|if\s*\(.*undefined|\?\.\w|\?\?|\!\s*=)/.test(content);
+      const hasNullCheck = /\b(?:if\s*\(.*null|if\s*\(.*undefined|\?\.\w|\?\?|\!\s*=)/.test(
+        content,
+      );
       if (riskyAccess && riskyAccess.length > 0 && !hasNullCheck) {
         findings.push('TS/JS: .find() result used without null/undefined check');
       }

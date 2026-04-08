@@ -1318,6 +1318,60 @@ function mapToGraph(
     }
   }
 
+  // ── EVALUATE -> CALLS edges (CFG simulation: SWITCH_CASE branches) ──────
+  for (const ev of extracted.evaluates) {
+    const callerId = scopedCallerLookup(ev.caller, ev.line);
+    for (const when of ev.whens) {
+      for (const performTarget of when.performs) {
+        const targetId = scopedParaLookup(performTarget, ev.line);
+        if (targetId) {
+          graph.addRelationship({
+            id: generateId(
+              'CALLS',
+              `${callerId}->evaluate-when-${when.value}->${performTarget}:L${ev.line}`,
+            ),
+            type: 'CALLS',
+            sourceId: callerId,
+            targetId,
+            confidence: 0.85,
+            reason: when.isOther ? 'cobol-evaluate-when-other' : 'cobol-evaluate-when',
+          });
+        }
+      }
+    }
+  }
+
+  // ── IF/ELSE -> CALLS edges (CFG simulation: TRUE/FALSE branches) ─────────
+  for (const branch of extracted.ifBranches) {
+    const callerId = scopedCallerLookup(branch.caller, branch.line);
+    for (const performTarget of branch.truePerforms) {
+      const targetId = scopedParaLookup(performTarget, branch.line);
+      if (targetId) {
+        graph.addRelationship({
+          id: generateId('CALLS', `${callerId}->if-true->${performTarget}:L${branch.line}`),
+          type: 'CALLS',
+          sourceId: callerId,
+          targetId,
+          confidence: 0.8,
+          reason: 'cobol-if-true-branch',
+        });
+      }
+    }
+    for (const performTarget of branch.falsePerforms) {
+      const targetId = scopedParaLookup(performTarget, branch.line);
+      if (targetId) {
+        graph.addRelationship({
+          id: generateId('CALLS', `${callerId}->if-false->${performTarget}:L${branch.line}`),
+          type: 'CALLS',
+          sourceId: callerId,
+          targetId,
+          confidence: 0.8,
+          reason: 'cobol-if-false-branch',
+        });
+      }
+    }
+  }
+
   // ── SORT/MERGE -> ACCESSES edges ──────────────────────────────
   for (const sort of extracted.sorts) {
     const sortFileId = generateId('Record', `${filePath}:${sort.sortFile}`);

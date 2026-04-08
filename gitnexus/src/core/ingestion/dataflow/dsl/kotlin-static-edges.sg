@@ -1,0 +1,233 @@
+; Kotlin CFG DSL — Control-Flow Graph edges for tree-sitter-kotlin (fwcd)
+; Kotlin's control-flow constructs are mostly *expressions* that return values,
+; so `if_expression`, `when_expression`, and `try_expression` replace the
+; *statement* equivalents found in Java.
+;
+; Edge type vocabulary (same as other DSLs):
+;   TRUE_BRANCH, FALSE_BRANCH, LOOP_HEADER, NEXT, TRY_BODY,
+;   CATCH, BREAK, CONTINUE, THROW, RETURN,
+;   SWITCH_CASE, SWITCH_DEFAULT
+;
+; BREAK/CONTINUE/THROW routing to nearest enclosing scope is handled by
+; the TypeScript post-processor (cfg-post-processor.ts).
+
+; ============================================================
+; FUNCTION DECLARATION  (fun name(...): ReturnType { ... })
+; ============================================================
+(function_declaration) @fn
+{
+  node @fn.cfg
+  attr (@fn.cfg) label = "fun"
+  attr (@fn.cfg) statementType = "function"
+}
+
+; ============================================================
+; IF EXPRESSION — TRUE_BRANCH / FALSE_BRANCH
+; Kotlin: if (cond) { thenBranch } else { elseBranch }
+; Both branches are optional (else can be absent).
+; ============================================================
+(if_expression) @if
+{
+  node @if.cfg
+  attr (@if.cfg) label = "if"
+  attr (@if.cfg) statementType = "if"
+}
+
+(if_expression
+  consequence: (_) @then
+) @if
+{
+  node @if.then_node
+  attr (@if.then_node) label = (source-text @then)
+  edge @if.cfg -> @if.then_node
+  attr (@if.cfg -> @if.then_node) type = "TRUE_BRANCH"
+}
+
+(if_expression
+  alternative: (_) @alt
+) @if
+{
+  node @if.else_node
+  attr (@if.else_node) label = (source-text @alt)
+  edge @if.cfg -> @if.else_node
+  attr (@if.cfg -> @if.else_node) type = "FALSE_BRANCH"
+}
+
+; ============================================================
+; WHEN EXPRESSION — SWITCH_CASE / SWITCH_DEFAULT
+; Kotlin: when (subject) { condition -> expr; else -> expr }
+; ============================================================
+(when_expression) @when
+{
+  node @when.cfg
+  attr (@when.cfg) label = "when"
+  attr (@when.cfg) statementType = "switch"
+}
+
+(when_expression
+  (when_entry
+    (else_keyword) @else_kw
+    (_) @else_body
+  ) @entry
+) @when
+{
+  node @entry.cfg
+  attr (@entry.cfg) label = (source-text @else_body)
+  attr (@entry.cfg) statementType = "case"
+  edge @when.cfg -> @entry.cfg
+  attr (@when.cfg -> @entry.cfg) type = "SWITCH_DEFAULT"
+}
+
+(when_expression
+  (when_entry
+    (when_condition) @cond
+    (_) @body
+  ) @entry
+) @when
+{
+  node @case.cfg
+  attr (@case.cfg) label = (source-text @body)
+  attr (@case.cfg) statementType = "case"
+  edge @when.cfg -> @case.cfg
+  attr (@when.cfg -> @case.cfg) type = "SWITCH_CASE"
+}
+
+; ============================================================
+; FOR LOOP — LOOP_HEADER
+; Kotlin: for (item in collection) { body }
+; ============================================================
+(for_statement
+  body: (_) @fb
+) @for
+{
+  node @for.cfg
+  attr (@for.cfg) label = "for"
+  attr (@for.cfg) statementType = "loop"
+
+  edge @for.cfg -> @for.cfg
+  attr (@for.cfg -> @for.cfg) type = "LOOP_HEADER"
+  attr (@for.cfg -> @for.cfg) isLoopHeader = #true
+
+  node @for.body
+  attr (@for.body) label = (source-text @fb)
+  edge @for.cfg -> @for.body
+  attr (@for.cfg -> @for.body) type = "NEXT"
+}
+
+; ============================================================
+; WHILE LOOP — LOOP_HEADER
+; ============================================================
+(while_statement
+  body: (_) @body
+) @while
+{
+  node @while.cfg
+  attr (@while.cfg) label = "while"
+  attr (@while.cfg) statementType = "loop"
+
+  edge @while.cfg -> @while.cfg
+  attr (@while.cfg -> @while.cfg) type = "LOOP_HEADER"
+  attr (@while.cfg -> @while.cfg) isLoopHeader = #true
+
+  node @body.cfg
+  attr (@body.cfg) label = (source-text @body)
+  edge @while.cfg -> @body.cfg
+  attr (@while.cfg -> @body.cfg) type = "NEXT"
+}
+
+; ============================================================
+; DO-WHILE LOOP — LOOP_HEADER
+; ============================================================
+(do_while_statement
+  body: (_) @body
+) @do
+{
+  node @do.cfg
+  attr (@do.cfg) label = "do-while"
+  attr (@do.cfg) statementType = "loop"
+
+  edge @do.cfg -> @do.cfg
+  attr (@do.cfg -> @do.cfg) type = "LOOP_HEADER"
+  attr (@do.cfg -> @do.cfg) isLoopHeader = #true
+
+  node @body.cfg
+  attr (@body.cfg) label = (source-text @body)
+  edge @do.cfg -> @body.cfg
+  attr (@do.cfg -> @body.cfg) type = "NEXT"
+}
+
+; ============================================================
+; TRY EXPRESSION — TRY_BODY / CATCH
+; Kotlin: try { ... } catch (e: Type) { ... } finally { ... }
+; ============================================================
+(try_expression) @try
+{
+  node @try.cfg
+  attr (@try.cfg) label = "try"
+  attr (@try.cfg) statementType = "try"
+
+  edge @try.cfg -> @try.cfg
+  attr (@try.cfg -> @try.cfg) type = "TRY_BODY"
+}
+
+(catch_block) @catch
+{
+  node @catch.cfg
+  attr (@catch.cfg) label = (source-text @catch)
+  attr (@catch.cfg) statementType = "catch"
+}
+
+(finally_block) @finally
+{
+  node @finally.cfg
+  attr (@finally.cfg) label = "finally"
+  attr (@finally.cfg) statementType = "finally"
+}
+
+; ============================================================
+; THROW — post-processor routes to nearest catch
+; Kotlin: throw SomeException(...)
+; ============================================================
+(throw) @t
+{
+  node @t.cfg
+  attr (@t.cfg) label = (source-text @t)
+  attr (@t.cfg) statementType = "throw"
+}
+
+; ============================================================
+; JUMP EXPRESSION — covers return, break, continue in Kotlin
+; ============================================================
+(jump_expression) @jump
+{
+  node @jump.cfg
+  attr (@jump.cfg) label = (source-text @jump)
+}
+
+; ============================================================
+; EXPRESSION STATEMENT
+; ============================================================
+(expression_statement) @expr
+{
+  node @expr.cfg
+  attr (@expr.cfg) label = (source-text @expr)
+}
+
+; ============================================================
+; PROPERTY DECLARATION (local val/var)
+; ============================================================
+(property_declaration) @decl
+{
+  node @decl.cfg
+  attr (@decl.cfg) label = (source-text @decl)
+}
+
+; ============================================================
+; CLASS DECLARATION
+; ============================================================
+(class_declaration) @class
+{
+  node @class.cfg
+  attr (@class.cfg) label = "class"
+  attr (@class.cfg) statementType = "class"
+}

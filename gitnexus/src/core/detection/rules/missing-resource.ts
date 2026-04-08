@@ -30,7 +30,8 @@ const RESOURCE_OPEN_PATTERNS: Array<{
   },
   // Java/Kotlin: new FileInputStream etc. without try-with-resources
   {
-    openPattern: /\bnew\s+(?:FileInputStream|FileOutputStream|BufferedReader|BufferedWriter|Connection|Socket)\s*\(/,
+    openPattern:
+      /\bnew\s+(?:FileInputStream|FileOutputStream|BufferedReader|BufferedWriter|Connection|Socket)\s*\(/,
     closePattern: /\btry\s*\(|\.close\s*\(\)|try-with-resources/,
     languages: ['java', 'kotlin'],
     description: 'resource opened without try-with-resources or close',
@@ -56,6 +57,21 @@ const RESOURCE_OPEN_PATTERNS: Array<{
     languages: ['rust'],
     description: 'file opened — verify explicit cleanup or rely on RAII',
   },
+  // Swift: FileHandle / InputStream opened without close
+  {
+    openPattern:
+      /\bFileHandle\(forReadingAtPath:|FileHandle\(forWritingAtPath:|InputStream\(fileAtPath:/,
+    closePattern: /\.closeFile\(\)|\.close\(\)/,
+    languages: ['swift'],
+    description: 'Swift file handle opened without close',
+  },
+  // Dart: File / RandomAccessFile opened without close
+  {
+    openPattern: /\.open(?:Sync)?\(|RandomAccessFile\(|File\(.*\)\.open/,
+    closePattern: /\.close(?:Sync)?\(\)|try\s*{[^}]*}\s*finally/,
+    languages: ['dart'],
+    description: 'Dart file opened without close',
+  },
 ];
 
 export const missingResourceRule: Rule = {
@@ -69,9 +85,7 @@ export const missingResourceRule: Rule = {
     confidence: 0.8,
     languages: ['*'],
     trigger: {
-      propertyConditions: [
-        { property: 'content', operator: 'not_contains', value: '""' },
-      ],
+      propertyConditions: [{ property: 'content', operator: 'not_contains', value: '""' }],
     },
     missing: {},
   },
@@ -90,7 +104,8 @@ export const missingResourceRule: Rule = {
       if (!opened) continue;
 
       // Check if there's a guard (try/finally, using, with, defer)
-      const hasGuard = /\btry\b[^}]*\bfinally\b/.test(content) ||
+      const hasGuard =
+        /\btry\b[^}]*\bfinally\b/.test(content) ||
         /\busing\s*[\((]/.test(content) ||
         /\bwith\s+open\b/.test(content) ||
         /\bdefer\s+/.test(content);

@@ -13,6 +13,7 @@ import { missingReturnCheckRule } from './missing-return-check.js';
 import { missingConcurrencyGuardRule } from './missing-concurrency-guard.js';
 import { sqlInjectionRule } from './sql-injection.js';
 import { pathTraversalRule } from './path-traversal.js';
+import { xssRule } from './xss.js';
 
 /** All built-in rules, in evaluation order. */
 export const builtinRules: Rule[] = [
@@ -24,4 +25,5 @@ export const builtinRules: Rule[] = [
   missingConcurrencyGuardRule,
   sqlInjectionRule,
   pathTraversalRule,
+  xssRule,
 ];

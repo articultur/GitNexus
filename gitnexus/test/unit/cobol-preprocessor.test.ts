@@ -2878,4 +2878,117 @@ describe('extractCobolSymbolsWithRegex', () => {
       expect(unstrOp!.target).toBe('WS-X');
     });
   });
+
+  // ── Phase 5: EVALUATE / IF control-flow extraction ─────────────────────
+
+  describe('EVALUATE block extraction (Phase 5)', () => {
+    it('extracts WHEN clauses with PERFORM targets', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. EVALPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           EVALUATE WS-ACTION',
+        '             WHEN "ADD"',
+        '               PERFORM ADD-ROUTINE',
+        '             WHEN "DELETE"',
+        '               PERFORM DEL-ROUTINE',
+        '             WHEN OTHER',
+        '               PERFORM ERR-ROUTINE',
+        '           END-EVALUATE.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.evaluates).toHaveLength(1);
+      const ev = r.evaluates[0];
+      expect(ev.subject.toUpperCase()).toContain('WS-ACTION');
+      expect(ev.whens).toHaveLength(3);
+
+      const whenAdd = ev.whens.find((w) => !w.isOther && w.performs.includes('ADD-ROUTINE'));
+      expect(whenAdd).toBeDefined();
+
+      const whenDel = ev.whens.find((w) => !w.isOther && w.performs.includes('DEL-ROUTINE'));
+      expect(whenDel).toBeDefined();
+
+      const whenOther = ev.whens.find((w) => w.isOther);
+      expect(whenOther).toBeDefined();
+      expect(whenOther!.performs).toContain('ERR-ROUTINE');
+    });
+
+    it('sets caller to enclosing paragraph', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. EVALPROG.',
+        '      PROCEDURE DIVISION.',
+        '       PROCESS-PARA.',
+        '           EVALUATE WS-FLAG',
+        '             WHEN "Y" PERFORM YES-PARA',
+        '             WHEN OTHER PERFORM NO-PARA',
+        '           END-EVALUATE.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.evaluates.length).toBeGreaterThan(0);
+      expect(r.evaluates[0].caller?.toUpperCase()).toContain('PROCESS-PARA');
+    });
+
+    it('returns empty evaluates array when no EVALUATE present', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. NOEVALS.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           MOVE "X" TO WS-A.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.evaluates).toHaveLength(0);
+    });
+  });
+
+  describe('IF block extraction (Phase 5)', () => {
+    it('extracts true and false branch PERFORM targets', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. IFPROG.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           IF WS-FLAG = "Y"',
+        '             PERFORM TRUE-PARA',
+        '           ELSE',
+        '             PERFORM FALSE-PARA',
+        '           END-IF.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.ifBranches.length).toBeGreaterThan(0);
+      const branch = r.ifBranches[0];
+      expect(branch.truePerforms).toContain('TRUE-PARA');
+      expect(branch.falsePerforms).toContain('FALSE-PARA');
+    });
+
+    it('captures only true branch when no else', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. IFPROG2.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           IF WS-COUNT > 0',
+        '             PERFORM PROCESS-PARA',
+        '           END-IF.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      const branch = r.ifBranches.find((b) => b.truePerforms.includes('PROCESS-PARA'));
+      expect(branch).toBeDefined();
+      expect(branch!.falsePerforms).toHaveLength(0);
+    });
+
+    it('returns empty ifBranches array when no IF with PERFORM present', () => {
+      const src = cobol(
+        '      IDENTIFICATION DIVISION.',
+        '       PROGRAM-ID. NOIF.',
+        '      PROCEDURE DIVISION.',
+        '       MAIN-PARA.',
+        '           MOVE "X" TO WS-A.',
+      );
+      const r = extractCobolSymbolsWithRegex(src, 'test.cbl');
+      expect(r.ifBranches).toHaveLength(0);
+    });
+  });
 });

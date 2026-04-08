@@ -1,0 +1,278 @@
+; C++ CFG DSL — Control-Flow Graph edges for tree-sitter-cpp
+;
+; Extends the C DSL with C++-specific constructs:
+;   try_statement / catch_clause / throw_statement
+;   range_based_for_statement
+;   lambda_expression
+;   co_return_statement, co_await_expression (C++20 coroutines)
+;
+; All base C constructs (function_definition, if_statement, while_statement,
+; do_statement, for_statement, switch_statement, break_statement,
+; continue_statement, return_statement, goto_statement) use the same
+; tree-sitter node types as C and are included below.
+;
+; Edge type vocabulary:
+;   TRUE_BRANCH, FALSE_BRANCH, LOOP_HEADER, NEXT, TRY_BODY,
+;   CATCH, BREAK, CONTINUE, THROW, RETURN,
+;   SWITCH_CASE, SWITCH_DEFAULT
+
+; ============================================================
+; FUNCTION DEFINITION
+; ============================================================
+(function_definition) @fn
+{
+  node @fn.cfg
+  attr (@fn.cfg) label = "function"
+  attr (@fn.cfg) statementType = "function"
+}
+
+; ============================================================
+; IF STATEMENT — TRUE_BRANCH / FALSE_BRANCH
+; ============================================================
+(if_statement
+  consequence: (_) @then
+  alternative: (_)? @alt
+) @if
+{
+  node @if.cfg
+  attr (@if.cfg) label = "if"
+  attr (@if.cfg) statementType = "if"
+
+  node @if.then_node
+  attr (@if.then_node) label = (source-text @then)
+  edge @if.cfg -> @if.then_node
+  attr (@if.cfg -> @if.then_node) type = "TRUE_BRANCH"
+
+  if some @alt {
+    node @if.else_node
+    attr (@if.else_node) label = (source-text @alt)
+    edge @if.cfg -> @if.else_node
+    attr (@if.cfg -> @if.else_node) type = "FALSE_BRANCH"
+  }
+}
+
+; ============================================================
+; WHILE LOOP
+; ============================================================
+(while_statement
+  body: (_) @wb
+) @while
+{
+  node @while.cfg
+  attr (@while.cfg) label = "while"
+  attr (@while.cfg) statementType = "loop"
+
+  edge @while.cfg -> @while.cfg
+  attr (@while.cfg -> @while.cfg) type = "LOOP_HEADER"
+  attr (@while.cfg -> @while.cfg) isLoopHeader = #true
+
+  node @while.body
+  attr (@while.body) label = (source-text @wb)
+  edge @while.cfg -> @while.body
+  attr (@while.cfg -> @while.body) type = "NEXT"
+}
+
+; ============================================================
+; DO-WHILE LOOP
+; ============================================================
+(do_statement
+  body: (_) @db
+) @do
+{
+  node @do.cfg
+  attr (@do.cfg) label = "do_while"
+  attr (@do.cfg) statementType = "loop"
+
+  edge @do.cfg -> @do.cfg
+  attr (@do.cfg -> @do.cfg) type = "LOOP_HEADER"
+  attr (@do.cfg -> @do.cfg) isLoopHeader = #true
+
+  node @do.body
+  attr (@do.body) label = (source-text @db)
+  edge @do.cfg -> @do.body
+  attr (@do.cfg -> @do.body) type = "NEXT"
+}
+
+; ============================================================
+; C-STYLE FOR LOOP
+; ============================================================
+(for_statement
+  body: (_) @fb
+) @for
+{
+  node @for.cfg
+  attr (@for.cfg) label = "for"
+  attr (@for.cfg) statementType = "loop"
+
+  edge @for.cfg -> @for.cfg
+  attr (@for.cfg -> @for.cfg) type = "LOOP_HEADER"
+  attr (@for.cfg -> @for.cfg) isLoopHeader = #true
+
+  node @for.body
+  attr (@for.body) label = (source-text @fb)
+  edge @for.cfg -> @for.body
+  attr (@for.cfg -> @for.body) type = "NEXT"
+}
+
+; ============================================================
+; RANGE-BASED FOR LOOP (C++11)
+;   for (auto x : collection) { body }
+; ============================================================
+(range_based_for_statement
+  body: (_) @rb
+) @rfor
+{
+  node @rfor.cfg
+  attr (@rfor.cfg) label = "range_for"
+  attr (@rfor.cfg) statementType = "loop"
+
+  edge @rfor.cfg -> @rfor.cfg
+  attr (@rfor.cfg -> @rfor.cfg) type = "LOOP_HEADER"
+  attr (@rfor.cfg -> @rfor.cfg) isLoopHeader = #true
+
+  node @rfor.body
+  attr (@rfor.body) label = (source-text @rb)
+  edge @rfor.cfg -> @rfor.body
+  attr (@rfor.cfg -> @rfor.body) type = "NEXT"
+}
+
+; ============================================================
+; SWITCH STATEMENT
+; ============================================================
+(switch_statement
+  body: (_) @sb
+) @switch
+{
+  node @switch.cfg
+  attr (@switch.cfg) label = "switch"
+  attr (@switch.cfg) statementType = "switch"
+
+  node @switch.body
+  attr (@switch.body) label = (source-text @sb)
+  edge @switch.cfg -> @switch.body
+  attr (@switch.cfg -> @switch.body) type = "NEXT"
+}
+
+(case_statement) @case
+{
+  node @case.cfg
+  attr (@case.cfg) label = "case"
+  attr (@case.cfg) statementType = "case"
+}
+
+(default_statement) @default
+{
+  node @default.cfg
+  attr (@default.cfg) label = "default"
+  attr (@default.cfg) statementType = "switch_default"
+}
+
+; ============================================================
+; TRY / CATCH / THROW (C++ exception handling)
+; ============================================================
+(try_statement
+  body: (_) @tb
+) @try
+{
+  node @try.cfg
+  attr (@try.cfg) label = "try"
+  attr (@try.cfg) statementType = "try"
+
+  node @try.body
+  attr (@try.body) label = (source-text @tb)
+  edge @try.cfg -> @try.body
+  attr (@try.cfg -> @try.body) type = "TRY_BODY"
+}
+
+(catch_clause
+  body: (_) @cb
+) @catch
+{
+  node @catch.cfg
+  attr (@catch.cfg) label = "catch"
+  attr (@catch.cfg) statementType = "catch"
+
+  node @catch.body
+  attr (@catch.body) label = (source-text @cb)
+  edge @catch.cfg -> @catch.body
+  attr (@catch.cfg -> @catch.body) type = "CATCH"
+}
+
+(throw_statement) @throw
+{
+  node @throw.cfg
+  attr (@throw.cfg) label = "throw"
+  attr (@throw.cfg) statementType = "throw"
+}
+
+; ============================================================
+; LAMBDA EXPRESSION (C++11)
+; ============================================================
+(lambda_expression) @lambda
+{
+  node @lambda.cfg
+  attr (@lambda.cfg) label = "lambda"
+  attr (@lambda.cfg) statementType = "function"
+}
+
+; ============================================================
+; GOTO STATEMENT
+; ============================================================
+(goto_statement) @goto
+{
+  node @goto.cfg
+  attr (@goto.cfg) label = "goto"
+  attr (@goto.cfg) statementType = "goto"
+}
+
+; ============================================================
+; BREAK / CONTINUE / RETURN
+; ============================================================
+(break_statement) @brk
+{
+  node @brk.cfg
+  attr (@brk.cfg) label = "break"
+  attr (@brk.cfg) statementType = "break"
+}
+
+(continue_statement) @cont
+{
+  node @cont.cfg
+  attr (@cont.cfg) label = "continue"
+  attr (@cont.cfg) statementType = "continue"
+}
+
+(return_statement) @ret
+{
+  node @ret.cfg
+  attr (@ret.cfg) label = "return"
+  attr (@ret.cfg) statementType = "return"
+}
+
+; C++20 coroutine co_return
+(co_return_statement) @coret
+{
+  node @coret.cfg
+  attr (@coret.cfg) label = "co_return"
+  attr (@coret.cfg) statementType = "return"
+}
+
+; ============================================================
+; VARIABLE DECLARATION
+; ============================================================
+(declaration) @decl
+{
+  node @decl.cfg
+  attr (@decl.cfg) label = "decl"
+  attr (@decl.cfg) statementType = "declaration"
+}
+
+; ============================================================
+; EXPRESSION STATEMENT
+; ============================================================
+(expression_statement) @expr
+{
+  node @expr.cfg
+  attr (@expr.cfg) label = "expr"
+  attr (@expr.cfg) statementType = "expression"
+}

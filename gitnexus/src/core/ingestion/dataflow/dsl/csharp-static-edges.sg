@@ -1,0 +1,301 @@
+; C# CFG DSL — Control-Flow Graph edges for tree-sitter-c-sharp
+; Covers C# control-flow constructs including async/await and lock semantics.
+;
+; Edge type vocabulary (same as other DSLs):
+;   TRUE_BRANCH, FALSE_BRANCH, LOOP_HEADER, NEXT, TRY_BODY,
+;   CATCH, BREAK, CONTINUE, THROW, RETURN,
+;   SWITCH_CASE, SWITCH_DEFAULT
+;
+; BREAK/CONTINUE/THROW routing to nearest enclosing scope is handled by
+; the TypeScript post-processor (cfg-post-processor.ts).
+
+; ============================================================
+; METHOD / CONSTRUCTOR / LOCAL FUNCTION
+; ============================================================
+(method_declaration) @fn
+{
+  node @fn.cfg
+  attr (@fn.cfg) label = "method"
+  attr (@fn.cfg) statementType = "function"
+}
+
+(constructor_declaration) @ctor
+{
+  node @ctor.cfg
+  attr (@ctor.cfg) label = "constructor"
+  attr (@ctor.cfg) statementType = "function"
+}
+
+(local_function_statement) @localfn
+{
+  node @localfn.cfg
+  attr (@localfn.cfg) label = "local_function"
+  attr (@localfn.cfg) statementType = "function"
+}
+
+; ============================================================
+; IF STATEMENT — TRUE_BRANCH / FALSE_BRANCH
+; ============================================================
+(if_statement
+  consequence: (_) @then
+  alternative: (_)? @alt
+) @if
+{
+  node @if.cfg
+  attr (@if.cfg) label = "if"
+  attr (@if.cfg) statementType = "if"
+
+  node @if.then_node
+  attr (@if.then_node) label = (source-text @then)
+  edge @if.cfg -> @if.then_node
+  attr (@if.cfg -> @if.then_node) type = "TRUE_BRANCH"
+
+  if some @alt {
+    node @if.else_node
+    attr (@if.else_node) label = (source-text @alt)
+    edge @if.cfg -> @if.else_node
+    attr (@if.cfg -> @if.else_node) type = "FALSE_BRANCH"
+  }
+}
+
+; ============================================================
+; WHILE LOOP — LOOP_HEADER
+; ============================================================
+(while_statement
+  body: (_) @body
+) @while
+{
+  node @while.cfg
+  attr (@while.cfg) label = "while"
+  attr (@while.cfg) statementType = "loop"
+
+  edge @while.cfg -> @while.cfg
+  attr (@while.cfg -> @while.cfg) type = "LOOP_HEADER"
+  attr (@while.cfg -> @while.cfg) isLoopHeader = #true
+
+  node @body.cfg
+  attr (@body.cfg) label = (source-text @body)
+  edge @while.cfg -> @body.cfg
+  attr (@while.cfg -> @body.cfg) type = "NEXT"
+}
+
+; ============================================================
+; DO-WHILE LOOP — LOOP_HEADER
+; ============================================================
+(do_statement
+  body: (_) @body
+) @do
+{
+  node @do.cfg
+  attr (@do.cfg) label = "do-while"
+  attr (@do.cfg) statementType = "loop"
+
+  edge @do.cfg -> @do.cfg
+  attr (@do.cfg -> @do.cfg) type = "LOOP_HEADER"
+  attr (@do.cfg -> @do.cfg) isLoopHeader = #true
+
+  node @body.cfg
+  attr (@body.cfg) label = (source-text @body)
+  edge @do.cfg -> @body.cfg
+  attr (@do.cfg -> @body.cfg) type = "NEXT"
+}
+
+; ============================================================
+; FOR LOOP — LOOP_HEADER
+; ============================================================
+(for_statement
+  body: (_) @fb
+) @for
+{
+  node @for.cfg
+  attr (@for.cfg) label = "for"
+  attr (@for.cfg) statementType = "loop"
+
+  edge @for.cfg -> @for.cfg
+  attr (@for.cfg -> @for.cfg) type = "LOOP_HEADER"
+  attr (@for.cfg -> @for.cfg) isLoopHeader = #true
+
+  node @for.body
+  attr (@for.body) label = (source-text @fb)
+  edge @for.cfg -> @for.body
+  attr (@for.cfg -> @for.body) type = "NEXT"
+}
+
+; ============================================================
+; FOREACH — LOOP_HEADER
+; ============================================================
+(for_each_statement
+  body: (_) @fb
+) @foreach
+{
+  node @foreach.cfg
+  attr (@foreach.cfg) label = "foreach"
+  attr (@foreach.cfg) statementType = "loop"
+
+  edge @foreach.cfg -> @foreach.cfg
+  attr (@foreach.cfg -> @foreach.cfg) type = "LOOP_HEADER"
+  attr (@foreach.cfg -> @foreach.cfg) isLoopHeader = #true
+
+  node @foreach.body
+  attr (@foreach.body) label = (source-text @fb)
+  edge @foreach.cfg -> @foreach.body
+  attr (@foreach.cfg -> @foreach.body) type = "NEXT"
+}
+
+; ============================================================
+; TRY / CATCH / FINALLY
+; ============================================================
+(try_statement) @try
+{
+  node @try.cfg
+  attr (@try.cfg) label = "try"
+  attr (@try.cfg) statementType = "try"
+
+  edge @try.cfg -> @try.cfg
+  attr (@try.cfg -> @try.cfg) type = "TRY_BODY"
+}
+
+(catch_clause) @catch
+{
+  node @catch.cfg
+  attr (@catch.cfg) label = (source-text @catch)
+  attr (@catch.cfg) statementType = "catch"
+}
+
+(finally_clause) @finally
+{
+  node @finally.cfg
+  attr (@finally.cfg) label = "finally"
+  attr (@finally.cfg) statementType = "finally"
+}
+
+; ============================================================
+; SWITCH STATEMENT — SWITCH_CASE / SWITCH_DEFAULT
+; ============================================================
+(switch_statement) @switch
+{
+  node @switch.cfg
+  attr (@switch.cfg) label = "switch"
+  attr (@switch.cfg) statementType = "switch"
+}
+
+(switch_statement
+  body: (switch_body
+    (switch_section
+      (case_switch_label) @case
+      (_) @case_body
+    ) @section
+  )
+) @switch
+{
+  node @case.cfg
+  attr (@case.cfg) label = (source-text @case_body)
+  attr (@case.cfg) statementType = "case"
+  edge @switch.cfg -> @case.cfg
+  attr (@switch.cfg -> @case.cfg) type = "SWITCH_CASE"
+}
+
+(switch_statement
+  body: (switch_body
+    (switch_section
+      (default_switch_label) @default
+      (_) @default_body
+    ) @default_section
+  )
+) @switch
+{
+  node @default.cfg
+  attr (@default.cfg) label = (source-text @default_body)
+  attr (@default.cfg) statementType = "case"
+  edge @switch.cfg -> @default.cfg
+  attr (@switch.cfg -> @default.cfg) type = "SWITCH_DEFAULT"
+}
+
+; ============================================================
+; LOCK STATEMENT — NEXT (models concurrency entry)
+; ============================================================
+(lock_statement
+  body: (_) @body
+) @lock
+{
+  node @lock.cfg
+  attr (@lock.cfg) label = "lock"
+  attr (@lock.cfg) statementType = "lock"
+
+  node @body.cfg
+  attr (@body.cfg) label = (source-text @body)
+  edge @lock.cfg -> @body.cfg
+  attr (@lock.cfg -> @body.cfg) type = "NEXT"
+}
+
+; ============================================================
+; USING STATEMENT — NEXT (resource management)
+; ============================================================
+(using_statement
+  body: (_) @body
+) @using
+{
+  node @using.cfg
+  attr (@using.cfg) label = "using"
+  attr (@using.cfg) statementType = "with"
+
+  node @body.cfg
+  attr (@body.cfg) label = (source-text @body)
+  edge @using.cfg -> @body.cfg
+  attr (@using.cfg -> @body.cfg) type = "NEXT"
+}
+
+; ============================================================
+; BREAK / CONTINUE — post-processor routes to enclosing scope
+; ============================================================
+(break_statement) @b
+{
+  node @b.cfg
+  attr (@b.cfg) label = (source-text @b)
+  attr (@b.cfg) statementType = "break"
+}
+
+(continue_statement) @c
+{
+  node @c.cfg
+  attr (@c.cfg) label = (source-text @c)
+  attr (@c.cfg) statementType = "continue"
+}
+
+; ============================================================
+; THROW — post-processor routes to nearest catch
+; ============================================================
+(throw_statement) @t
+{
+  node @t.cfg
+  attr (@t.cfg) label = (source-text @t)
+  attr (@t.cfg) statementType = "throw"
+}
+
+; ============================================================
+; RETURN — function exit, no successor
+; ============================================================
+(return_statement) @ret
+{
+  node @ret.cfg
+  attr (@ret.cfg) label = (source-text @ret)
+  attr (@ret.cfg) statementType = "return"
+}
+
+; ============================================================
+; EXPRESSION STATEMENT
+; ============================================================
+(expression_statement) @expr
+{
+  node @expr.cfg
+  attr (@expr.cfg) label = (source-text @expr)
+}
+
+; ============================================================
+; LOCAL VARIABLE DECLARATION
+; ============================================================
+(local_declaration_statement) @decl
+{
+  node @decl.cfg
+  attr (@decl.cfg) label = (source-text @decl)
+}

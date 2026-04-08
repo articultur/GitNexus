@@ -23,6 +23,13 @@ const HEAP_FLAG = `--max-old-space-size=${HEAP_MB}`;
 const STACK_SIZE_KB = 16384; // 16MB stack size for deep repositories
 const STACK_FLAG = `--stack-size=${STACK_SIZE_KB}`;
 
+/**
+ * --stack-size was removed as a V8 flag in Node.js v22+.
+ * Injecting it on newer runtimes causes an immediate exit with code 9.
+ */
+const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10);
+const STACK_FLAG_SUPPORTED = NODE_MAJOR < 22;
+
 /** Re-exec the process with an 8GB heap and increased stack size if we're currently below that. */
 function ensureHeap(): boolean {
   const nodeOpts = process.env.NODE_OPTIONS || '';
@@ -34,7 +41,7 @@ function ensureHeap(): boolean {
 
   const nodeFlagsToAdd: string[] = [];
   if (!heapAlreadyLarge && !hasHeapOption) nodeFlagsToAdd.push(HEAP_FLAG);
-  if (!hasStackOption) nodeFlagsToAdd.push(STACK_FLAG);
+  if (STACK_FLAG_SUPPORTED && !hasStackOption) nodeFlagsToAdd.push(STACK_FLAG);
   if (nodeFlagsToAdd.length === 0) return false;
 
   try {

@@ -1,10 +1,11 @@
 /**
- * Unit tests for the SQL Injection and Path Traversal detection rules.
+ * Unit tests for the SQL Injection, Path Traversal, and XSS detection rules.
  */
 
 import { describe, expect, it } from 'vitest';
 import { sqlInjectionRule } from '../../../src/core/detection/rules/sql-injection.js';
 import { pathTraversalRule } from '../../../src/core/detection/rules/path-traversal.js';
+import { xssRule } from '../../../src/core/detection/rules/xss.js';
 import type { RuleContext } from '../../../src/core/detection/types.js';
 
 const makeCtx = (
@@ -153,5 +154,105 @@ const safe = sanitize(req.params.file);
 const p = path.join(uploadDir, safe);
 res.sendFile(p);`;
     expect(pathTraversalRule.evaluate(makeCtx(code, 'typescript'))).toBeNull();
+  });
+});
+
+// ── XSS ──────────────────────────────────────────────────────────────────────
+
+describe('xss rule', () => {
+  it('has correct id, severity, and confidence', () => {
+    expect(xssRule.definition.id).toBe('detection:xss');
+    expect(xssRule.definition.severity).toBe('high');
+    expect(xssRule.definition.confidence).toBeGreaterThan(0);
+    expect(xssRule.definition.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it('returns null for empty content', () => {
+    expect(xssRule.evaluate(makeCtx('', 'typescript'))).toBeNull();
+  });
+
+  it('returns null when no XSS patterns present', () => {
+    const code = 'const x = 1 + 2; console.log(x);';
+    expect(xssRule.evaluate(makeCtx(code, 'typescript'))).toBeNull();
+  });
+
+  it('detects TypeScript innerHTML assignment with request data', () => {
+    const code = `element.innerHTML = req.query.name;`;
+    const result = xssRule.evaluate(makeCtx(code, 'typescript'));
+    expect(result).not.toBeNull();
+    expect(result!.ruleId).toBe('detection:xss');
+    expect(result!.severity).toBe('high');
+  });
+
+  it('detects JavaScript document.write with request params', () => {
+    const code = `document.write(req.query.message);`;
+    const result = xssRule.evaluate(makeCtx(code, 'javascript'));
+    expect(result).not.toBeNull();
+    expect(result!.ruleId).toBe('detection:xss');
+  });
+
+  it('detects PHP echo with raw GET superglobal', () => {
+    const code = `echo $_GET["name"];`;
+    const result = xssRule.evaluate(makeCtx(code, 'php', 'testFn', 'test.php'));
+    expect(result).not.toBeNull();
+    expect(result!.ruleId).toBe('detection:xss');
+  });
+
+  it('detects Go template.HTML() cast of URL parameter', () => {
+    const code = `title := template.HTML(r.URL.Query().Get("title"))`;
+    const result = xssRule.evaluate(makeCtx(code, 'go', 'testFn', 'test.go'));
+    expect(result).not.toBeNull();
+    expect(result!.ruleId).toBe('detection:xss');
+  });
+
+  it('detects Ruby .html_safe on params', () => {
+    const code = `render html: params[:name].html_safe`;
+    const result = xssRule.evaluate(makeCtx(code, 'ruby', 'testFn', 'test.rb'));
+    expect(result).not.toBeNull();
+    expect(result!.ruleId).toBe('detection:xss');
+  });
+
+  it('detects C# Response.Write with QueryString', () => {
+    const code = `Response.Write(Request.QueryString["username"]);`;
+    const result = xssRule.evaluate(makeCtx(code, 'csharp', 'testFn', 'test.cs'));
+    expect(result).not.toBeNull();
+    expect(result!.ruleId).toBe('detection:xss');
+  });
+
+  it('detects Python Markup() with user input', () => {
+    const code = `return Markup(request.args.get('content'))`;
+    const result = xssRule.evaluate(makeCtx(code, 'python', 'testFn', 'test.py'));
+    expect(result).not.toBeNull();
+    expect(result!.ruleId).toBe('detection:xss');
+  });
+
+  it('does not flag innerHTML with DOMPurify sanitisation nearby', () => {
+    const code = `
+const clean = DOMPurify.sanitize(req.query.name);
+element.innerHTML = clean;`;
+    expect(xssRule.evaluate(makeCtx(code, 'typescript'))).toBeNull();
+  });
+
+  it('does not flag PHP echo with htmlspecialchars', () => {
+    const code = `echo htmlspecialchars($_GET["name"], ENT_QUOTES);`;
+    expect(xssRule.evaluate(makeCtx(code, 'php', 'testFn', 'test.php'))).toBeNull();
+  });
+
+  it('does not flag .textContent assignment (safe DOM property)', () => {
+    const code = `element.textContent = req.query.name;`;
+    expect(xssRule.evaluate(makeCtx(code, 'typescript'))).toBeNull();
+  });
+
+  it('covers supported languages list', () => {
+    const langs = xssRule.definition.languages ?? [];
+    expect(langs).toContain('typescript');
+    expect(langs).toContain('javascript');
+    expect(langs).toContain('python');
+    expect(langs).toContain('php');
+    expect(langs).toContain('ruby');
+    expect(langs).toContain('go');
+    expect(langs).toContain('csharp');
+    expect(langs).toContain('java');
+    expect(langs).toContain('kotlin');
   });
 });

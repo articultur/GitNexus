@@ -192,6 +192,29 @@ export interface CobolRegexResults {
     line: number;
     caller: string | null;
   }>;
+
+  // Phase 5: Control-flow structure (CFG simulation)
+  /** EVALUATE statements — COBOL's switch/case equivalent.
+   *  Each WHEN clause maps to a CALLS edge toward a PERFORM target. */
+  evaluates: Array<{
+    subject: string; // EVALUATE subject (data item or TRUE/FALSE)
+    line: number;
+    caller: string | null; // enclosing paragraph/section
+    whens: Array<{
+      value: string; // WHEN literal or condition text
+      performs: string[]; // PERFORM targets inside this WHEN clause
+      isOther: boolean; // true for WHEN OTHER (default branch)
+    }>;
+  }>;
+
+  /** IF/ELSE/END-IF blocks — each branch with PERFORM targets. */
+  ifBranches: Array<{
+    condition: string; // IF condition text (trimmed)
+    line: number;
+    caller: string | null;
+    truePerforms: string[]; // PERFORMs in the true (THEN) branch
+    falsePerforms: string[]; // PERFORMs in the ELSE branch (may be empty)
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,6 +1144,8 @@ export function extractCobolSymbolsWithRegex(
     inspects: [],
     initializes: [],
     strings: [],
+    evaluates: [],
+    ifBranches: [],
   };
 
   // --- State ---
@@ -1327,6 +1352,11 @@ export function extractCobolSymbolsWithRegex(
   if (result.programs.length > 1) {
     result.programs.sort((a, b) => a.startLine - b.startLine);
   }
+
+  // ── Phase 5: EVALUATE / IF control-flow extraction ─────────────────────
+  // Post-processing pass over the pre-processed lines to extract EVALUATE and
+  // IF blocks, emitting CFG simulation entries for graph edge creation.
+  extractEvaluateAndIfBlocks(rawLines, result.paragraphs, result.sections, result);
 
   return result;
 
@@ -2273,6 +2303,207 @@ export function extractCobolSymbolsWithRegex(
         );
       for (const target of targets) {
         result.initializes.push({ target, line: lineNum, caller: currentParagraph });
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: EVALUATE / IF control-flow extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract EVALUATE...END-EVALUATE and IF...ELSE...END-IF blocks from raw
+ * COBOL lines, appending results to `result.evaluates` and `result.ifBranches`.
+ *
+ * This is a lightweight regex-based state machine that handles the most common
+ * patterns.  It does not handle arbitrary nesting but produces good coverage
+ * for typical business COBOL.
+ */
+function extractEvaluateAndIfBlocks(
+  rawLines: string[],
+  paragraphs: Array<{ name: string; line: number }>,
+  sections: Array<{ name: string; line: number }>,
+  result: CobolRegexResults,
+): void {
+  // Build enclosing-scope lookup (line → paragraph/section name)
+  const scopeAt = (lineNum: number): string | null => {
+    let best: { name: string; line: number } | null = null;
+    for (const p of paragraphs) {
+      if (p.line <= lineNum && (!best || p.line > best.line)) best = p;
+    }
+    for (const s of sections) {
+      if (s.line <= lineNum && (!best || s.line > best.line)) best = s;
+    }
+    return best?.name ?? null;
+  };
+
+  // Regex patterns (case-insensitive)
+  const RE_EVALUATE = /^\s*EVALUATE\s+(.+?)(?:\s*\.?\s*)?$/i;
+  const RE_WHEN_OTHER = /^\s*WHEN\s+OTHER\b/i;
+  const RE_WHEN = /^\s*WHEN\s+(.+?)(?:\s*\.?\s*)?$/i;
+  const RE_END_EVALUATE = /^\s*END-EVALUATE\b/i;
+  const RE_PERFORM_IN_WHEN = /\bPERFORM\s+([A-Z][A-Z0-9-]+)/gi;
+
+  const RE_IF = /^\s*IF\s+(.+?)(?:\s*THEN\s*)?(?:\s*\.?\s*)?$/i;
+  const RE_ELSE = /^\s*ELSE\b/i;
+  const RE_END_IF = /^\s*END-IF\b/i;
+  const RE_PERFORM_IN_BRANCH = /\bPERFORM\s+([A-Z][A-Z0-9-]+)/gi;
+
+  // ── EVALUATE extraction ──────────────────────────────────────────────────
+  let inEvaluate = false;
+  let evalSubject = '';
+  let evalLine = 0;
+  let evalWhens: CobolRegexResults['evaluates'][number]['whens'] = [];
+  let currentWhenValue = '';
+  let currentWhenPerforms: string[] = [];
+  let currentWhenIsOther = false;
+  let inWhen = false;
+
+  const flushWhen = (): void => {
+    if (!inWhen) return;
+    evalWhens.push({
+      value: currentWhenValue,
+      performs: currentWhenPerforms,
+      isOther: currentWhenIsOther,
+    });
+    currentWhenValue = '';
+    currentWhenPerforms = [];
+    currentWhenIsOther = false;
+    inWhen = false;
+  };
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const lineNum = i + 1;
+    const line = rawLines[i];
+
+    if (!inEvaluate) {
+      const evalMatch = line.match(RE_EVALUATE);
+      if (evalMatch) {
+        inEvaluate = true;
+        evalSubject = evalMatch[1].trim();
+        evalLine = lineNum;
+        evalWhens = [];
+        inWhen = false;
+        currentWhenValue = '';
+        currentWhenPerforms = [];
+        currentWhenIsOther = false;
+      }
+      continue;
+    }
+
+    // Inside EVALUATE block
+    if (RE_END_EVALUATE.test(line)) {
+      flushWhen();
+      if (evalWhens.length > 0) {
+        result.evaluates.push({
+          subject: evalSubject,
+          line: evalLine,
+          caller: scopeAt(evalLine),
+          whens: evalWhens,
+        });
+      }
+      inEvaluate = false;
+      continue;
+    }
+
+    if (RE_WHEN_OTHER.test(line)) {
+      flushWhen();
+      inWhen = true;
+      currentWhenValue = 'OTHER';
+      currentWhenIsOther = true;
+      continue;
+    }
+
+    const whenMatch = line.match(RE_WHEN);
+    if (whenMatch) {
+      flushWhen();
+      inWhen = true;
+      currentWhenValue = whenMatch[1].trim();
+      currentWhenIsOther = false;
+      continue;
+    }
+
+    if (inWhen) {
+      let m: RegExpExecArray | null;
+      const re = new RegExp(RE_PERFORM_IN_WHEN.source, 'gi');
+      while ((m = re.exec(line)) !== null) {
+        currentWhenPerforms.push(m[1].toUpperCase());
+      }
+    }
+  }
+
+  // ── IF / ELSE / END-IF extraction ────────────────────────────────────────
+  // Simple non-nested pass — captures the outermost IF only (nested IFs flush
+  // at the first END-IF, which is correct for the outermost block).
+  let inIf = false;
+  let ifCondition = '';
+  let ifLine = 0;
+  let ifTruePerforms: string[] = [];
+  let ifFalsePerforms: string[] = [];
+  let inElse = false;
+  let ifNesting = 0;
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const lineNum = i + 1;
+    const line = rawLines[i];
+
+    if (!inIf) {
+      const ifMatch = line.match(RE_IF);
+      if (ifMatch) {
+        inIf = true;
+        ifNesting = 1;
+        ifCondition = ifMatch[1].trim();
+        ifLine = lineNum;
+        ifTruePerforms = [];
+        ifFalsePerforms = [];
+        inElse = false;
+        // Handle inline IF with PERFORM on same line
+        let m: RegExpExecArray | null;
+        const re = new RegExp(RE_PERFORM_IN_BRANCH.source, 'gi');
+        while ((m = re.exec(line)) !== null) {
+          (inElse ? ifFalsePerforms : ifTruePerforms).push(m[1].toUpperCase());
+        }
+      }
+      continue;
+    }
+
+    // Track nested IF depth
+    if (RE_IF.test(line)) {
+      ifNesting++;
+    }
+
+    if (RE_END_IF.test(line)) {
+      ifNesting--;
+      if (ifNesting <= 0) {
+        // Flush — only emit if we found any PERFORM targets
+        if (ifTruePerforms.length > 0 || ifFalsePerforms.length > 0) {
+          result.ifBranches.push({
+            condition: ifCondition,
+            line: ifLine,
+            caller: scopeAt(ifLine),
+            truePerforms: ifTruePerforms,
+            falsePerforms: ifFalsePerforms,
+          });
+        }
+        inIf = false;
+        inElse = false;
+        ifNesting = 0;
+      }
+      continue;
+    }
+
+    if (ifNesting === 1 && RE_ELSE.test(line)) {
+      inElse = true;
+      continue;
+    }
+
+    // Collect PERFORM targets in the current branch (only outermost level)
+    if (ifNesting === 1) {
+      let m: RegExpExecArray | null;
+      const re = new RegExp(RE_PERFORM_IN_BRANCH.source, 'gi');
+      while ((m = re.exec(line)) !== null) {
+        (inElse ? ifFalsePerforms : ifTruePerforms).push(m[1].toUpperCase());
       }
     }
   }

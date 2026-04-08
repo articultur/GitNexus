@@ -14,14 +14,59 @@ const RISKY_CALLS: Array<{
   description: string;
 }> = [
   // File operations
-  { pattern: /\b(?:readFile|readFileSync|writeFile|writeFileSync|fopen|openSync)\b/, languages: ['typescript', 'javascript', 'python', 'go', 'c', 'cpp', 'ruby'], description: 'file I/O without error guard' },
-  { pattern: /\bFile\(|FileReader|FileWriter|FileInputStream|FileOutputStream\b/, languages: ['java', 'kotlin', 'csharp'], description: 'file I/O without error guard' },
+  {
+    pattern: /\b(?:readFile|readFileSync|writeFile|writeFileSync|fopen|openSync)\b/,
+    languages: ['typescript', 'javascript', 'python', 'go', 'c', 'cpp', 'ruby'],
+    description: 'file I/O without error guard',
+  },
+  {
+    pattern: /\bFile\(|FileReader|FileWriter|FileInputStream|FileOutputStream\b/,
+    languages: ['java', 'kotlin', 'csharp'],
+    description: 'file I/O without error guard',
+  },
+  {
+    pattern: /\b(?:FileHandle|InputStream|OutputStream|FileManager\.default)\b/,
+    languages: ['swift'],
+    description: 'file I/O without error guard',
+  },
+  {
+    pattern: /\b(?:File\(|RandomAccessFile\(|FileInputStream\(|FileOutputStream\()/,
+    languages: ['dart'],
+    description: 'file I/O without error guard',
+  },
+  {
+    pattern: /\b(?:readFileSync|writeFileSync|openSync|fs\.read|fs\.write)\b/,
+    languages: ['arkts'],
+    description: 'file I/O without error guard',
+  },
   // Network operations
-  { pattern: /\b(?:fetch|axios|http\.get|https\.get|urlopen|urllib)\b/, languages: ['typescript', 'javascript', 'python', 'go'], description: 'network call without error guard' },
+  {
+    pattern: /\b(?:fetch|axios|http\.get|https\.get|urlopen|urllib)\b/,
+    languages: ['typescript', 'javascript', 'python', 'go'],
+    description: 'network call without error guard',
+  },
+  {
+    pattern: /\b(?:URLSession\.shared|URLSession\(|URLRequest\()\b/,
+    languages: ['swift'],
+    description: 'network call without error guard',
+  },
+  {
+    pattern: /\b(?:http\.get|http\.post|Dio\(|HttpClient\(|Uri\.parse)\b/,
+    languages: ['dart'],
+    description: 'network call without error guard',
+  },
   // Parse operations
-  { pattern: /\b(?:JSON\.parse|parseInt|parseFloat|atob|btoa)\b/, languages: ['typescript', 'javascript'], description: 'parse call without error guard' },
+  {
+    pattern: /\b(?:JSON\.parse|parseInt|parseFloat|atob|btoa)\b/,
+    languages: ['typescript', 'javascript'],
+    description: 'parse call without error guard',
+  },
   // Database
-  { pattern: /\b(?:query\(|findMany|findUnique|findOne|\.raw\()\b/, languages: ['typescript', 'javascript', 'python', 'java', 'kotlin'], description: 'database query without error guard' },
+  {
+    pattern: /\b(?:query\(|findMany|findUnique|findOne|\.raw\()\b/,
+    languages: ['typescript', 'javascript', 'python', 'java', 'kotlin'],
+    description: 'database query without error guard',
+  },
 ];
 
 // Patterns that indicate a guard IS present
@@ -68,9 +113,7 @@ export const missingGuardRule: Rule = {
     confidence: 0.7,
     languages: ['*'],
     trigger: {
-      propertyConditions: [
-        { property: 'content', operator: 'not_contains', value: '""' },
-      ],
+      propertyConditions: [{ property: 'content', operator: 'not_contains', value: '""' }],
     },
     missing: {},
   },

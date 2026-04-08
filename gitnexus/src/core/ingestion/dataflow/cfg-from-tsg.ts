@@ -78,6 +78,11 @@ const LANGUAGE_DSL_MAP: Record<string, string> = {
   python: 'python-static-edges.sg',
   java: 'java-static-edges.sg',
   go: 'go-static-edges.sg',
+  kotlin: 'kotlin-static-edges.sg',
+  csharp: 'csharp-static-edges.sg',
+  rust: 'rust-static-edges.sg',
+  c: 'c-static-edges.sg',
+  cpp: 'cpp-static-edges.sg',
 };
 
 /** Directories searched for DSL files, in priority order */

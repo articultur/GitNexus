@@ -251,8 +251,8 @@ describe('missing-resource rule', () => {
 // ── Builtin rules registry ──────────────────────────────────────────────────
 
 describe('builtin rules', () => {
-  it('exports 8 rules with correct IDs', () => {
-    assert.equal(builtinRules.length, 8);
+  it('exports 9 rules with correct IDs', () => {
+    assert.equal(builtinRules.length, 9);
     const ids = builtinRules.map((r) => r.definition.id);
     assert.ok(ids.includes('detection:missing-guard'));
     assert.ok(ids.includes('detection:missing-unwrap'));
@@ -262,6 +262,7 @@ describe('builtin rules', () => {
     assert.ok(ids.includes('detection:missing-concurrency-guard'));
     assert.ok(ids.includes('detection:sql-injection'));
     assert.ok(ids.includes('detection:path-traversal'));
+    assert.ok(ids.includes('detection:xss'));
   });
 
   it('all rules have evaluate functions', () => {

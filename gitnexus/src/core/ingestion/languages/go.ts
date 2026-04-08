@@ -19,6 +19,7 @@ import { createFieldExtractor } from '../field-extractors/generic.js';
 import { goConfig as goFieldConfig } from '../field-extractors/configs/go.js';
 import { createMethodExtractor } from '../method-extractors/generic.js';
 import { goMethodConfig } from '../method-extractors/configs/go.js';
+import { extractGoNamedBindings } from '../named-bindings/go.js';
 
 export const goProvider = defineLanguage({
   id: SupportedLanguages.Go,
@@ -28,6 +29,7 @@ export const goProvider = defineLanguage({
   exportChecker: goExportChecker,
   importResolver: resolveGoImport,
   importSemantics: 'wildcard',
+  namedBindingExtractor: extractGoNamedBindings,
   fieldExtractor: createFieldExtractor(goFieldConfig),
   methodExtractor: createMethodExtractor(goMethodConfig),
 });

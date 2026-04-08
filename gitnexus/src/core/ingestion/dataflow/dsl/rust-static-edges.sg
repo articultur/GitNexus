@@ -1,0 +1,320 @@
+; Rust CFG DSL — Control-Flow Graph edges for tree-sitter-rust
+;
+; Rust control flow highlights:
+;   - if/else:         if_expression with optional else_clause
+;   - loops:           loop_expression (infinite), while_expression, for_expression
+;   - match:           match_expression / match_arm (like switch/case)
+;   - break/continue:  break_expression (value-carrying), continue_expression
+;   - return:          return_expression
+;   - ? operator:      modelled via THROW (early return on error)
+;   - panic!:          modelled via THROW (unrecoverable)
+;   - async/await:     async_block / await_expression treated as sequential
+;   - closure:         closure_expression creates a synthetic function node
+;
+; Edge type vocabulary (same as TS/Python/Java/Go/Kotlin/C# DSLs):
+;   TRUE_BRANCH, FALSE_BRANCH, LOOP_HEADER, NEXT, TRY_BODY,
+;   CATCH, BREAK, CONTINUE, THROW, RETURN,
+;   SWITCH_CASE, SWITCH_DEFAULT
+;
+; Note: Rust has no try/catch — ? operator and panic!/unwrap() propagate
+; errors upward. These are modelled as THROW edges from the post-processor.
+
+; ============================================================
+; FUNCTION ITEM
+; ============================================================
+(function_item) @fn
+{
+  node @fn.cfg
+  attr (@fn.cfg) label = "fn"
+  attr (@fn.cfg) statementType = "function"
+}
+
+; ============================================================
+; IMPL METHOD (function_item inside impl_item)
+; ============================================================
+(impl_item
+  (function_item) @method
+)
+{
+  node @method.cfg
+  attr (@method.cfg) label = "method"
+  attr (@method.cfg) statementType = "function"
+}
+
+; ============================================================
+; CLOSURE EXPRESSION — anonymous function
+; ============================================================
+(closure_expression) @closure
+{
+  node @closure.cfg
+  attr (@closure.cfg) label = "closure"
+  attr (@closure.cfg) statementType = "function"
+}
+
+; ============================================================
+; IF EXPRESSION — TRUE_BRANCH / FALSE_BRANCH
+; Rust if/else chains: if_expression -> else_clause -> block | if_expression
+; ============================================================
+(if_expression
+  condition: (_) @cond
+  consequence: (_) @then
+  alternative: (_)? @alt
+) @if
+{
+  node @if.cfg
+  attr (@if.cfg) label = "if"
+  attr (@if.cfg) statementType = "if"
+
+  node @if.then_node
+  attr (@if.then_node) label = (source-text @then)
+  edge @if.cfg -> @if.then_node
+  attr (@if.cfg -> @if.then_node) type = "TRUE_BRANCH"
+
+  if some @alt {
+    node @if.else_node
+    attr (@if.else_node) label = (source-text @alt)
+    edge @if.cfg -> @if.else_node
+    attr (@if.cfg -> @if.else_node) type = "FALSE_BRANCH"
+  }
+}
+
+; ============================================================
+; IF LET EXPRESSION — pattern-matching branch
+; ============================================================
+(if_let_expression
+  value: (_) @scrutinee
+  consequence: (_) @then
+  alternative: (_)? @alt
+) @iflet
+{
+  node @iflet.cfg
+  attr (@iflet.cfg) label = "if let"
+  attr (@iflet.cfg) statementType = "if"
+
+  node @iflet.then_node
+  attr (@iflet.then_node) label = (source-text @then)
+  edge @iflet.cfg -> @iflet.then_node
+  attr (@iflet.cfg -> @iflet.then_node) type = "TRUE_BRANCH"
+
+  if some @alt {
+    node @iflet.else_node
+    attr (@iflet.else_node) label = (source-text @alt)
+    edge @iflet.cfg -> @iflet.else_node
+    attr (@iflet.cfg -> @iflet.else_node) type = "FALSE_BRANCH"
+  }
+}
+
+; ============================================================
+; LOOP EXPRESSION — infinite loop (loop { })
+; ============================================================
+(loop_expression
+  body: (_) @lb
+) @loop
+{
+  node @loop.cfg
+  attr (@loop.cfg) label = "loop"
+  attr (@loop.cfg) statementType = "loop"
+
+  edge @loop.cfg -> @loop.cfg
+  attr (@loop.cfg -> @loop.cfg) type = "LOOP_HEADER"
+  attr (@loop.cfg -> @loop.cfg) isLoopHeader = #true
+
+  node @loop.body
+  attr (@loop.body) label = (source-text @lb)
+  edge @loop.cfg -> @loop.body
+  attr (@loop.cfg -> @loop.body) type = "NEXT"
+}
+
+; ============================================================
+; WHILE EXPRESSION — while cond { }
+; ============================================================
+(while_expression
+  condition: (_) @wc
+  body: (_) @wb
+) @while
+{
+  node @while.cfg
+  attr (@while.cfg) label = "while"
+  attr (@while.cfg) statementType = "loop"
+
+  edge @while.cfg -> @while.cfg
+  attr (@while.cfg -> @while.cfg) type = "LOOP_HEADER"
+  attr (@while.cfg -> @while.cfg) isLoopHeader = #true
+
+  node @while.body
+  attr (@while.body) label = (source-text @wb)
+  edge @while.cfg -> @while.body
+  attr (@while.cfg -> @while.body) type = "NEXT"
+}
+
+; ============================================================
+; WHILE LET EXPRESSION — while let Some(x) = iter.next() { }
+; ============================================================
+(while_let_expression
+  value: (_) @wlv
+  body: (_) @wlb
+) @whilelet
+{
+  node @whilelet.cfg
+  attr (@whilelet.cfg) label = "while let"
+  attr (@whilelet.cfg) statementType = "loop"
+
+  edge @whilelet.cfg -> @whilelet.cfg
+  attr (@whilelet.cfg -> @whilelet.cfg) type = "LOOP_HEADER"
+  attr (@whilelet.cfg -> @whilelet.cfg) isLoopHeader = #true
+
+  node @whilelet.body
+  attr (@whilelet.body) label = (source-text @wlb)
+  edge @whilelet.cfg -> @whilelet.body
+  attr (@whilelet.cfg -> @whilelet.body) type = "NEXT"
+}
+
+; ============================================================
+; FOR EXPRESSION — for x in iter { }
+; ============================================================
+(for_expression
+  value: (_) @fv
+  body: (_) @fb
+) @for
+{
+  node @for.cfg
+  attr (@for.cfg) label = "for"
+  attr (@for.cfg) statementType = "loop"
+
+  edge @for.cfg -> @for.cfg
+  attr (@for.cfg -> @for.cfg) type = "LOOP_HEADER"
+  attr (@for.cfg -> @for.cfg) isLoopHeader = #true
+
+  node @for.body
+  attr (@for.body) label = (source-text @fb)
+  edge @for.cfg -> @for.body
+  attr (@for.cfg -> @for.body) type = "NEXT"
+}
+
+; ============================================================
+; MATCH EXPRESSION — Rust's primary pattern-dispatch
+; match expr { pat => body, ... }
+; ============================================================
+(match_expression) @match
+{
+  node @match.cfg
+  attr (@match.cfg) label = "match"
+  attr (@match.cfg) statementType = "switch"
+}
+
+(match_expression
+  body: (match_block
+    (match_arm) @arm
+  )
+) @match
+{
+  node @arm.cfg
+  attr (@arm.cfg) label = (source-text @arm)
+  attr (@arm.cfg) statementType = "case"
+  edge @match.cfg -> @arm.cfg
+  attr (@match.cfg -> @arm.cfg) type = "SWITCH_CASE"
+}
+
+; Wildcard arm: _ => body  (maps to SWITCH_DEFAULT)
+(match_expression
+  body: (match_block
+    (match_arm
+      pattern: (wildcard_pattern)) @default_arm
+  )
+) @match
+{
+  node @default_arm.cfg
+  attr (@default_arm.cfg) label = "_ =>"
+  attr (@default_arm.cfg) statementType = "default"
+  edge @match.cfg -> @default_arm.cfg
+  attr (@match.cfg -> @default_arm.cfg) type = "SWITCH_DEFAULT"
+}
+
+; ============================================================
+; BREAK EXPRESSION — post-processor routes to enclosing loop
+; Rust break can carry a value: break 'label value
+; ============================================================
+(break_expression) @brk
+{
+  node @brk.cfg
+  attr (@brk.cfg) label = (source-text @brk)
+  attr (@brk.cfg) statementType = "break"
+}
+
+; ============================================================
+; CONTINUE EXPRESSION
+; ============================================================
+(continue_expression) @cont
+{
+  node @cont.cfg
+  attr (@cont.cfg) label = (source-text @cont)
+  attr (@cont.cfg) statementType = "continue"
+}
+
+; ============================================================
+; RETURN EXPRESSION — explicit early return
+; ============================================================
+(return_expression) @ret
+{
+  node @ret.cfg
+  attr (@ret.cfg) label = (source-text @ret)
+  attr (@ret.cfg) statementType = "return"
+}
+
+; ============================================================
+; ? (TRY) OPERATOR — early return on Err/None
+; Modelled as a THROW edge: if Err(_) => propagate
+; ============================================================
+(try_expression) @try
+{
+  node @try.cfg
+  attr (@try.cfg) label = (source-text @try)
+  attr (@try.cfg) statementType = "throw"
+}
+
+; ============================================================
+; SEQUENTIAL STATEMENTS
+; ============================================================
+(expression_statement) @expr
+{
+  node @expr.cfg
+  attr (@expr.cfg) label = (source-text @expr)
+}
+
+(let_declaration) @letdecl
+{
+  node @letdecl.cfg
+  attr (@letdecl.cfg) label = (source-text @letdecl)
+}
+
+(const_item) @constitem
+{
+  node @constitem.cfg
+  attr (@constitem.cfg) label = (source-text @constitem)
+}
+
+(static_item) @staticitem
+{
+  node @staticitem.cfg
+  attr (@staticitem.cfg) label = (source-text @staticitem)
+}
+
+; ============================================================
+; ASYNC BLOCK — async { ... }  treated as sequential
+; ============================================================
+(async_block_expression) @asyncblk
+{
+  node @asyncblk.cfg
+  attr (@asyncblk.cfg) label = "async"
+  attr (@asyncblk.cfg) statementType = "async"
+}
+
+; ============================================================
+; UNSAFE BLOCK — unsafe { ... }  treated as sequential
+; ============================================================
+(unsafe_block) @unsafe
+{
+  node @unsafe.cfg
+  attr (@unsafe.cfg) label = "unsafe"
+  attr (@unsafe.cfg) statementType = "block"
+}

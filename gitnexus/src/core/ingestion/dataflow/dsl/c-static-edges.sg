@@ -1,0 +1,206 @@
+; C CFG DSL — Control-Flow Graph edges for tree-sitter-c
+;
+; Covers all C control-flow constructs:
+;   function_definition, if_statement, while_statement,
+;   do_statement, for_statement, switch_statement/case_statement,
+;   goto_statement, break_statement, continue_statement, return_statement
+;
+; Edge type vocabulary (same across all language DSLs):
+;   TRUE_BRANCH, FALSE_BRANCH, LOOP_HEADER, NEXT, TRY_BODY,
+;   CATCH, BREAK, CONTINUE, THROW, RETURN,
+;   SWITCH_CASE, SWITCH_DEFAULT
+;
+; BREAK/CONTINUE routing is handled by the TypeScript post-processor
+; (cfg-post-processor.ts). C has no exceptions; GOTO is modelled as
+; an unconditional jump edge for approximate CFG coverage.
+
+; ============================================================
+; FUNCTION DEFINITION
+; ============================================================
+(function_definition) @fn
+{
+  node @fn.cfg
+  attr (@fn.cfg) label = "function"
+  attr (@fn.cfg) statementType = "function"
+}
+
+; ============================================================
+; IF STATEMENT — TRUE_BRANCH / FALSE_BRANCH
+; ============================================================
+(if_statement
+  consequence: (_) @then
+  alternative: (_)? @alt
+) @if
+{
+  node @if.cfg
+  attr (@if.cfg) label = "if"
+  attr (@if.cfg) statementType = "if"
+
+  node @if.then_node
+  attr (@if.then_node) label = (source-text @then)
+  edge @if.cfg -> @if.then_node
+  attr (@if.cfg -> @if.then_node) type = "TRUE_BRANCH"
+
+  if some @alt {
+    node @if.else_node
+    attr (@if.else_node) label = (source-text @alt)
+    edge @if.cfg -> @if.else_node
+    attr (@if.cfg -> @if.else_node) type = "FALSE_BRANCH"
+  }
+}
+
+; ============================================================
+; WHILE LOOP
+; ============================================================
+(while_statement
+  body: (_) @wb
+) @while
+{
+  node @while.cfg
+  attr (@while.cfg) label = "while"
+  attr (@while.cfg) statementType = "loop"
+
+  edge @while.cfg -> @while.cfg
+  attr (@while.cfg -> @while.cfg) type = "LOOP_HEADER"
+  attr (@while.cfg -> @while.cfg) isLoopHeader = #true
+
+  node @while.body
+  attr (@while.body) label = (source-text @wb)
+  edge @while.cfg -> @while.body
+  attr (@while.cfg -> @while.body) type = "NEXT"
+}
+
+; ============================================================
+; DO-WHILE LOOP
+; ============================================================
+(do_statement
+  body: (_) @db
+) @do
+{
+  node @do.cfg
+  attr (@do.cfg) label = "do_while"
+  attr (@do.cfg) statementType = "loop"
+
+  edge @do.cfg -> @do.cfg
+  attr (@do.cfg -> @do.cfg) type = "LOOP_HEADER"
+  attr (@do.cfg -> @do.cfg) isLoopHeader = #true
+
+  node @do.body
+  attr (@do.body) label = (source-text @db)
+  edge @do.cfg -> @do.body
+  attr (@do.cfg -> @do.body) type = "NEXT"
+}
+
+; ============================================================
+; FOR LOOP (C-style: for (init; cond; incr) { body })
+; ============================================================
+(for_statement
+  body: (_) @fb
+) @for
+{
+  node @for.cfg
+  attr (@for.cfg) label = "for"
+  attr (@for.cfg) statementType = "loop"
+
+  edge @for.cfg -> @for.cfg
+  attr (@for.cfg -> @for.cfg) type = "LOOP_HEADER"
+  attr (@for.cfg -> @for.cfg) isLoopHeader = #true
+
+  node @for.body
+  attr (@for.body) label = (source-text @fb)
+  edge @for.cfg -> @for.body
+  attr (@for.cfg -> @for.body) type = "NEXT"
+}
+
+; ============================================================
+; SWITCH STATEMENT
+; ============================================================
+(switch_statement
+  body: (_) @sb
+) @switch
+{
+  node @switch.cfg
+  attr (@switch.cfg) label = "switch"
+  attr (@switch.cfg) statementType = "switch"
+
+  node @switch.body
+  attr (@switch.body) label = (source-text @sb)
+  edge @switch.cfg -> @switch.body
+  attr (@switch.cfg -> @switch.body) type = "NEXT"
+}
+
+; ---- case label (non-default) ----
+(case_statement) @case
+{
+  node @case.cfg
+  attr (@case.cfg) label = "case"
+  attr (@case.cfg) statementType = "case"
+}
+
+; ---- default label ----
+(default_statement) @default
+{
+  node @default.cfg
+  attr (@default.cfg) label = "default"
+  attr (@default.cfg) statementType = "switch_default"
+}
+
+; ============================================================
+; GOTO STATEMENT — approximate unconditional jump
+; ============================================================
+(goto_statement) @goto
+{
+  node @goto.cfg
+  attr (@goto.cfg) label = "goto"
+  attr (@goto.cfg) statementType = "goto"
+}
+
+; ============================================================
+; BREAK STATEMENT
+; ============================================================
+(break_statement) @brk
+{
+  node @brk.cfg
+  attr (@brk.cfg) label = "break"
+  attr (@brk.cfg) statementType = "break"
+}
+
+; ============================================================
+; CONTINUE STATEMENT
+; ============================================================
+(continue_statement) @cont
+{
+  node @cont.cfg
+  attr (@cont.cfg) label = "continue"
+  attr (@cont.cfg) statementType = "continue"
+}
+
+; ============================================================
+; RETURN STATEMENT
+; ============================================================
+(return_statement) @ret
+{
+  node @ret.cfg
+  attr (@ret.cfg) label = "return"
+  attr (@ret.cfg) statementType = "return"
+}
+
+; ============================================================
+; VARIABLE DECLARATION (local variable bindings)
+; ============================================================
+(declaration) @decl
+{
+  node @decl.cfg
+  attr (@decl.cfg) label = "decl"
+  attr (@decl.cfg) statementType = "declaration"
+}
+
+; ============================================================
+; EXPRESSION STATEMENT (function calls, assignments, etc.)
+; ============================================================
+(expression_statement) @expr
+{
+  node @expr.cfg
+  attr (@expr.cfg) label = "expr"
+  attr (@expr.cfg) statementType = "expression"
+}

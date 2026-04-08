@@ -27,6 +27,8 @@ import {
 import { nextjsFileToRouteURL, normalizeFetchURL } from './route-extractors/nextjs.js';
 import { expoFileToRouteURL } from './route-extractors/expo.js';
 import { phpFileToRouteURL } from './route-extractors/php.js';
+import { isDjangoUrlFile, extractDjangoRoutes } from './route-extractors/django.js';
+import { isRailsRouteFile, extractRailsRoutes } from './route-extractors/rails.js';
 import {
   extractResponseShapes,
   extractPHPResponseShapes,
@@ -807,6 +809,15 @@ async function runChunkedParseAndResolve(
 
       for (const file of chunkFiles) {
         extractHarmonyDecoratorRoutesInline(file.path, file.content, allDecoratorRoutes);
+        if (isDjangoUrlFile(file.path)) {
+          for (const r of extractDjangoRoutes(file.content, file.path)) {
+            allDecoratorRoutes.push({ ...r, decoratorName: 'django-path' });
+          }
+        } else if (isRailsRouteFile(file.path)) {
+          for (const r of extractRailsRoutes(file.content, file.path)) {
+            allDecoratorRoutes.push({ ...r, decoratorName: 'rails-route' });
+          }
+        }
       }
 
       // Parse this chunk (workers or sequential fallback)

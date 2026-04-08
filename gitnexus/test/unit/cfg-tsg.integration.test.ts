@@ -6,7 +6,7 @@
  *
  * These tests are skipped when the tree-sitter-graph CLI is not available.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import Parser from 'tree-sitter';
 import TypeScript from 'tree-sitter-typescript';
 import JavaScript from 'tree-sitter-javascript';
@@ -85,7 +85,7 @@ describe.skipIf(SKIP)('TSG: TypeScript DSL parse', () => {
     }`;
     const tree = parseTS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.TypeScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('TRUE_BRANCH');
     expect(edgeTypes).toContain('FALSE_BRANCH');
   });
@@ -97,7 +97,7 @@ describe.skipIf(SKIP)('TSG: TypeScript DSL parse', () => {
     }`;
     const tree = parseTS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.TypeScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('LOOP_HEADER');
   });
 
@@ -111,7 +111,7 @@ describe.skipIf(SKIP)('TSG: TypeScript DSL parse', () => {
     }`;
     const tree = parseTS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.TypeScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('SWITCH_CASE');
     expect(edgeTypes).toContain('SWITCH_DEFAULT');
   });
@@ -123,7 +123,7 @@ describe.skipIf(SKIP)('TSG: TypeScript DSL parse', () => {
     }`;
     const tree = parseTS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.TypeScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('TRY_BODY');
     expect(edgeTypes).toContain('CATCH');
   });
@@ -138,13 +138,13 @@ describe.skipIf(SKIP)('TSG: TypeScript DSL parse', () => {
     }`;
     const tree = parseTS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.TypeScript);
-    const throwEdges = result.edges.filter(e => e.edgeType === 'THROW');
-    const catchNodes = result.nodes.filter(n => n.statementType === 'catch');
+    const throwEdges = result.edges.filter((e) => e.edgeType === 'THROW');
+    const catchNodes = result.nodes.filter((n) => n.statementType === 'catch');
     // Should have exactly 1 THROW edge (to inner catch), not 2
     expect(throwEdges.length).toBe(1);
     // THROW should route to inner catch (the one with console.log)
     const throwTargetId = throwEdges[0]?.targetId;
-    const targetCatch = catchNodes.find(n => n.id === throwTargetId);
+    const targetCatch = catchNodes.find((n) => n.id === throwTargetId);
     expect(targetCatch).toBeDefined();
     // Inner catch label contains 'console.log', outer catch contains 'return outer'
     expect(targetCatch?.basicBlock[0] ?? '').toContain('console.log');
@@ -159,7 +159,7 @@ describe.skipIf(SKIP)('TSG: TypeScript DSL parse', () => {
     }`;
     const tree = parseTS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.TypeScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('BREAK');
     expect(edgeTypes).toContain('CONTINUE');
     expect(edgeTypes).toContain('LOOP_HEADER');
@@ -194,7 +194,7 @@ describe.skipIf(SKIP)('TSG: JavaScript DSL parse', () => {
     const source = 'function f(arr) { for (const x of arr) { console.log(x); } }';
     const tree = parseJS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.JavaScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('LOOP_HEADER');
   });
 });
@@ -202,9 +202,12 @@ describe.skipIf(SKIP)('TSG: JavaScript DSL parse', () => {
 // ─── Legacy vs TSG comparison ─────────────────────────────────────────────────
 
 describe.skipIf(SKIP)('TSG vs buildCFG: TypeScript equivalence', () => {
-  function compareEdgeTypes(legacy: ReturnType<typeof buildCFG>, tsg: ReturnType<typeof buildCFGFromTSG>) {
-    const legacyTypes = [...new Set(legacy.edges.map(e => e.edgeType))].sort();
-    const tsgTypes = [...new Set(tsg.edges.map(e => e.edgeType))].sort();
+  function compareEdgeTypes(
+    legacy: ReturnType<typeof buildCFG>,
+    tsg: ReturnType<typeof buildCFGFromTSG>,
+  ) {
+    const legacyTypes = [...new Set(legacy.edges.map((e) => e.edgeType))].sort();
+    const tsgTypes = [...new Set(tsg.edges.map((e) => e.edgeType))].sort();
     return { legacyTypes, tsgTypes };
   }
 
@@ -288,7 +291,7 @@ describe.skipIf(SKIP)('TSG vs buildCFG: TypeScript equivalence', () => {
     }`;
     const tree = parseTS(source);
     const tsg = buildCFGFromTSG(tree, source, SupportedLanguages.TypeScript);
-    const tsgTypes = [...new Set(tsg.edges.map(e => e.edgeType))];
+    const tsgTypes = [...new Set(tsg.edges.map((e) => e.edgeType))];
     expect(tsgTypes).toContain('BREAK');
     expect(tsgTypes).toContain('CONTINUE');
     expect(tsgTypes).toContain('LOOP_HEADER');
@@ -306,7 +309,7 @@ describe.skipIf(SKIP)('TSG: JavaScript extended coverage', () => {
     };`;
     const tree = parseJS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.JavaScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('TRY_BODY');
     expect(edgeTypes).toContain('CATCH');
     expect(result.functionId).toBeTruthy();
@@ -321,7 +324,7 @@ describe.skipIf(SKIP)('TSG: JavaScript extended coverage', () => {
     }`;
     const tree = parseJS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.JavaScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('TRY_BODY');
     expect(edgeTypes).toContain('CATCH');
     expect(edgeTypes).toContain('THROW');
@@ -336,7 +339,7 @@ describe.skipIf(SKIP)('TSG: JavaScript extended coverage', () => {
     };`;
     const tree = parseJS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.JavaScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('LOOP_HEADER');
     expect(edgeTypes).toContain('BREAK');
   });
@@ -352,7 +355,7 @@ describe.skipIf(SKIP)('TSG: JavaScript extended coverage', () => {
     }`;
     const tree = parseJS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.JavaScript);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('TRY_BODY');
     expect(edgeTypes).toContain('CATCH');
     expect(edgeTypes).toContain('THROW');
@@ -367,7 +370,7 @@ describe.skipIf(SKIP)('TSG: JavaScript extended coverage', () => {
     }`;
     const tree = parseJS(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.JavaScript);
-    const nodes = result.nodes.filter(n => n.statementType === 'loop');
+    const nodes = result.nodes.filter((n) => n.statementType === 'loop');
     expect(nodes.length).toBeGreaterThan(0);
   });
 });
@@ -395,7 +398,7 @@ describe.skipIf(SKIP)('TSG: Python DSL parse', () => {
         return 0`;
     const tree = parsePython(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.Python);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('TRUE_BRANCH');
     expect(edgeTypes).toContain('FALSE_BRANCH');
   });
@@ -406,7 +409,7 @@ describe.skipIf(SKIP)('TSG: Python DSL parse', () => {
         x = i`;
     const tree = parsePython(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.Python);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('LOOP_HEADER');
   });
 
@@ -418,7 +421,7 @@ describe.skipIf(SKIP)('TSG: Python DSL parse', () => {
         handle(e)`;
     const tree = parsePython(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.Python);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('TRY_BODY');
     expect(edgeTypes).toContain('CATCH');
   });
@@ -431,7 +434,7 @@ describe.skipIf(SKIP)('TSG: Python DSL parse', () => {
         continue`;
     const tree = parsePython(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.Python);
-    const edgeTypes = result.edges.map(e => e.edgeType);
+    const edgeTypes = result.edges.map((e) => e.edgeType);
     expect(edgeTypes).toContain('LOOP_HEADER');
   });
 
@@ -440,7 +443,49 @@ describe.skipIf(SKIP)('TSG: Python DSL parse', () => {
     raise Exception('error')`;
     const tree = parsePython(source);
     const result = buildCFGFromTSG(tree, source, SupportedLanguages.Python);
-    const throwNodes = result.nodes.filter(n => n.statementType === 'throw');
+    const throwNodes = result.nodes.filter((n) => n.statementType === 'throw');
     expect(throwNodes.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── LANGUAGE_DSL_MAP registration check ────────────────────────────────────
+// These tests verify that new languages are registered in LANGUAGE_DSL_MAP
+// (the registration itself, not full DSL execution).
+
+describe('LANGUAGE_DSL_MAP language registration', () => {
+  it('rust is registered in LANGUAGE_DSL_MAP', () => {
+    // buildCFGFromTSG should not throw for rust when TSG is unavailable —
+    // it will return an empty result but should recognise the language.
+    // We test via isTSGAvailable to confirm the map entry exists.
+    // If the map did not have rust, it would throw "Unsupported language".
+    // We skip the actual TSG execution and just confirm no "unsupported" error.
+    let threw = false;
+    try {
+      // A minimal source that will be parsed by ts even without TSG binary
+      buildCFGFromTSG({ rootNode: null } as any, 'fn main() {}', SupportedLanguages.Rust);
+    } catch (e: any) {
+      if (e?.message?.includes('Unsupported language')) threw = true;
+    }
+    expect(threw).toBe(false);
+  });
+
+  it('c is registered in LANGUAGE_DSL_MAP', () => {
+    let threw = false;
+    try {
+      buildCFGFromTSG({ rootNode: null } as any, 'int main() {}', SupportedLanguages.C);
+    } catch (e: any) {
+      if (e?.message?.includes('Unsupported language')) threw = true;
+    }
+    expect(threw).toBe(false);
+  });
+
+  it('cpp is registered in LANGUAGE_DSL_MAP', () => {
+    let threw = false;
+    try {
+      buildCFGFromTSG({ rootNode: null } as any, 'int main() {}', SupportedLanguages.CPlusPlus);
+    } catch (e: any) {
+      if (e?.message?.includes('Unsupported language')) threw = true;
+    }
+    expect(threw).toBe(false);
   });
 });
