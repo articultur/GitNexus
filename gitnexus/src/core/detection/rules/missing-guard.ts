@@ -19,6 +19,13 @@ const RISKY_CALLS: Array<{
     languages: ['typescript', 'javascript', 'python', 'go', 'c', 'cpp', 'ruby'],
     description: 'file I/O without error guard',
   },
+  // Objective-C: NSFileManager / NSData file ops
+  {
+    pattern:
+      /\b(?:NSFileManager|NSData|NSString)\b.*\b(?:contentsOfFile|writeToFile|removeItemAtPath|moveItemAtPath|copyItemAtPath)\b/,
+    languages: ['objectivec'],
+    description: 'ObjC file operation without NSError check',
+  },
   {
     pattern: /\bFile\(|FileReader|FileWriter|FileInputStream|FileOutputStream\b/,
     languages: ['java', 'kotlin', 'csharp'],

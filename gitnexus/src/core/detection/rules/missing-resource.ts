@@ -72,6 +72,20 @@ const RESOURCE_OPEN_PATTERNS: Array<{
     languages: ['dart'],
     description: 'Dart file opened without close',
   },
+  // Objective-C: NSFileHandle / NSInputStream / NSOutputStream without close
+  {
+    openPattern: /\bNS(?:FileHandle|InputStream|OutputStream)\s*\*?\s*\w+\s*=/,
+    closePattern: /\.closeFile\(\)|\.close\(\)|@finally/,
+    languages: ['objectivec'],
+    description: 'ObjC file handle / stream opened without closeFile/close',
+  },
+  // Objective-C: sqlite3_open / fopen without close
+  {
+    openPattern: /\b(?:sqlite3_open|fopen)\s*\(/,
+    closePattern: /\b(?:sqlite3_close|fclose)\s*\(/,
+    languages: ['objectivec'],
+    description: 'ObjC sqlite3/fopen without corresponding close',
+  },
 ];
 
 export const missingResourceRule: Rule = {

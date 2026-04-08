@@ -19,6 +19,19 @@ const RETURN_CHECK_PATTERNS: Array<{
     languages: ['c', 'cpp'],
     description: 'C/C++ function return value ignored',
   },
+  // ObjC: message send return value discarded (e.g. [obj method] without capturing result)
+  // Flag alloc/init chains whose result is not assigned
+  {
+    pattern: /\[\s*\w+\s+(?:alloc|init\w*)\s*\]\s*;/,
+    languages: ['objectivec'],
+    description: 'ObjC alloc/init return value discarded — likely nil not assigned',
+  },
+  // NSError** out-parameter pattern: method:error: called without checking result
+  {
+    pattern: /\[\s*\w+\s+\w+:[^\]]*error:\s*&?\w+\s*\]\s*;/,
+    languages: ['objectivec'],
+    description: 'ObjC NSError** method return value discarded — error not checked',
+  },
   // Go: multi-return with error ignored via _
   {
     pattern: /\w+\s*,\s*_\s*:=\s*\w+\(/,
@@ -54,7 +67,12 @@ const CHECKED_PATTERNS: RegExp[] = [
  * Lines where a function call's return is used as an expression (assigned, compared, etc.)
  * indicate the return IS being checked.
  */
-function isReturnUsed(content: string, callLine: string, callLineIdx: number, language: string): boolean {
+function isReturnUsed(
+  content: string,
+  callLine: string,
+  callLineIdx: number,
+  language: string,
+): boolean {
   // Go's := assignment uses = but doesn't mean the value is "checked"
   // Strip := before checking for = usage
   const lineToCheck = language === 'go' ? callLine.replace(/:=/g, '  ') : callLine;
@@ -80,9 +98,7 @@ export const missingReturnCheckRule: Rule = {
     confidence: 0.65,
     languages: ['*'],
     trigger: {
-      propertyConditions: [
-        { property: 'content', operator: 'not_contains', value: '""' },
-      ],
+      propertyConditions: [{ property: 'content', operator: 'not_contains', value: '""' }],
     },
     missing: {},
   },
