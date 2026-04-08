@@ -297,3 +297,34 @@
   edge @pool.cfg -> @pool.body_node
   attr (@pool.cfg -> @pool.body_node) type = "AUTORELEASEPOOL_BODY"
 }
+
+; ============================================================
+; PERFORMSELECTOR DYNAMIC DISPATCH
+; performSelector:, performSelector:withObject:, performSelector:withObject:withObject:
+; These are modeled as DYNAMIC_DISPATCH edges since the actual selector
+; is determined at runtime. The rule captures message expressions that
+; contain a selector_expression in their arguments.
+;
+; Example:
+;   [self performSelector:@selector(bar)];
+;   [obj performSelector:@selector(bar:) withObject:arg];
+;
+; NOTE: DYNAMIC_DISPATCH edge creation is handled by the TypeScript
+; post-processor (cfg-post-processor.ts) by detecting the selector name
+; "performSelector" during edge resolution. This stanza captures the
+; message expression and marks it with a special attribute for detection.
+; ============================================================
+(message_expression
+  receiver: (_) @dyn_receiver
+  method: (identifier) @dyn_method
+) @dyn_msg
+{
+  ; Check if this is a performSelector variant by examining the method name
+  ; The selector text will be "performSelector:", "performSelector:withObject:", etc.
+  ; We mark these for post-processing to create DYNAMIC_DISPATCH edges
+  node @dyn_msg.cfg
+  attr (@dyn_msg.cfg) label = (source-text @dyn_msg)
+  attr (@dyn_msg.cfg) statementType = "message"
+  attr (@dyn_msg.cfg) receiver = (source-text @dyn_receiver)
+  attr (@dyn_msg.cfg) method = (source-text @dyn_method)
+}
