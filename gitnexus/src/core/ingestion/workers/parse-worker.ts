@@ -76,6 +76,7 @@ import { preprocessImportPath } from '../import-processor.js';
 import {
   extractVueScript,
   extractTemplateComponents,
+  extractTemplateEventHandlers,
   isVueSetupTopLevel,
 } from '../vue-sfc-extractor.js';
 import { preprocessArktsContent } from '../languages/arkts-preprocess.js';
@@ -2261,13 +2262,22 @@ const processFileGroup = (
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, parseContent, result.ormQueries);
 
-    // Vue: emit CALLS edges for components used in <template>
+    // Vue: emit CALLS edges for components and event handlers used in <template>
     if (language === SupportedLanguages.Vue) {
       const templateComponents = extractTemplateComponents(file.content);
       for (const componentName of templateComponents) {
         result.calls.push({
           filePath: file.path,
           calledName: componentName,
+          sourceId: generateId('File', file.path),
+          callForm: 'free',
+        });
+      }
+      const templateHandlers = extractTemplateEventHandlers(file.content);
+      for (const handlerName of templateHandlers) {
+        result.calls.push({
+          filePath: file.path,
+          calledName: handlerName,
           sourceId: generateId('File', file.path),
           callForm: 'free',
         });

@@ -25,6 +25,9 @@ interface ScriptBlock {
 
 const SCRIPT_RE = /<script(\s[^>]*)?>([^]*?)<\/script>/g;
 const TEMPLATE_COMPONENT_RE = /<([A-Z][A-Za-z0-9]+)/g;
+// Matches @event="handler" and v-on:event="handler" in template blocks.
+// Only captures simple identifiers — complex expressions (increments, ternary, etc.) are skipped.
+const TEMPLATE_EVENT_RE = /(?:@[\w.:]+|v-on:[\w.]+)="([a-zA-Z_$][a-zA-Z0-9_$]*)(?:\([^)]*\))?"/g;
 // Greedy: matches from the first <template> to the *last* </template>.
 // This is intentional — nested <template v-slot:...> tags are valid Vue
 // syntax and we want the entire outermost template body.
@@ -122,4 +125,31 @@ export function extractTemplateComponents(vueContent: string): string[] {
   }
 
   return [...components];
+}
+
+/**
+ * Extract method names referenced in Vue template event handlers.
+ *
+ * Matches `@click="handleClick"`, `v-on:click="handleClick"`, and
+ * `@click="handleClick(arg)"` patterns (only the bare method name is captured).
+ * Complex inline expressions (e.g. `count++`, `isOpen = !isOpen`) are skipped
+ * because they contain operators that prevent the identifier-only regex from
+ * matching.
+ *
+ * Returns deduplicated method names for CALLS edge emission.
+ */
+export function extractTemplateEventHandlers(vueContent: string): string[] {
+  const templateMatch = TEMPLATE_RE.exec(vueContent);
+  if (!templateMatch) return [];
+
+  const templateContent = templateMatch[2];
+  const handlers = new Set<string>();
+  let handlerMatch: RegExpExecArray | null;
+
+  TEMPLATE_EVENT_RE.lastIndex = 0;
+  while ((handlerMatch = TEMPLATE_EVENT_RE.exec(templateContent)) !== null) {
+    handlers.add(handlerMatch[1]);
+  }
+
+  return [...handlers];
 }

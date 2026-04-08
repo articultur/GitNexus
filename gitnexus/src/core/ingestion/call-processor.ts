@@ -41,7 +41,7 @@ import type {
   FileConstructorBindings,
 } from './workers/parse-worker.js';
 import { normalizeFetchURL, routeMatches } from './route-extractors/nextjs.js';
-import { extractTemplateComponents } from './vue-sfc-extractor.js';
+import { extractTemplateComponents, extractTemplateEventHandlers } from './vue-sfc-extractor.js';
 import { extractReturnTypeName, stripNullable } from './type-extractors/shared.js';
 import type { LiteralTypeInferrer } from './type-extractors/types.js';
 import type { SyntaxNode } from './utils/ast-helpers.js';
@@ -1144,9 +1144,9 @@ export const processCalls = async (
     // Template components are default-imported (not named), so we match the
     // component name against imported .vue file basenames via the import map.
     if (language === SupportedLanguages.Vue) {
+      const fileId = generateId('File', file.path);
       const templateComponents = extractTemplateComponents(file.content);
       if (templateComponents.length > 0) {
-        const fileId = generateId('File', file.path);
         const importedFiles = ctx.importMap.get(file.path);
         if (importedFiles) {
           for (const componentName of templateComponents) {
@@ -1172,6 +1172,28 @@ export const processCalls = async (
             }
           }
         }
+      }
+      // Emit CALLS edges for event-handler methods referenced in <template>.
+      // e.g. @click="handleClick" → CALLS edge from the Vue file to handleClick.
+      const templateHandlers = extractTemplateEventHandlers(file.content);
+      for (const handlerName of templateHandlers) {
+        if (provider.isBuiltInName(handlerName)) continue;
+        const resolved = resolveCallTarget(
+          { calledName: handlerName, callForm: 'free' },
+          file.path,
+          ctx,
+          undefined,
+          widenCache,
+        );
+        if (!resolved) continue;
+        graph.addRelationship({
+          id: generateId('CALLS', `${fileId}:${handlerName}->${resolved.nodeId}`),
+          sourceId: fileId,
+          targetId: resolved.nodeId,
+          type: 'CALLS',
+          confidence: 0.8,
+          reason: 'vue-template-event-handler',
+        });
       }
     }
 

@@ -634,8 +634,20 @@ export const CSHARP_QUERIES = `
 ; Constructor calls: new Foo() and new Foo { Props }
 (object_creation_expression type: (identifier) @call.name) @call
 
+; Generic constructor calls: new List<int>(), new Dictionary<string, User>()
+(object_creation_expression type: (generic_name (identifier) @call.name)) @call
+
+; Namespace-qualified constructor calls: new System.Text.StringBuilder()
+(object_creation_expression type: (qualified_name name: (identifier) @call.name)) @call
+
+; Namespace-qualified generic constructor calls: new System.Collections.Generic.List<int>()
+(object_creation_expression type: (generic_name type: (qualified_name name: (identifier) @call.name))) @call
+
 ; Target-typed new (C# 9): User u = new("x", 5)
 (variable_declaration type: (identifier) @call.name (variable_declarator (implicit_object_creation_expression) @call))
+
+; Target-typed new with generic variable type: IList<User> users = new(...)
+(variable_declaration type: (generic_name (identifier) @call.name) (variable_declarator (implicit_object_creation_expression) @call))
 
 ; Heritage
 (class_declaration name: (identifier) @heritage.class

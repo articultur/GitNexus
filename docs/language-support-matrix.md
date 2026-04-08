@@ -221,7 +221,7 @@
 | **Java** | ✅ | 🟢 | 🟡 | 🟢 | ✅ | 🟢 | 🟢 |
 | **Kotlin** | ✅ | 🟢 | 🟡 | 🟢 | 🟢 | 🟢 | 🟢 |
 | **Go** | 🟢 | 🟢 | 🟡 | 🟢 | ✅ | 🟢 | 🟢 |
-| **Vue SFC** | 🟢 | 🟢 | 🟢 | 🟢 | 🟡 | ✅ | 🟢 |
+| **Vue SFC** | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | ✅ | 🟢 |
 | **Rust** | ✅ | 🟢 | 🟡 | 🟡 | 🟢 | 🟡 | 🟢 |
 | **C#** | ✅ | 🟢 | 🟡 | 🟡 | 🟢 | 🟡 | 🟢 |
 | **PHP** | ✅ | 🟡 | 🟢 | 🟢 | 🔴 | 🟡 | 🟡 |
@@ -246,8 +246,8 @@
 | named-bindings：Swift（`import class/func/var` 限定式） | Swift | 🟡 中 | 🟡 P2 | ✅ 已完成（e60099a） |
 | Objective-C 无 Method 节点（HAS_METHOD 边） | Objective-C | 🟢 低 | 🟡 P2 | ✅ 已完成（e60099a） |
 | named-bindings：Ruby（`require` 为 wildcard，无 named-import 语义） | Ruby | 🔴 高 | ⚪ 不适用 | ⚫ 跳过（Ruby 无具名导入） |
-| C# 无构造函数推断 | C# | 🟢 低 | 🟢 P3 | 🔲 开放 |
-| Vue SFC 模板层无符号提取 | Vue SFC | 🟡 中 | 🟢 P3 | 🔲 开放 |
+| C# 无构造函数推断 | C# | 🟢 低 | 🟢 P3 | ✅ 已完成 |
+| Vue SFC 模板层无符号提取 | Vue SFC | 🟡 中 | 🟢 P3 | ✅ 已完成 |
 | COBOL 全面支持（tree-sitter 替代 Regex + DATA DIVISION 变量提取） | COBOL | 🔴 高 | ⚫ 战略 | 🔲 开放 |
 
 ---
