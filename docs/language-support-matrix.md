@@ -118,7 +118,7 @@
 | Swift | ✅ | ✅ | ⚫ | 🟡 | ✅ | 🟡 |
 | Dart | ✅ | ✅ | ⚫ | 🟡 | ✅ | 🟡 |
 | C / C++ | ✅ | 🟡 | ⚫ | 🔴 | 🟡 | 🔴 |
-| Objective-C | ✅ | 🟡 | ⚫ | ⚫ | � | 🔴 |
+| Objective-C | ✅ | 🟡 | ⚫ | ⚫ | 🟢 | 🔴 |
 | COBOL | 🔴 | ⚫ | ⚫ | ⚫ | 🔴 | ⚫ |
 
 > **路由边现状**：`HANDLES_ROUTE` 边在 TS/JS（Next.js/Expo/Express）+ PHP（file-based）+ Python（Django urlpatterns + FastAPI @app.get/@router.post）+ Ruby（Rails routes.rb）+ **Java/Kotlin（Spring @GetMapping/@PostMapping/@RequestMapping）** + **Go（Gin/Echo/Fiber r.GET/.POST）** 生成。  
@@ -218,7 +218,7 @@
 | **TypeScript** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **JavaScript** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Python** | ✅ | 🟢 | 🟡 | 🟢 | ✅ | 🟢 | 🟢 |
-| **Java** | ✅ | 🟢 | 🟡 | � | ✅ | 🟢 | 🟢 |
+| **Java** | ✅ | 🟢 | 🟡 | 🟢 | ✅ | 🟢 | 🟢 |
 | **Kotlin** | ✅ | 🟢 | 🟡 | 🟢 | 🟢 | 🟢 | 🟢 |
 | **Go** | 🟢 | 🟢 | 🟡 | 🟢 | ✅ | 🟢 | 🟢 |
 | **Vue SFC** | 🟢 | 🟢 | 🟢 | 🟢 | 🟡 | ✅ | 🟢 |
@@ -230,7 +230,7 @@
 | **Swift** | 🟡 | 🟡 | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | <!-- 导入绑定：qualified import extractor 已就绪 -->
 | **Dart** | 🟢 | 🟡 | 🟡 | 🟢 | 🔴 | 🟡 | 🟡 |
 | **C / C++** | 🟡 | 🟡 | 🔴 | 🔴 | 🟢 | 🟡 | 🔴 |
-| **Objective-C** | 🔴 | 🟡 | � | 🔴 | 🔴 | 🔴 | 🔴 |
+| **Objective-C** | 🔴 | 🟡 | 🟡 | 🔴 | 🔴 | 🔴 | 🔴 |
 | **COBOL** | ⚫ | 🔴 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ |
 
 > **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C# 由 Tier-3 升入 **Tier-2**（CFG DSL 已齐备）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 由 Tier-4 升入 **Tier-3**（bug 规则 + named-bindings 改善）；C/C++ 为 **Tier-3**（新增 CFG DSL，宏/指针分析仍有限）；Objective-C 由 Tier-4 升入 **Tier-4+**（methodExtractor 已注册，HAS_METHOD 边现在可用）；COBOL 为 **未就绪**。
