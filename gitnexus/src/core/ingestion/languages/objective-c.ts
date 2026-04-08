@@ -20,6 +20,8 @@ import { isObjcInsideContainer, type SyntaxNode } from '../utils/ast-helpers.js'
 import type { LanguageProvider } from '../language-provider.js';
 import { createFieldExtractor } from '../field-extractors/generic.js';
 import { objcConfig } from '../field-extractors/configs/objc.js';
+import { createMethodExtractor } from '../method-extractors/generic.js';
+import { objcMethodConfig } from '../method-extractors/configs/objc.js';
 
 const OBJC_BUILT_INS: ReadonlySet<string> = new Set([
   'alloc',
@@ -115,6 +117,7 @@ export const objectiveCProvider = defineLanguage({
   importSemantics: 'wildcard',
   mroStrategy: 'leftmost-base',
   fieldExtractor: createFieldExtractor(objcConfig),
+  methodExtractor: createMethodExtractor(objcMethodConfig),
   labelOverride: objcLabelOverride,
   descriptionExtractor: objcDescriptionExtractor,
   builtInNames: OBJC_BUILT_INS,

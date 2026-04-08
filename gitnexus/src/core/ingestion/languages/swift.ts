@@ -23,6 +23,7 @@ import { createFieldExtractor } from '../field-extractors/generic.js';
 import { swiftConfig as swiftFieldConfig } from '../field-extractors/configs/swift.js';
 import { createMethodExtractor } from '../method-extractors/generic.js';
 import { swiftMethodConfig } from '../method-extractors/configs/swift.js';
+import { extractSwiftNamedBindings } from '../named-bindings/swift.js';
 
 /**
  * Group Swift files by SPM target for implicit module visibility.
@@ -238,6 +239,7 @@ export const swiftProvider = defineLanguage({
   exportChecker: swiftExportChecker,
   importResolver: resolveSwiftImport,
   importSemantics: 'wildcard',
+  namedBindingExtractor: extractSwiftNamedBindings,
   heritageDefaultEdge: 'IMPLEMENTS',
   fieldExtractor: createFieldExtractor(swiftFieldConfig),
   methodExtractor: createMethodExtractor({

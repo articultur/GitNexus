@@ -29,6 +29,13 @@ import { expoFileToRouteURL } from './route-extractors/expo.js';
 import { phpFileToRouteURL } from './route-extractors/php.js';
 import { isDjangoUrlFile, extractDjangoRoutes } from './route-extractors/django.js';
 import { isRailsRouteFile, extractRailsRoutes } from './route-extractors/rails.js';
+import { isSpringControllerFile, extractSpringRoutes } from './route-extractors/spring.js';
+import {
+  isFastAPIFile,
+  extractFastAPIRoutes,
+  isGinRouteFile,
+  extractGinRoutes,
+} from './route-extractors/fastapi.js';
 import {
   extractResponseShapes,
   extractPHPResponseShapes,
@@ -816,6 +823,18 @@ async function runChunkedParseAndResolve(
         } else if (isRailsRouteFile(file.path)) {
           for (const r of extractRailsRoutes(file.content, file.path)) {
             allDecoratorRoutes.push({ ...r, decoratorName: 'rails-route' });
+          }
+        } else if (isSpringControllerFile(file.content)) {
+          for (const r of extractSpringRoutes(file.content, file.path)) {
+            allDecoratorRoutes.push({ ...r, decoratorName: 'spring-mapping' });
+          }
+        } else if (isFastAPIFile(file.content)) {
+          for (const r of extractFastAPIRoutes(file.content, file.path)) {
+            allDecoratorRoutes.push({ ...r, decoratorName: 'fastapi-route' });
+          }
+        } else if (isGinRouteFile(file.content)) {
+          for (const r of extractGinRoutes(file.content, file.path)) {
+            allDecoratorRoutes.push({ ...r, decoratorName: 'gin-route' });
           }
         }
       }
