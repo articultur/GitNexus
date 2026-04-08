@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +151,39 @@ def migrate_case(case: dict) -> dict:
             )
 
     return migrated
+
+
+def load_cases(path: Path) -> list[dict]:
+    """Load and migrate all cases from a JSONL file.
+
+    Each line is parsed as JSON, validated, and migrated to the current
+    schema. Cases with validation errors are skipped (a warning is printed).
+    """
+    cases: list[dict] = []
+
+    with open(path, "r", encoding="utf-8") as f:
+        for line_num, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                case = json.loads(line)
+            except json.JSONDecodeError as exc:
+                print(f"WARNING: line {line_num}: invalid JSON: {exc}", file=sys.stderr)
+                continue
+
+            errors = validate_case(case)
+            if errors:
+                case_id = case.get("id", f"line_{line_num}")
+                print(
+                    f"WARNING: case {case_id}: validation errors: {errors}",
+                    file=sys.stderr,
+                )
+                continue
+
+            cases.append(migrate_case(case))
+
+    return cases
 
 
 def compute_dataset_hash(path: Path) -> str:
