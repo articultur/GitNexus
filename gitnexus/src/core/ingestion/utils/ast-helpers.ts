@@ -133,6 +133,10 @@ export const CLASS_CONTAINER_TYPES = new Set([
   'object_declaration',
   'companion_object',
   // Objective-C
+  'class_interface',
+  'class_implementation',
+  'category_interface',
+  'category_implementation',
   'class_interface_declaration',
   'class_implementation_declaration',
   'protocol_declaration',
@@ -163,6 +167,10 @@ export const CONTAINER_TYPE_TO_LABEL: Record<string, string> = {
   object_declaration: 'Class',
   companion_object: 'Class',
   // Objective-C
+  class_interface: 'Class',
+  class_implementation: 'Class',
+  category_interface: 'Class',
+  category_implementation: 'Class',
   class_interface_declaration: 'Class',
   class_implementation_declaration: 'Class',
   category_interface_declaration: 'Class',
@@ -190,6 +198,10 @@ export function isObjcInsideContainer(functionNode: SyntaxNode): boolean {
   let ancestor: SyntaxNode | null = functionNode?.parent ?? null;
   while (ancestor) {
     if (
+      ancestor.type === 'class_interface' ||
+      ancestor.type === 'class_implementation' ||
+      ancestor.type === 'category_interface' ||
+      ancestor.type === 'category_implementation' ||
       ancestor.type === 'class_interface_declaration' ||
       ancestor.type === 'class_implementation_declaration' ||
       ancestor.type === 'protocol_declaration' ||

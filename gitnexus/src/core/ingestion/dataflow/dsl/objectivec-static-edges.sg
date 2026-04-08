@@ -1,0 +1,282 @@
+; Objective-C CFG DSL — Control-Flow Graph edges for tree-sitter-objc
+;
+; Covers all ObjC control-flow constructs:
+;   method_definition, if_statement, while_statement,
+;   do_statement, for_statement (C-style and fast-enumeration),
+;   switch_statement/case_statement, try_statement/catch_clause/finally_clause,
+;   synchronized_statement, goto_statement,
+;   break_statement, continue_statement, return_statement
+;
+; Edge type vocabulary (same across all language DSLs):
+;   TRUE_BRANCH, FALSE_BRANCH, LOOP_HEADER, NEXT, TRY_BODY,
+;   CATCH, BREAK, CONTINUE, THROW, RETURN,
+;   SWITCH_CASE, SWITCH_DEFAULT
+;
+; BREAK/CONTINUE routing is handled by the TypeScript post-processor
+; (cfg-post-processor.ts).
+;
+; ObjC-specific additions over C:
+;   @try / @catch / @finally  →  TRY_BODY / CATCH edges
+;   @synchronized              →  NEXT edge (conservative approximation)
+;   fast-enumeration (for…in)  →  treated as standard LOOP_HEADER
+
+; ============================================================
+; METHOD DEFINITION  (ObjC uses method_definition, not function_definition)
+; ============================================================
+(method_definition) @fn
+{
+  node @fn.cfg
+  attr (@fn.cfg) label = "function"
+  attr (@fn.cfg) statementType = "function"
+}
+
+; ============================================================
+; IF STATEMENT — TRUE_BRANCH / FALSE_BRANCH
+; ============================================================
+(if_statement
+  consequence: (_) @then
+  alternative: (_)? @alt
+) @if
+{
+  node @if.cfg
+  attr (@if.cfg) label = "if"
+  attr (@if.cfg) statementType = "if"
+
+  node @if.then_node
+  attr (@if.then_node) label = (source-text @then)
+  edge @if.cfg -> @if.then_node
+  attr (@if.cfg -> @if.then_node) type = "TRUE_BRANCH"
+
+  if some @alt {
+    node @if.else_node
+    attr (@if.else_node) label = (source-text @alt)
+    edge @if.cfg -> @if.else_node
+    attr (@if.cfg -> @if.else_node) type = "FALSE_BRANCH"
+  }
+}
+
+; ============================================================
+; WHILE LOOP
+; ============================================================
+(while_statement
+  body: (_) @wb
+) @while
+{
+  node @while.cfg
+  attr (@while.cfg) label = "while"
+  attr (@while.cfg) statementType = "loop"
+
+  edge @while.cfg -> @while.cfg
+  attr (@while.cfg -> @while.cfg) type = "LOOP_HEADER"
+  attr (@while.cfg -> @while.cfg) isLoopHeader = #true
+
+  node @while.body
+  attr (@while.body) label = (source-text @wb)
+  edge @while.cfg -> @while.body
+  attr (@while.cfg -> @while.body) type = "NEXT"
+}
+
+; ============================================================
+; DO-WHILE LOOP
+; ============================================================
+(do_statement
+  body: (_) @db
+) @do
+{
+  node @do.cfg
+  attr (@do.cfg) label = "do_while"
+  attr (@do.cfg) statementType = "loop"
+
+  edge @do.cfg -> @do.cfg
+  attr (@do.cfg -> @do.cfg) type = "LOOP_HEADER"
+  attr (@do.cfg -> @do.cfg) isLoopHeader = #true
+
+  node @do.body
+  attr (@do.body) label = (source-text @db)
+  edge @do.cfg -> @do.body
+  attr (@do.cfg -> @do.body) type = "NEXT"
+}
+
+; ============================================================
+; FOR LOOP — C-style:       for (init; cond; update) { body }
+;            fast-enum:     for (Type *item in collection) { body }
+; Both are for_statement in tree-sitter-objc.
+; ============================================================
+(for_statement
+  body: (_) @fb
+) @for
+{
+  node @for.cfg
+  attr (@for.cfg) label = "for"
+  attr (@for.cfg) statementType = "loop"
+
+  edge @for.cfg -> @for.cfg
+  attr (@for.cfg -> @for.cfg) type = "LOOP_HEADER"
+  attr (@for.cfg -> @for.cfg) isLoopHeader = #true
+
+  node @for.body
+  attr (@for.body) label = (source-text @fb)
+  edge @for.cfg -> @for.body
+  attr (@for.cfg -> @for.body) type = "NEXT"
+}
+
+; ============================================================
+; SWITCH STATEMENT
+; ============================================================
+(switch_statement
+  body: (_) @sb
+) @switch
+{
+  node @switch.cfg
+  attr (@switch.cfg) label = "switch"
+  attr (@switch.cfg) statementType = "switch"
+
+  node @switch.body
+  attr (@switch.body) label = (source-text @sb)
+  edge @switch.cfg -> @switch.body
+  attr (@switch.cfg -> @switch.body) type = "NEXT"
+}
+
+; ---- case label (non-default) ----
+(case_statement) @case
+{
+  node @case.cfg
+  attr (@case.cfg) label = "case"
+  attr (@case.cfg) statementType = "case"
+}
+
+; ---- default label ----
+(default_statement) @default
+{
+  node @default.cfg
+  attr (@default.cfg) label = "default"
+  attr (@default.cfg) statementType = "switch_default"
+}
+
+; ============================================================
+; @TRY STATEMENT — TRY_BODY edge to the compound body
+; ============================================================
+(try_statement
+  (compound_statement) @try_body
+) @try
+{
+  node @try.cfg
+  attr (@try.cfg) label = "try"
+  attr (@try.cfg) statementType = "try"
+
+  node @try.body_node
+  attr (@try.body_node) label = (source-text @try_body)
+  edge @try.cfg -> @try.body_node
+  attr (@try.cfg -> @try.body_node) type = "TRY_BODY"
+}
+
+; ============================================================
+; @CATCH CLAUSE
+; ============================================================
+(catch_clause
+  (compound_statement) @catch_body
+) @catch
+{
+  node @catch.cfg
+  attr (@catch.cfg) label = "catch"
+  attr (@catch.cfg) statementType = "catch"
+
+  node @catch.body_node
+  attr (@catch.body_node) label = (source-text @catch_body)
+  edge @catch.cfg -> @catch.body_node
+  attr (@catch.cfg -> @catch.body_node) type = "CATCH"
+}
+
+; ============================================================
+; @FINALLY CLAUSE
+; ============================================================
+(finally_clause
+  (compound_statement) @finally_body
+) @finally
+{
+  node @finally.cfg
+  attr (@finally.cfg) label = "finally"
+  attr (@finally.cfg) statementType = "finally"
+
+  node @finally.body_node
+  attr (@finally.body_node) label = (source-text @finally_body)
+  edge @finally.cfg -> @finally.body_node
+  attr (@finally.cfg -> @finally.body_node) type = "NEXT"
+}
+
+; ============================================================
+; @SYNCHRONIZED — conservative: treat body as sequential NEXT
+; ============================================================
+(synchronized_statement
+  (compound_statement) @sync_body
+) @sync
+{
+  node @sync.cfg
+  attr (@sync.cfg) label = "synchronized"
+  attr (@sync.cfg) statementType = "synchronized"
+
+  node @sync.body_node
+  attr (@sync.body_node) label = (source-text @sync_body)
+  edge @sync.cfg -> @sync.body_node
+  attr (@sync.cfg -> @sync.body_node) type = "NEXT"
+}
+
+; ============================================================
+; GOTO STATEMENT — approximate unconditional jump
+; ============================================================
+(goto_statement) @goto
+{
+  node @goto.cfg
+  attr (@goto.cfg) label = "goto"
+  attr (@goto.cfg) statementType = "goto"
+}
+
+; ============================================================
+; BREAK STATEMENT
+; ============================================================
+(break_statement) @brk
+{
+  node @brk.cfg
+  attr (@brk.cfg) label = "break"
+  attr (@brk.cfg) statementType = "break"
+}
+
+; ============================================================
+; CONTINUE STATEMENT
+; ============================================================
+(continue_statement) @cont
+{
+  node @cont.cfg
+  attr (@cont.cfg) label = "continue"
+  attr (@cont.cfg) statementType = "continue"
+}
+
+; ============================================================
+; RETURN STATEMENT
+; ============================================================
+(return_statement) @ret
+{
+  node @ret.cfg
+  attr (@ret.cfg) label = "return"
+  attr (@ret.cfg) statementType = "return"
+}
+
+; ============================================================
+; VARIABLE DECLARATION (local variable bindings)
+; ============================================================
+(declaration) @decl
+{
+  node @decl.cfg
+  attr (@decl.cfg) label = "decl"
+  attr (@decl.cfg) statementType = "declaration"
+}
+
+; ============================================================
+; EXPRESSION STATEMENT (message sends, assignments, etc.)
+; ============================================================
+(expression_statement) @expr
+{
+  node @expr.cfg
+  attr (@expr.cfg) label = "expr"
+  attr (@expr.cfg) statementType = "expression"
+}

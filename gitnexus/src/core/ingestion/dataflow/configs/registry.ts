@@ -20,10 +20,10 @@ export {
 export const LANGUAGE_TIERS = {
   /** Full support: TypeScript, JavaScript, Python, Java, C#, Go, Rust, C, C++ */
   FULL: new Set(['typescript', 'javascript', 'python', 'java', 'csharp', 'go', 'rust', 'c', 'cpp']),
-  /** Limited support: Swift, Dart, Ruby, PHP (dynamic features limit precision) */
-  LIMITED: new Set(['swift', 'dart', 'ruby', 'php']),
-  /** Basic support: Objective-C, COBOL (legacy, limited patterns) */
-  BASIC: new Set(['objectivec', 'cobol']),
+  /** Limited support: Swift, Dart, Ruby, PHP, Objective-C (dynamic features / message-passing limit precision) */
+  LIMITED: new Set(['swift', 'dart', 'ruby', 'php', 'objectivec']),
+  /** Basic support: COBOL (legacy, limited patterns) */
+  BASIC: new Set(['cobol']),
 } as const;
 
 /**

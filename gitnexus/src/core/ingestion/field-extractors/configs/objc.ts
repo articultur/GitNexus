@@ -72,12 +72,16 @@ function hasObjcReadonly(node: SyntaxNode): boolean {
 export const objcConfig: FieldExtractionConfig = {
   language: SupportedLanguages.ObjectiveC,
   typeDeclarationNodes: [
+    'class_interface',
+    'class_implementation',
+    'category_interface',
+    'category_implementation',
     'class_interface_declaration',
     'class_implementation_declaration',
     'protocol_declaration',
     'category_interface_declaration',
   ],
-  fieldNodeTypes: ['property_declaration', 'instance_variable_declaration'],
+  fieldNodeTypes: ['property_declaration', 'instance_variable', 'instance_variable_declaration'],
   bodyNodeTypes: [
     'class_interface_body',
     'class_implementation_body',

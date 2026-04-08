@@ -579,47 +579,158 @@ export const typescriptTaintConfig: TaintConfig = {
 
 // ── Objective-C taint patterns ─────────────────────────────────────────────
 
+/**
+ * Selectors that are dangerous sinks in Objective-C:
+ *
+ *  SQL / Core Data      — executeFetchRequest:, executeStatement:, fetchObjects:
+ *  JavaScript injection — evaluateJavaScript:, stringByEvaluatingJavaScriptFromString:
+ *  HTML / XSS           — loadHTMLString:baseURL:, loadData:MIMEType:...
+ *  Path traversal       — fileURLWithPath:, stringByAppendingPathComponent:,
+ *                         writeToFile:atomically:, removeItemAtPath:
+ *  Dynamic dispatch     — performSelector:, performSelector:withObject:,
+ *                         performSelector:withObject:withObject:
+ *  URL / deep-link      — openURL:, openURL:options:completionHandler:
+ *  Format string        — stringWithFormat: (when receiver is tainted),
+ *                         appendFormat:, predicateWithFormat:
+ *  Key-Value Coding     — valueForKeyPath: (KVC injection — high severity)
+ *  Shell / exec         — launchWithDictionary:, launch (NSTask)
+ */
 const OBJC_SINK_SELECTORS = new Set([
-  'execCommand:',
+  // JavaScript execution
   'evaluateJavaScript:',
-  'performSelector:',
+  'evaluateJavaScript:completionHandler:',
+  'stringByEvaluatingJavaScriptFromString:',
+  // HTML / XSS
+  'loadHTMLString:baseURL:',
+  'loadData:MIMEType:textEncodingName:baseURL:',
+  // SQL / Core Data / SQLite
   'executeFetchRequest:',
+  'executeFetchRequest:error:',
   'executeStatement:',
+  'fetchObjects:',
+  // Path traversal / file system
+  'fileURLWithPath:',
+  'stringByAppendingPathComponent:',
+  'writeToFile:atomically:',
+  'writeToFile:atomically:encoding:error:',
+  'removeItemAtPath:error:',
+  'contentsAtPath:',
+  'createFileAtPath:contents:attributes:',
+  // Dynamic dispatch
+  'performSelector:',
+  'performSelector:withObject:',
+  'performSelector:withObject:withObject:',
+  'performSelectorOnMainThread:withObject:waitUntilDone:',
+  // URL / deep-link
   'openURL:',
+  'openURL:options:completionHandler:',
   'canOpenURL:',
+  // Format string / predicate injection
+  'stringWithFormat:',
+  'appendFormat:',
+  'predicateWithFormat:',
+  'predicateWithFormat:argumentArray:',
+  // KVC injection (high severity)
+  'valueForKeyPath:',
+  'setValue:forKeyPath:',
+  // Shell / process
+  'launch',
+  'launchWithDictionary:',
+]);
+
+/**
+ * Selectors whose return value is a user-controlled taint source:
+ *
+ *  Process env       — environment, arguments
+ *  NSUserDefaults    — objectForKey:, stringForKey:, integerForKey:, etc.
+ *  URL components    — host, path, query, fragment, parameterString
+ *  Notification data — userInfo
+ *  Network response  — dataTaskWithRequest:completionHandler: (via completion block)
+ *  File reading      — contentsOfFile:, dataWithContentsOfFile:
+ *  UI text input     — text (UITextField / UITextView)
+ */
+const OBJC_SOURCE_SELECTORS = new Set([
+  // Process info
+  'environment',
+  'arguments',
+  // NSUserDefaults
+  'objectForKey:',
+  'stringForKey:',
+  'integerForKey:',
+  'floatForKey:',
+  'boolForKey:',
+  'valueForKey:',
+  // URL input
+  'host',
+  'path',
+  'query',
+  'fragment',
+  'parameterString',
+  'absoluteString',
+  // Notification
+  'userInfo',
+  // File reading
+  'contentsOfFile:',
+  'dataWithContentsOfFile:',
+  'dataWithContentsOfURL:',
+  'readDataOfLength:',
+  // UI text input
+  'text',
+]);
+
+/**
+ * Selectors that sanitize / encode a tainted value:
+ *
+ *  URL encoding    — stringByAddingPercentEncodingWithAllowedCharacters:
+ *  HTML escaping   — gtm_stringBySanitizingForHTMLDocument: (GTM/AppKit)
+ *  Predicate safe  — predicateWithValue: (constant safe predicate)
+ */
+const OBJC_SANITIZER_SELECTORS = new Set([
+  'stringByAddingPercentEncodingWithAllowedCharacters:',
+  'stringByAddingPercentEscapesUsingEncoding:',
+  'gtm_stringBySanitizingForHTMLDocument:',
+  'gtm_stringBySanitizingForHTMLFragment:',
 ]);
 
 function objcTaintSource(node: SyntaxNode): TaintPattern | undefined {
-  // ObjC: [[NSProcessInfo processInfo] environment], [[NSUserDefaults standardUserDefaults] ...]
-  const sel = node.childForFieldName('selector');
-  if (!sel) return undefined;
-  const selName = sel.text;
-  if (selName === 'environment' || selName === 'arguments') {
-    return { name: 'objc-system-source', description: `System input: ${selName}` };
+  const sel = node.childForFieldName('method');
+  const selText = sel?.text ?? node.childForFieldName('selector')?.text;
+  if (!selText) return undefined;
+  if (OBJC_SOURCE_SELECTORS.has(selText)) {
+    return {
+      name: `objc-source:${selText}`,
+      description: `User-controlled ObjC input: ${selText}`,
+    };
   }
   return undefined;
 }
 
 function objcTaintSink(node: SyntaxNode): TaintPattern | undefined {
-  const sel = node.childForFieldName('selector');
-  if (!sel) return undefined;
-  const selName = sel.text;
-  if (OBJC_SINK_SELECTORS.has(selName)) {
-    return { name: `objc-sink:${selName}`, description: `Dangerous selector: ${selName}` };
+  const sel = node.childForFieldName('method');
+  const selText = sel?.text ?? node.childForFieldName('selector')?.text;
+  if (!selText) return undefined;
+  if (OBJC_SINK_SELECTORS.has(selText)) {
+    return { name: `objc-sink:${selText}`, description: `Dangerous ObjC selector: ${selText}` };
   }
   return undefined;
 }
 
-function objcTaintSanitizer(_node: SyntaxNode): TaintPattern | undefined {
+function objcTaintSanitizer(node: SyntaxNode): TaintPattern | undefined {
+  const sel = node.childForFieldName('method');
+  const selText = sel?.text ?? node.childForFieldName('selector')?.text;
+  if (!selText) return undefined;
+  if (OBJC_SANITIZER_SELECTORS.has(selText)) {
+    return { name: `objc-sanitizer:${selText}`, description: `ObjC sanitizer: ${selText}` };
+  }
   return undefined;
 }
 
 export const objcTaintConfig: TaintConfig = {
   sourceNodeTypes: new Set(['message_expression']),
-  extractSourceDeclaration: () => undefined,
+  extractSourceDeclaration: objcTaintSource,
   sinkNodeTypes: new Set(['message_expression']),
   extractSinkCall: objcTaintSink,
-  sanitizerNodeTypes: new Set([]),
+  sanitizerNodeTypes: new Set(['message_expression']),
   extractSanitizerCall: objcTaintSanitizer,
 };
 

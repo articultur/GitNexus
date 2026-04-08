@@ -261,7 +261,7 @@ export const ENTRY_POINT_PATTERNS = {
     // Initialisation
     /^initWithNibName:bundle:$/,
     /^initWithCoder:$/,
-    /^ awakeFromNib$/,
+    /^awakeFromNib$/,
     // UIApplicationMain entry
     /^sharedApplication$/,
     /alloc$/,

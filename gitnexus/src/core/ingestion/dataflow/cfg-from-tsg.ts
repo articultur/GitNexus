@@ -83,6 +83,7 @@ const LANGUAGE_DSL_MAP: Record<string, string> = {
   rust: 'rust-static-edges.sg',
   c: 'c-static-edges.sg',
   cpp: 'cpp-static-edges.sg',
+  objectivec: 'objectivec-static-edges.sg',
 };
 
 /** Directories searched for DSL files, in priority order */
