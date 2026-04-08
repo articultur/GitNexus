@@ -1,12 +1,55 @@
 # GitNexus 项目状态全景文档
 
-> 基于 commit `796aad9` (main) · 更新日期：2026-04-08  
+> 基于 commit `6838e30` (main) · 更新日期：2026-04-08
 > 合并自：`project-analysis-2026-04-08.md` · `feature-gap-assessment.md` · `session-progress.md`
+
+---
+
+## 0. C/C++/ObjC 语言增强（Phase 1 & Phase 2）
+
+> 本次增强将 C/C++ 和 Objective-C 从 Tier-3 提升至 Tier-2，完成关键能力补齐。
+
+### 已完成功能
+
+**Phase 1（基础增强）：**
+- [x] Objective-C CFG DSL（`objectivec-static-edges.sg`，覆盖 if/while/for/switch/@try/@catch/@synchronized/@autoreleasepool/fast-enum）
+- [x] Objective-C tier 升级：BASIC → LIMITED
+- [x] Bug 规则扩展：missing-guard/resource/return-check 新增 ObjC 专属模式
+- [x] Taint 分析扩展：source/sink/sanitizer 覆盖 SQL/JS/HTML/路径穿越/动态分派/KVC 注入
+- [x] ObjC AST 容器节点映射修复
+- [x] 集成测试：`test/integration/resolvers/objc.test.ts`（9/9 通过）
+
+**Phase 2（能力补齐）：**
+- [x] Objective-C named-bindings 实现（`named-bindings/objectivec.ts`）
+- [x] Objective-C symbol-extractor 优化（Category 方法合并建模）
+- [x] C/C++ 框架检测完善（Qt/main 入口模式识别）
+- [x] C/C++ 符号提取优化
+
+### 语言支持矩阵变更
+
+| 语言 | 维度 | 原评级 | 新评级 |
+|------|------|:------:|:------:|
+| Objective-C | 导入绑定 | 🔴 | 🟢 |
+| Objective-C | 符号提取 | 🟡 | 🟢 |
+| Objective-C | 数据流 | 🟡 | 🟢 |
+| Objective-C | **综合** | **🟡** | **🟢** |
+| C/C++ | 符号提取 | 🟡 | 🟢 |
+| C/C++ | 框架检测 | 🔴 | 🟢 |
+| C/C++ | **综合** | **🔴** | **🟢** |
+
+### 剩余缺口
+
+| 语言 | 缺口 | 优先级 |
+|------|------|:------:|
+| C/C++ | named-bindings（宏展开影响） | P3 |
+| Objective-C | 框架检测（CocoaTouch 入口） | P3 |
+| C/C++/ObjC | HANDLES_ROUTE 边（无路由框架） | ⚪ N/A |
 
 ---
 
 ## 目录
 
+0. [C/C++/ObjC 语言增强](#0-ccobjc-语言增强phase-1--phase-2)
 1. [项目概览](#1-项目概览)
 2. [架构全景](#2-架构全景)
 3. [核心模块解析](#3-核心模块解析)
@@ -198,6 +241,7 @@ Trait · Impl · Community · Process · Route · Tool
 
 | Commit | 日期 | 主要内容 |
 |--------|------|---------|
+| `6838e30` | 2026-04-08 | **Phase 2 C/C++/ObjC 增强**：ObjC named-bindings + symbol-extractor 优化；C/C++ 框架检测完善；两者综合评级均升至 🟢，进入 Tier-2 |
 | `36694e4` | 早期 | 恢复 Dataflow Phase 12 完整实现（cfg-builder/dfa-engine/taint-engine） |
 | `53df277` | 早期 | 修复 C/C++/ObjC `#include`/`#import` IMPORTS 边；搜索精度提升 |
 | `f3ad103` | 早期 | 添加 Bug 检测引擎（rule-engine + diff-detector）+ 6 条初始规则 |

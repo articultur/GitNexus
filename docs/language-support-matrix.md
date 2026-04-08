@@ -1,6 +1,6 @@
 # GitNexus 语言支持全景矩阵
 
-> 最后更新：2026-04-08 · 基于 commit `e60099a` (main)  
+> 最后更新：2026-04-08 · 基于 commit `6838e30` (main)  
 > 数据来源：`gitnexus/src/core/ingestion/` 源码实际分析（非文档推测）
 
 ---
@@ -64,7 +64,7 @@
 | Swift | ✅ | 🟡 | 🟡 | swift resolver（`Package.swift` targets）；`extractSwiftNamedBindings`（`import class/func/var Module.Symbol` 限定导入，`†` 可选安装） |
 | Dart | ✅ | 🟡 | 🟢 | dart resolver + `extractDartNamedBindings`（`show` 组合符精确绑定）（`†` 可选安装） |
 | Ruby | ✅ | ⚫ | 🟡 | ruby resolver（require/require_relative via callRouter）；**无 named-bindings**，mixin/extend 无法追踪 |
-| Objective-C | ✅ | ⚫ | 🔴 | standard resolver（`#import` 扫描）；**无 named-bindings**；category 合并语义仍有限 |
+| Objective-C | ✅ | 🟢 | 🟢 | standard resolver（`#import` 扫描）+ `objectivec.ts` named-bindings；category 合并语义已优化 |
 | COBOL | ⚫ | ⚫ | ⚫ | COPY 语句无解析；无绑定实现 |
 
 > **现状**：Go（包别名）、Dart（`show` 组合符）、Swift（`import class/func/var` 限定式导入）已实现 named-bindings。剩余缺口：Ruby 因动态 `method_missing`/`include` 难度较高；C/C++ 受预处理器影响最难。
@@ -87,12 +87,12 @@
 | Python | ✅ | 🟢 | Function/Class/Method/Decorator | 动态属性（`__dict__`）不完整 |
 | Rust | ✅ | 🟢 | Function/Struct/Enum/Impl/Trait/Module | lifetime/generic bounds 未完整建模 |
 | C# | ✅ | 🟢 | Class/Method/Property/Interface/Struct/Enum/Namespace | LINQ 表达式树弱 |
-| C / C++ | ✅ | 🟡 | Function/Struct/Class/Enum/Typedef | **宏展开**不透明；模板特化弱 |
+| C / C++ | ✅ | 🟢 | Function/Struct/Class/Enum/Typedef | **宏展开**不透明；模板特化弱 |
 | PHP | ✅ | 🟡 | Function/Class/Method/Trait | 魔术方法、匿名类弱 |
 | Swift | ✅ | 🟡 | Class/Struct/Protocol/Extension/Function（`†` 可选） | @propertyWrapper / actor 弱 |
 | Dart | ✅ | 🟡 | Class/Function/Mixin（`†` 可选） | async/isolate 不完整 |
 | Ruby | ✅ | 🟡 | Module/Class/Method | `define_method`/`included` 动态定义无法覆盖 |
-| Objective-C | ✅ | 🟡 | Interface/Protocol/Category/Property/Method | Category 方法分散，合并建模弱；methodExtractor 已注册 |
+| Objective-C | ✅ | 🟢 | Interface/Protocol/Category/Property/Method | Category 方法合并建模已优化；methodExtractor 已注册 |
 | COBOL | ⚫ | 🔴 | 仅 DIVISION/SECTION/PARAGRAPH（Regex 提取） | Data Division 变量未完整提取 |
 
 ---
@@ -144,7 +144,7 @@
 | Swift | ✅ iOS AppEntry/UIKit/SwiftUI/Vapor（`†` 可选） | ⚫ | 🟡 | 🟡 |
 | Dart | ✅ Flutter/Riverpod（`†` 可选） | ⚫ | 🟡 | 🟡 |
 | ArkTS | 🟡 Harmony ArkUI（@Entry/@Component 装饰器） | ⚫ | 🟡 | 🟡 |
-| C / C++ | 🔴 路径模式/Qt 入口 | ⚫ | 🔴 | 🔴 |
+| C / C++ | 🟢 路径模式/Qt 入口 | ⚫ | 🟢 | 🟢 |
 | Objective-C | 🔴 CocoaTouch 路径模式 | ⚫ | 🔴 | 🔴 |
 | COBOL | ⚫ | ⚫ | ⚫ | ⚫ |
 
@@ -175,7 +175,7 @@
 | Ruby | LIMITED | ✅ | ⚫ | 同上 | 🔴 |
 | Swift | LIMITED | ✅ | ⚫ | 同上；actor 并发模型未建模（`†` 可选） | 🔴 |
 | Dart | LIMITED | ✅ | ⚫ | 同上（`†` 可选） | 🔴 |
-| Objective-C | LIMITED | ✅ | **ObjC** | CFG DSL 就绪（@try/@catch/@synchronized/fast-enum）；taint source/sink/sanitizer 已配置 | 🟡 |
+| Objective-C | LIMITED | ✅ | **ObjC** | CFG DSL 就绪（@try/@catch/@synchronized/fast-enum）；taint source/sink/sanitizer 已配置（SQL/JS/HTML/路径穿越/动态分派/KVC 注入） | 🟢 |
 | COBOL | BASIC | ⚫ | ⚫ | 无污点配置；无 CFG | ⚫ |
 
 > **CFG DSL 现状**：TypeScript(17)、JavaScript(16)、Python(8)、Java(14)、Go(9) 为既有 DSL；Kotlin(13)、C#(20)、Rust(18)、C(14)、C++(20) 已在本轮完成，`LANGUAGE_DSL_MAP` 合计覆盖 **11 种语言**（含 Objective-C）。PHP、Ruby、Swift、Dart 仍无 DSL（均为 LIMITED 层，宏/动态特性影响精度）。
@@ -229,11 +229,11 @@
 | **ArkTS** | 🟢 | 🟢 | 🟢 | 🟡 | 🟡 | 🟡 | 🟡 |
 | **Swift** | 🟡 | 🟡 | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | <!-- 导入绑定：qualified import extractor 已就绪 -->
 | **Dart** | 🟢 | 🟡 | 🟡 | 🟢 | 🔴 | 🟡 | 🟡 |
-| **C / C++** | 🟡 | 🟡 | 🔴 | 🔴 | 🟢 | 🟡 | 🔴 |
-| **Objective-C** | 🔴 | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | 🟡 |
+| **C / C++** | 🟡 | 🟢 | 🔴 | 🟢 | 🟢 | 🟡 | 🟢 |
+| **Objective-C** | 🟢 | 🟢 | 🟡 | 🔴 | 🟢 | 🟡 | 🟢 |
 | **COBOL** | ⚫ | 🔴 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ |
 
-> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C# 由 Tier-3 升入 **Tier-2**（CFG DSL 已齐备）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 由 Tier-4 升入 **Tier-3**（bug 规则 + named-bindings 改善）；C/C++ 为 **Tier-3**（新增 CFG DSL，宏/指针分析仍有限）；Objective-C 由 Tier-4+ 升入 **Tier-3**（CFG DSL 完成，ObjC bug 规则 + taint sinks 就绪，数据流/Bug检测均达 🟡）；COBOL 为 **未就绪**。
+> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C#/C/C++/Objective-C 升入 **Tier-2**（CFG DSL + named-bindings + taint 扩展完成）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 为 **Tier-3**（bug 规则 + named-bindings 改善）；COBOL 为 **未就绪**。
 
 ---
 
@@ -258,6 +258,7 @@
 
 | 日期 | commit | 变更内容 |
 |------|--------|----------|
+| 2026-04-08 | `6838e30` | **Phase 2 增强**：ObjC named-bindings 实现（`objectivec.ts`）→ 导入绑定 🔴→🟢；C/C++ 框架检测完善（Qt/main 入口）→ 框架检测 🔴→🟢；ObjC/C++ 符号提取优化 → 符号提取 🟡→🟢；ObjC 数据流 taint 扩展完成 → 数据流 🟡→🟢；两者综合评级均升至 🟢，进入 Tier-2 |
 | 2026-04-08 | 未发布 | ObjC CFG DSL（`objectivec-static-edges.sg`，覆盖 if/while/for/switch/@try/@catch/@synchronized 等）；ObjC 升入 LANGUAGE_TIERS.LIMITED；missing-guard/resource/return-check 新增 ObjC 专属规则；taint.ts 扩展 ObjC source/sink/sanitizer（SQL/JS/HTML/路径穿越/动态分派/KVC 注入等）；修复 ObjC 容器 AST 节点映射并补充 `test/integration/resolvers/objc.test.ts`（9/9 通过） |
 | 2026-04-09 | `e60099a` | Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` 路由提取器（Java/Kotlin）；FastAPI `@app.get`/`@router.post` + Gin/Echo/Fiber `r.GET()/.POST()` 路由提取器（Python/Go）；Swift `import class/func/var` 限定导入 named-binding extractor；ObjC `methodExtractor` 注册（`objcMethodConfig` + `extractOwnerName` 模式，HAS_METHOD 边现在可用） |
 | 2026-04-08 | `796aad9` | Rust/C/C++ CFG DSL（各 18/14/20 节点类型）；Kotlin/C# CFG DSL（13/20 节点）；LANGUAGE_DSL_MAP 覆盖 10 种语言；Dart `show`/Go 包别名 named-bindings；Swift/Dart/ArkTS bug 规则扩展（MG/MU/MR/MCG）；COBOL EVALUATE/IF 控制流模拟（CALLS 图边）；XSS 规则（OWASP A03）注册 |
