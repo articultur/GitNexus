@@ -111,10 +111,13 @@ program
   .description('Detect execution flows affected by git changes (pre-commit review)')
   .option(
     '-s, --scope <scope>',
-    'What to analyze: "unstaged" (default), "staged", "all", or "compare"',
+    'What to analyze: "unstaged" (default), "staged", "all", "compare", or "commit"',
     'unstaged',
   )
-  .option('--base-ref <ref>', 'For "compare" scope: base branch to compare against (default: main)')
+  .option(
+    '--base-ref <ref>',
+    'For "compare": base branch/ref to compare against. For "commit": the commit hash to analyze.',
+  )
   .option('-r, --repo <name>', 'Target repository (omit if only one indexed)')
   .option('--detection', 'Enable bug detection rules on changed symbols (off by default)')
   .option('-f, --file <path>', 'Filter to a specific file path for drill-down analysis')

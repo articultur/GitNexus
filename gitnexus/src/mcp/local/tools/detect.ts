@@ -633,22 +633,64 @@ async function buildDegradedResponse(
   const totalFiles = diffResult.files.length;
   const diffSizeHuman = formatBytes(diffResult.diffSize);
 
-  // Build suggestion based on precision
+  // Split files by status for targeted guidance
+  const modifiedFiles = diffResult.files.filter((f) => f.status === 'modified');
+  const addedFiles = diffResult.files.filter((f) => f.status === 'added');
+  const deletedFiles = diffResult.files.filter((f) => f.status === 'deleted');
+
+  // Build suggestion and next-step guidance based on precision
   let suggestion: string;
   let alternativeCommands: string[];
 
   if (diffResult.precision === 'symbol-level') {
-    suggestion = `Diff too large for line-level analysis (${diffSizeHuman}). Showing all symbols in changed files. Use --file to analyze specific files.`;
+    suggestion =
+      `Diff too large for line-level analysis (${diffSizeHuman}, ${totalFiles} files). ` +
+      `Symbol list shown per file — use the MCP tools below to drill into specific symbols, ` +
+      `or narrow to one file with the "file" parameter.`;
     alternativeCommands = [
-      'gitnexus detect_changes --file <path>  # Analyze a specific file',
-      'gitnexus impact <symbol> --uid <uid>   # Check impact of a specific symbol',
+      // MCP tools (primary — richer output, no shell needed)
+      'MCP: detect_changes({file: "<path>", scope: "..."})  # Line-level precision for one file',
+      'MCP: impact({target: "<symbol>", direction: "upstream"})  # Blast radius for a symbol',
+      'MCP: context({name: "<symbol>"})  # 360° callers/callees/processes',
+      'MCP: query({query: "<concept>"})  # Find related execution flows',
+      // CLI fallback
+      'CLI: gitnexus detect-changes --file <path>  # Same single-file drill-down',
+      'CLI: gitnexus impact <symbol> --direction upstream  # Blast radius',
+      // Focus hints based on what changed
+      ...(modifiedFiles.length > 0
+        ? [
+            `TIP: ${modifiedFiles.length} modified file(s) — run impact() on key symbols to find downstream breakage`,
+          ]
+        : []),
+      ...(addedFiles.length > 0
+        ? [
+            `TIP: ${addedFiles.length} added file(s) — use context() to check if they duplicate existing logic`,
+          ]
+        : []),
+      ...(deletedFiles.length > 0
+        ? [`TIP: ${deletedFiles.length} deleted file(s) — run impact() to verify no callers remain`]
+        : []),
     ];
   } else {
-    suggestion = `Diff very large (${diffSizeHuman}). Showing file list only. Use --file to analyze specific files.`;
+    suggestion =
+      `Diff very large (${diffSizeHuman}, ${totalFiles} files) — only file paths available. ` +
+      `Drill into specific files via the "file" parameter, or use impact()/context() on known key symbols.`;
     alternativeCommands = [
-      'gitnexus detect_changes --file <path>  # Analyze a specific file',
-      'gitnexus impact <symbol> --uid <uid>   # Check impact of a specific symbol',
-      'git log --oneline -20                   # See recent commits for context',
+      // MCP tools
+      'MCP: detect_changes({file: "<path>", scope: "..."})  # Symbol-level for one file',
+      'MCP: impact({target: "<symbol>", direction: "upstream"})  # Blast radius for a symbol',
+      'MCP: context({name: "<symbol>"})  # 360° callers/callees/processes for a symbol',
+      'MCP: query({query: "<concept>"})  # Find related execution flows by concept',
+      // CLI fallback
+      'CLI: gitnexus detect-changes --file <path>  # Symbol-level precision for one file',
+      'CLI: gitnexus impact <symbol> --direction upstream  # Blast radius',
+      'CLI: gitnexus query "<concept>"  # Search execution flows',
+      // Context
+      ...(deletedFiles.length > 0
+        ? [
+            `TIP: ${deletedFiles.length} deleted file(s) — run impact() on their symbols to find broken callers`,
+          ]
+        : []),
     ];
   }
 
@@ -696,23 +738,20 @@ async function buildDegradedResponse(
             };
           });
 
-          // Add drill-down command for the first symbol
-          if (fileInfo.symbols.length > 0) {
-            const firstSym = fileInfo.symbols[0];
-            fileInfo.drill_down = {
-              command: `gitnexus impact ${firstSym.name} --uid ${firstSym.uid} --direction upstream`,
-              description: `Analyze impact of ${firstSym.name} (exact match by UID)`,
-            };
-          }
+          // Add drill-down for the file (prefer MCP tools, CLI as fallback)
+          fileInfo.drill_down = {
+            command: `detect_changes({file: "${file.path}", scope: "..."})`,
+            description: `MCP: line-level precision for this file. CLI: gitnexus detect-changes --file "${file.path}"`,
+          };
         }
       } catch (e) {
         logQueryError('detect-changes:degraded-symbols', e);
       }
     } else if (diffResult.precision === 'file-level') {
-      // For file-level precision, provide drill-down to analyze single file
+      // For file-level precision, guide to single-file drill-down
       fileInfo.drill_down = {
-        command: `gitnexus detect_changes --file "${file.path}"`,
-        description: `Analyze ${file.path} with symbol-level precision`,
+        command: `detect_changes({file: "${file.path}", scope: "..."})`,
+        description: `MCP: symbol-level precision for this file. CLI: gitnexus detect-changes --file "${file.path}"`,
       };
     }
 
