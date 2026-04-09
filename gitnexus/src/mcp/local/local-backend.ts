@@ -8,6 +8,8 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import type { GraphNode } from 'gitnexus-shared';
+import type { KnowledgeGraph } from '../../core/graph/types.js';
 import { initLbug, closeLbug, isLbugReady, isWriteQuery } from '../../core/lbug/pool-adapter.js';
 export { isWriteQuery };
 // Embedding imports are lazy (dynamic import) to avoid loading onnxruntime-node
@@ -52,6 +54,68 @@ export { isTestFilePath, VALID_NODE_LABELS, VALID_RELATION_TYPES, IMPACT_RELATIO
 // Re-export interfaces moved to shared.ts
 export type { CodebaseContext, RepoOverview } from './tools/shared.js';
 
+/**
+ * 文件路径到符号的索引，加速符号查询
+ *
+ * 用于降级模式下快速查找文件内的所有符号，
+ * 避免遍历整个知识图谱。
+ */
+export class FilePathIndex {
+  private index: Map<string, GraphNode[]> = new Map();
+  private built = false;
+
+  /**
+   * 从知识图谱构建索引
+   */
+  build(graph: KnowledgeGraph): void {
+    if (this.built) return;
+
+    for (const node of graph.iterNodes()) {
+      const filePath = node.properties.filePath;
+      if (!filePath) continue;
+
+      if (!this.index.has(filePath)) {
+        this.index.set(filePath, []);
+      }
+      this.index.get(filePath)!.push(node);
+    }
+
+    // 按行号排序
+    for (const [, symbols] of this.index) {
+      symbols.sort((a, b) => (a.properties.startLine || 0) - (b.properties.startLine || 0));
+    }
+
+    this.built = true;
+  }
+
+  /**
+   * 查找文件内的所有符号
+   * O(1) 查找，不再需要遍历全图
+   */
+  findSymbolsInFile(filePath: string): GraphNode[] {
+    return this.index.get(filePath) || [];
+  }
+
+  /**
+   * 获取索引统计信息
+   */
+  getStats(): { files: number; symbols: number } {
+    let symbols = 0;
+    for (const syms of this.index.values()) {
+      symbols += syms.length;
+    }
+    return { files: this.index.size, symbols };
+  }
+
+  /**
+   * 清除索引
+   */
+  clear(): void {
+    this.index.clear();
+    this.built = false;
+  }
+}
+
 export class LocalBackend {
   private repos: Map<string, RepoHandle> = new Map();
   private contextCache: Map<string, CodebaseContext> = new Map();
@@ -59,6 +123,22 @@ export class LocalBackend {
   private reinitPromises: Map<string, Promise<void>> = new Map();
   private lastStalenessCheck: Map<string, number> = new Map();
   private groupToolSvc: GroupService | null = null;
+
+  /** 文件路径索引，用于降级模式快速符号查询 */
+  private filePathIndex: FilePathIndex | null = null;
+
+  /**
+   * 获取文件路径索引（延迟构建）
+   *
+   * 注意：此方法返回一个空的索引实例，需要调用者手动调用 build() 并传入 KnowledgeGraph。
+   * LocalBackend 使用 LadybugDB 而非内存中的 KnowledgeGraph，因此无法自动构建索引。
+   */
+  getFilePathIndex(): FilePathIndex {
+    if (!this.filePathIndex) {
+      this.filePathIndex = new FilePathIndex();
+    }
+    return this.filePathIndex;
+  }
 
   /**
    * Cross-repo group tools (CLI). Shares logic with MCP `group_*` handlers.
@@ -89,6 +169,12 @@ export class LocalBackend {
    */
   async init(): Promise<boolean> {
     await this.refreshRepos();
+
+    // 重置文件路径索引
+    if (this.filePathIndex) {
+      this.filePathIndex.clear();
+    }
+
     return this.repos.size > 0;
   }
 
