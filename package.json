@@ -27,5 +27,8 @@
     ],
     "*.{js,jsx,mjs,json,css,yml,yaml}": "prettier --write"
   },
-  "repository": "git@github.com:articultur/gitnexus.git"
+  "repository": "git@github.com:articultur/gitnexus.git",
+  "publishConfig": {
+    "registry": "https://registry.antgroup-inc.cn"
+  }
 }
