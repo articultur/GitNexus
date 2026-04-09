@@ -11,6 +11,7 @@ tool-calling.
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import os
@@ -315,6 +316,14 @@ def _try_load_json_candidates(candidates: list[str]) -> tuple[dict, str]:
             last_error = "Top-level JSON is not an object"
         except json.JSONDecodeError as e:
             last_error = f"JSONDecodeError: {e}"
+    # Fallback: try Python literal syntax (single-quoted strings, bare keys)
+    for c in candidates:
+        try:
+            parsed = ast.literal_eval(c)
+            if isinstance(parsed, dict):
+                return parsed, ""
+        except Exception:
+            pass
     return {}, last_error or "Failed to parse JSON candidates"
 
 
@@ -323,6 +332,22 @@ def parse_prediction(raw: str) -> tuple[dict, str]:
 
     Returns (prediction_dict, error_message).
     """
+    # First: try Python literal (MiniMax sometimes emits thinking blocks as list)
+    try:
+        literal = ast.literal_eval(raw)
+        if isinstance(literal, list):
+            thoughts = []
+            for block in literal:
+                if isinstance(block, dict) and block.get("type") == "thinking":
+                    t = block.get("thinking", "")
+                    if t:
+                        thoughts.append(t)
+            if thoughts:
+                reasoning = " ".join(thoughts)
+                return {"files": [], "symbols": [], "call_chain": [], "confidence": 0.0, "reasoning": reasoning}, ""
+    except Exception:
+        pass
+
     # Fenced code block
     m = _JSON_BLOCK_RE.search(raw)
     if m:
