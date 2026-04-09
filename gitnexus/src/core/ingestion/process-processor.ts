@@ -100,19 +100,25 @@ export const processProcesses = async (
   // Step 1: Find entry points (functions that call others but have few callers)
   const entryPoints = findEntryPoints(knowledgeGraph, reverseCallsEdges, callsEdges);
 
-  onProgress?.(`Found ${entryPoints.length} entry points, tracing flows...`, 20);
+  // Build entry point score map for later use in flow scoring
+  const entryPointScoreMap = new Map<string, number>();
+  entryPoints.forEach((ep) => entryPointScoreMap.set(ep.id, ep.score));
 
   onProgress?.(`Found ${entryPoints.length} entry points, tracing flows...`, 20);
 
   // Step 2: Trace processes from each entry point
-  const allTraces: string[][] = [];
+  // Each trace is stored with its entry point score for later ranking
+  const allTracesWithScore: { trace: string[]; entryScore: number }[] = [];
 
-  for (let i = 0; i < entryPoints.length && allTraces.length < cfg.maxProcesses * 2; i++) {
-    const entryId = entryPoints[i];
+  for (let i = 0; i < entryPoints.length && allTracesWithScore.length < cfg.maxProcesses * 2; i++) {
+    const entryId = entryPoints[i].id;
+    const entryScore = entryPoints[i].score;
     const traces = traceFromEntryPoint(entryId, callsEdges, cfg);
 
     // Filter out traces that are too short
-    traces.filter((t) => t.length >= cfg.minSteps).forEach((t) => allTraces.push(t));
+    traces
+      .filter((t) => t.length >= cfg.minSteps)
+      .forEach((t) => allTracesWithScore.push({ trace: t, entryScore }));
 
     if (i % 10 === 0) {
       onProgress?.(
@@ -122,23 +128,39 @@ export const processProcesses = async (
     }
   }
 
-  onProgress?.(`Found ${allTraces.length} traces, deduplicating...`, 60);
+  onProgress?.(`Found ${allTracesWithScore.length} traces, deduplicating...`, 60);
 
   // Step 3: Deduplicate similar traces (subset removal)
-  const uniqueTraces = deduplicateTraces(allTraces);
+  const uniqueTracesWithScore = deduplicateTracesWithScore(allTracesWithScore);
 
-  // Step 3b: Deduplicate by entry+terminal pair (keep longest path per pair)
-  const endpointDeduped = deduplicateByEndpoints(uniqueTraces);
+  // Step 3b: Deduplicate by entry+terminal pair (keep highest score per pair)
+  const endpointDeduped = deduplicateByEndpointsWithScore(uniqueTracesWithScore);
 
   onProgress?.(
-    `Deduped ${uniqueTraces.length} → ${endpointDeduped.length} unique endpoint pairs`,
+    `Deduped ${uniqueTracesWithScore.length} → ${endpointDeduped.length} unique endpoint pairs`,
     70,
   );
 
-  // Step 4: Limit to max processes (prioritize longer traces)
-  const limitedTraces = endpointDeduped
-    .sort((a, b) => b.length - a.length)
-    .slice(0, cfg.maxProcesses);
+  // Step 4: Limit to max processes using composite score
+  // Score = entryScore × crossCommunityBonus × log(length)
+  const scoredTraces = endpointDeduped.map((item) => {
+    const trace = item.trace;
+    // Get communities touched for cross-community bonus
+    const communitiesSet = new Set<string>();
+    trace.forEach((nodeId) => {
+      const comm = membershipMap.get(nodeId);
+      if (comm) communitiesSet.add(comm);
+    });
+    const crossCommunityBonus = communitiesSet.size > 1 ? 1.5 : 1.0;
+    const lengthFactor = Math.log(trace.length + 1);
+    const compositeScore = item.entryScore * crossCommunityBonus * lengthFactor;
+    return { trace, compositeScore };
+  });
+
+  const limitedTraces = scoredTraces
+    .sort((a, b) => b.compositeScore - a.compositeScore)
+    .slice(0, cfg.maxProcesses)
+    .map((item) => item.trace);
 
   onProgress?.(`Creating ${limitedTraces.length} process nodes...`, 80);
 
@@ -271,7 +293,7 @@ const findEntryPoints = (
   graph: KnowledgeGraph,
   reverseCallsEdges: AdjacencyList,
   callsEdges: AdjacencyList,
-): string[] => {
+): { id: string; score: number }[] => {
   const symbolTypes = new Set<NodeLabel>(['Function', 'Method']);
   const entryPointCandidates: {
     id: string;
@@ -332,7 +354,7 @@ const findEntryPoints = (
 
   return sorted
     .slice(0, 200) // Limit to prevent explosion
-    .map((c) => c.id);
+    .map((c) => ({ id: c.id, score: c.score }));
 };
 
 // ============================================================================
@@ -395,6 +417,68 @@ const traceFromEntryPoint = (
 
 // ============================================================================
 // HELPER: Deduplicate traces
+// ============================================================================
+
+// ============================================================================
+// HELPER: Deduplicate traces with score
+// ============================================================================
+
+/**
+ * Merge traces that are subsets of other traces.
+ * Keep traces with higher entry scores, remove redundant subsets.
+ */
+const deduplicateTracesWithScore = (
+  traces: { trace: string[]; entryScore: number }[],
+): { trace: string[]; entryScore: number }[] => {
+  if (traces.length === 0) return [];
+
+  // Sort by entry score descending (higher score = more important entry point)
+  const sorted = [...traces].sort((a, b) => b.entryScore - a.entryScore);
+  const unique: { trace: string[]; entryScore: number }[] = [];
+
+  for (const item of sorted) {
+    const traceKey = item.trace.join('->');
+    const isSubset = unique.some((existing) => {
+      const existingKey = existing.trace.join('->');
+      return existingKey.includes(traceKey);
+    });
+
+    if (!isSubset) {
+      unique.push(item);
+    }
+  }
+
+  return unique;
+};
+
+// ============================================================================
+// HELPER: Deduplicate by entry+terminal endpoints with score
+// ============================================================================
+
+/**
+ * Keep only the trace with highest entry score per unique entry→terminal pair.
+ */
+const deduplicateByEndpointsWithScore = (
+  traces: { trace: string[]; entryScore: number }[],
+): { trace: string[]; entryScore: number }[] => {
+  if (traces.length === 0) return [];
+
+  const byEndpoints = new Map<string, { trace: string[]; entryScore: number }>();
+  // Sort by entry score descending so highest score wins per endpoint pair
+  const sorted = [...traces].sort((a, b) => b.entryScore - a.entryScore);
+
+  for (const item of sorted) {
+    const key = `${item.trace[0]}::${item.trace[item.trace.length - 1]}`;
+    if (!byEndpoints.has(key)) {
+      byEndpoints.set(key, item);
+    }
+  }
+
+  return Array.from(byEndpoints.values());
+};
+
+// ============================================================================
+// HELPER: Deduplicate traces (legacy - kept for reference)
 // ============================================================================
 
 /**

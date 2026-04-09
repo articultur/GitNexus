@@ -1238,7 +1238,9 @@ async function runGraphAnalysisPhases(
   graph.forEachNode((n) => {
     if (n.label !== 'File') symbolCount++;
   });
-  const dynamicMaxProcesses = Math.max(20, Math.min(300, Math.round(symbolCount / 10)));
+  // Dynamic max processes: min 300, max 5000, scales with codebase size
+  // Formula: min(5000, max(300, symbolCount * 0.01))
+  const dynamicMaxProcesses = Math.min(5000, Math.max(300, Math.round(symbolCount * 0.01)));
 
   const processResult = await processProcesses(
     graph,
