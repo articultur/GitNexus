@@ -4,7 +4,16 @@
  * Used by detect_changes and other tools that need line-level change information.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import {
+  determinePrecision,
+  type DetectPrecision,
+  type DegradedReason,
+  type DegradationConfig,
+} from './shared.js';
+
+const execFileAsync = promisify(execFile);
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -57,6 +66,35 @@ interface ParsedFile {
   // Running counters for line position tracking
   _oldLinePos: number;
   _newLinePos: number;
+}
+
+// ─── Diff Degradation Types ────────────────────────────────────────────────────
+
+/** Diff 解析结果 */
+export interface DiffParseResult {
+  success: boolean;
+  precision: DetectPrecision;
+  reason?: DegradedReason;
+  diffSize: number;
+  files: FileChangeInfo[];
+  error?: string;
+}
+
+/** 文件变更信息 */
+export interface FileChangeInfo {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  oldPath?: string; // for renamed files
+  hunks?: DiffHunk['hunks']; // only in normal precision
+}
+
+/** Diff 解析选项 */
+export interface DiffParseOptions {
+  repoPath: string;
+  scope: 'unstaged' | 'staged' | 'all' | 'compare';
+  baseRef?: string;
+  config?: DegradationConfig;
+  fileFilter?: string; // 单文件模式
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -418,4 +456,323 @@ export function getChangedLines(hunks: DiffHunk[], filePath: string): number[] {
   }
 
   return Array.from(lines).sort((a, b) => a - b);
+}
+
+// ─── Diff Degradation Support ─────────────────────────────────────────────────
+
+/**
+ * 带降级支持的 diff 解析
+ *
+ * 根据输出大小自动选择精度级别：
+ * - normal: 行级精度
+ * - symbol-level: 符号级精度
+ * - file-level: 文件级精度
+ */
+export async function parseDiffWithDegradation(
+  options: DiffParseOptions,
+): Promise<DiffParseResult> {
+  const { repoPath, scope, baseRef, config, fileFilter } = options;
+
+  try {
+    // 尝试获取完整 diff
+    const diffArgs = buildDiffArgs(scope, baseRef, fileFilter);
+    const { stdout } = await execFileAsync('git', diffArgs, {
+      cwd: repoPath,
+      maxBuffer: 50 * 1024 * 1024, // 50MB buffer
+      encoding: 'utf8',
+    });
+
+    const diffSize = Buffer.byteLength(stdout, 'utf8');
+    const precision = determinePrecision(diffSize, config);
+
+    if (precision === 'normal') {
+      // 正常模式：解析完整 diff
+      const parsed = parseGitDiff(stdout);
+      const files: FileChangeInfo[] = parsed.map((p) => ({
+        path: p.filePath,
+        status: p.changeType,
+        oldPath: p.oldFile,
+        hunks: p.hunks,
+      }));
+      return {
+        success: true,
+        precision: 'normal',
+        diffSize,
+        files,
+      };
+    }
+
+    if (precision === 'symbol-level') {
+      // 符号级降级：只返回文件列表，不解析行变更
+      const files = parseDiffOutputHeaderOnly(stdout);
+      return {
+        success: true,
+        precision: 'symbol-level',
+        reason: 'diff_exceeded_512kb',
+        diffSize,
+        files,
+      };
+    }
+
+    // 文件级降级：使用 --name-status
+    return await getFileListFromGit(repoPath, scope, baseRef, fileFilter, diffSize);
+  } catch (err: unknown) {
+    // 处理 ENOBUFS 或其他错误
+    if (isEnobufsError(err)) {
+      return handleEnobufsError(repoPath, scope, baseRef, fileFilter);
+    }
+
+    return {
+      success: false,
+      precision: 'file-level',
+      diffSize: 0,
+      files: [],
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * 构建 git diff 参数
+ */
+function buildDiffArgs(
+  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  baseRef?: string,
+  fileFilter?: string,
+): string[] {
+  const args: string[] = ['diff', '-U0', '-M']; // -U0 for minimal context, -M for renames
+
+  switch (scope) {
+    case 'unstaged':
+      // Default is unstaged
+      break;
+    case 'staged':
+      args.push('--cached');
+      break;
+    case 'all':
+      args.push('HEAD');
+      break;
+    case 'compare':
+      if (baseRef) {
+        args.push(baseRef);
+      } else {
+        args.push('main'); // Default to main
+      }
+      break;
+  }
+
+  if (fileFilter) {
+    args.push('--', fileFilter);
+  }
+
+  return args;
+}
+
+/**
+ * 检查是否为 ENOBUFS 错误
+ */
+function isEnobufsError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const nodeErr = err as NodeJS.ErrnoException;
+    return (
+      nodeErr.code === 'ENOBUFS' ||
+      err.message.includes('ENOBUFS') ||
+      err.message.includes('maxBuffer')
+    );
+  }
+  return false;
+}
+
+/**
+ * 处理 ENOBUFS 错误
+ */
+async function handleEnobufsError(
+  repoPath: string,
+  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  baseRef?: string,
+  fileFilter?: string,
+): Promise<DiffParseResult> {
+  // 尝试使用 --name-status 获取文件列表
+  try {
+    const result = await getFileListFromGit(repoPath, scope, baseRef, fileFilter, 0);
+    return {
+      ...result,
+      reason: 'diff_exceeded_2mb',
+    };
+  } catch {
+    // 最后兜底：使用 git log
+    return getFileListFromGitLog(repoPath, scope, baseRef, fileFilter);
+  }
+}
+
+/**
+ * 只解析 diff 头部（文件路径和状态）
+ */
+function parseDiffOutputHeaderOnly(diffOutput: string): FileChangeInfo[] {
+  const files: FileChangeInfo[] = [];
+  const lines = diffOutput.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // 匹配 diff --git a/path b/path 格式
+    const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (match) {
+      const [, oldPath, newPath] = match;
+
+      // 查找状态标记
+      let status: 'added' | 'modified' | 'deleted' | 'renamed' = 'modified';
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        if (nextLine.startsWith('new file')) {
+          status = 'added';
+        } else if (nextLine.startsWith('deleted')) {
+          status = 'deleted';
+        } else if (nextLine.startsWith('rename from')) {
+          status = 'renamed';
+        }
+      }
+
+      files.push({
+        path: newPath,
+        status,
+        oldPath: oldPath !== newPath ? oldPath : undefined,
+      });
+    }
+  }
+
+  return files;
+}
+
+/**
+ * 使用 git diff --name-status 获取文件列表
+ */
+async function getFileListFromGit(
+  repoPath: string,
+  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  baseRef?: string,
+  fileFilter?: string,
+  diffSize: number = 0,
+): Promise<DiffParseResult> {
+  // Build name-status args (same as buildDiffArgs but with --name-status)
+  const args = ['diff', '--name-status', '-M'];
+
+  switch (scope) {
+    case 'staged':
+      args.push('--cached');
+      break;
+    case 'all':
+      args.push('HEAD');
+      break;
+    case 'compare':
+      args.push(baseRef || 'main');
+      break;
+  }
+
+  if (fileFilter) {
+    args.push('--', fileFilter);
+  }
+
+  const { stdout } = await execFileAsync('git', args, {
+    cwd: repoPath,
+    encoding: 'utf8',
+  });
+
+  const files: FileChangeInfo[] = stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split('\t');
+      const statusChar = parts[0];
+      const path = parts[parts.length - 1]; // For renames, take the new path
+
+      let status: 'added' | 'modified' | 'deleted' | 'renamed' = 'modified';
+      let oldPath: string | undefined;
+
+      switch (statusChar?.[0]) {
+        case 'A':
+          status = 'added';
+          break;
+        case 'D':
+          status = 'deleted';
+          break;
+        case 'R':
+          status = 'renamed';
+          oldPath = parts[1]; // For renames: R100\told\tnew
+          break;
+      }
+
+      return { path, status, oldPath };
+    });
+
+  return {
+    success: true,
+    precision: 'file-level',
+    reason: 'diff_exceeded_2mb',
+    diffSize,
+    files,
+  };
+}
+
+/**
+ * 使用 git log 获取文件列表（最后兜底）
+ */
+async function getFileListFromGitLog(
+  repoPath: string,
+  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  baseRef?: string,
+  fileFilter?: string,
+): Promise<DiffParseResult> {
+  let args: string[];
+
+  if (scope === 'compare' && baseRef) {
+    args = ['log', '--name-status', '--pretty=format:', `${baseRef}..HEAD`];
+  } else if (scope === 'staged') {
+    args = ['diff', '--cached', '--name-status'];
+  } else {
+    args = ['diff', '--name-status'];
+  }
+
+  if (fileFilter) {
+    args.push('--', fileFilter);
+  }
+
+  const { stdout } = await execFileAsync('git', args, {
+    cwd: repoPath,
+    encoding: 'utf8',
+  });
+
+  // 去重文件列表
+  const fileMap = new Map<string, FileChangeInfo>();
+  const lines = stdout.trim().split('\n').filter(Boolean);
+
+  for (const line of lines) {
+    const parts = line.split('\t');
+    const statusChar = parts[0];
+    const path = parts[parts.length - 1];
+
+    if (!fileMap.has(path)) {
+      let status: 'added' | 'modified' | 'deleted' | 'renamed' = 'modified';
+      switch (statusChar?.[0]) {
+        case 'A':
+          status = 'added';
+          break;
+        case 'D':
+          status = 'deleted';
+          break;
+        case 'R':
+          status = 'renamed';
+          break;
+      }
+      fileMap.set(path, { path, status });
+    }
+  }
+
+  return {
+    success: true,
+    precision: 'file-level',
+    reason: 'diff_exceeded_2mb',
+    diffSize: 0,
+    files: Array.from(fileMap.values()),
+  };
 }
