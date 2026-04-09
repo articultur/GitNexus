@@ -1,6 +1,7 @@
 /**
  * Detect changes tool — git-diff based impact analysis.
  * Uses line-level mapping for precise symbol detection and unified scoring.
+ * Supports graceful degradation when diff exceeds buffer limits (ENOBUFS).
  */
 
 import { executeParameterized } from '../../../core/lbug/pool-adapter.js';
@@ -10,8 +11,18 @@ import {
   computeImpactScore,
   createEvidenceBuilder,
   isTestFilePath,
+  formatBytes,
+  type DetectPrecision,
+  type DegradedReason,
+  type DegradationConfig,
 } from './shared.js';
-import { getDiffHunks, lineRangeOverlapsHunk, type DiffHunk } from './git-diff-parser.js';
+import {
+  parseDiffWithDegradation,
+  lineRangeOverlapsHunk,
+  type DiffHunk,
+  type DiffParseResult,
+  type DiffParseOptions,
+} from './git-diff-parser.js';
 
 /** Change type classification for a symbol */
 type ChangeType =
@@ -22,8 +33,60 @@ type ChangeType =
   | 'meta_change'; // imports, exports, etc.
 
 /**
+ * Degraded mode response when diff exceeds buffer limits.
+ * Returned instead of normal result when precision is symbol-level or file-level.
+ */
+export interface DegradedDetectResult {
+  // Meta information
+  truncated: true;
+  precision: DetectPrecision;
+  reason: DegradedReason;
+  original_diff_size: number;
+
+  // Statistics
+  stats: {
+    total_files: number;
+    total_symbols: number;
+    diff_size_bytes: number;
+    diff_size_human: string;
+  };
+
+  // File-level information
+  files: Array<{
+    path: string;
+    status: 'added' | 'modified' | 'deleted' | 'renamed';
+    oldPath?: string;
+
+    // Symbol-level precision only
+    symbols?: Array<{
+      name: string;
+      uid: string;
+      type: string;
+      line_start: number;
+      line_end: number;
+    }>;
+
+    // Drill-down command
+    drill_down?: {
+      command: string;
+      description: string;
+    };
+  }>;
+
+  // User guidance
+  suggestion: string;
+  alternative_commands: string[];
+
+  // Backward compatibility fields
+  changed_files: string[];
+  affected_symbols: Array<{ name: string; uid: string; file: string }>;
+  execution_flows: [];
+}
+
+/**
  * Detect changes — git-diff based impact analysis.
  * Maps changed lines to indexed symbols, then finds affected processes.
+ * Supports graceful degradation when diff exceeds buffer limits.
  */
 export async function detectChangesTool(
   repo: RepoHandle,
@@ -36,6 +99,10 @@ export async function detectChangesTool(
     enable_detection?: boolean;
     /** Maximum number of symbols to return per file. Default: 100 (was 20) */
     symbol_limit?: number;
+    /** Filter to a specific file path for drill-down analysis */
+    file?: string;
+    /** Custom degradation thresholds */
+    degradation_config?: DegradationConfig;
   },
   ensureInitialized: (id: string) => Promise<void>,
 ): Promise<any> {
@@ -51,17 +118,35 @@ export async function detectChangesTool(
     return { error: `Invalid scope: ${scope}. Must be one of: unstaged, staged, all, compare` };
   }
 
-  // Get structured diff hunks instead of just file names
-  let diffHunks: DiffHunk[];
+  // Build diff options with degradation support
+  const diffOptions: DiffParseOptions = {
+    repoPath: repo.repoPath,
+    scope: validScope,
+    baseRef: validScope === 'compare' ? params.base_ref : undefined,
+    config: params.degradation_config,
+    fileFilter: params.file,
+  };
+
+  // Get structured diff with degradation support
+  let diffResult: DiffParseResult;
   try {
-    diffHunks = await getDiffHunks(
-      repo.repoPath,
-      validScope,
-      validScope === 'compare' ? params.base_ref : undefined,
-    );
+    diffResult = await parseDiffWithDegradation(diffOptions);
   } catch (err: any) {
     return { error: `Git diff failed: ${err.message}` };
   }
+
+  // Handle degraded mode responses
+  if (!diffResult.success || diffResult.precision !== 'normal') {
+    return buildDegradedResponse(repo.id, diffResult, ensureInitialized, symbolLimit);
+  }
+
+  // Convert to DiffHunk format for backward compatibility with existing logic
+  const diffHunks: DiffHunk[] = diffResult.files.map((file) => ({
+    filePath: file.path,
+    changeType: file.status,
+    oldPath: file.oldPath,
+    hunks: file.hunks || [],
+  }));
 
   if (diffHunks.length === 0) {
     return {
@@ -525,4 +610,121 @@ function classifyChangeType(
 
   // Default to implementation change
   return 'implementation_change';
+}
+
+/**
+ * Build a degraded response when diff exceeds buffer limits.
+ * Returns file-level or symbol-level information depending on precision.
+ */
+async function buildDegradedResponse(
+  repoId: string,
+  diffResult: DiffParseResult,
+  ensureInitialized: (id: string) => Promise<void>,
+  symbolLimit: number,
+): Promise<DegradedDetectResult | { error: string }> {
+  // Ensure LadybugDB is initialized for symbol queries
+  await ensureInitialized(repoId);
+
+  const totalFiles = diffResult.files.length;
+  const diffSizeHuman = formatBytes(diffResult.diffSize);
+
+  // Build suggestion based on precision
+  let suggestion: string;
+  let alternativeCommands: string[];
+
+  if (diffResult.precision === 'symbol-level') {
+    suggestion = `Diff too large for line-level analysis (${diffSizeHuman}). Showing all symbols in changed files. Use --file to analyze specific files.`;
+    alternativeCommands = [
+      'gitnexus detect_changes --file <path>  # Analyze a specific file',
+      'gitnexus impact <symbol> --uid <uid>   # Check impact of a specific symbol',
+    ];
+  } else {
+    suggestion = `Diff very large (${diffSizeHuman}). Showing file list only. Use --file to analyze specific files.`;
+    alternativeCommands = [
+      'gitnexus detect_changes --file <path>  # Analyze a specific file',
+      'gitnexus impact <symbol> --uid <uid>   # Check impact of a specific symbol',
+      'git log --oneline -20                   # See recent commits for context',
+    ];
+  }
+
+  // Build file information
+  const files: DegradedDetectResult['files'] = [];
+  const affectedSymbols: Array<{ name: string; uid: string; file: string }> = [];
+  let totalSymbols = 0;
+
+  for (const file of diffResult.files) {
+    const fileInfo: DegradedDetectResult['files'][number] = {
+      path: file.path,
+      status: file.status,
+      oldPath: file.oldPath,
+    };
+
+    // For symbol-level precision, query symbols in each file
+    if (diffResult.precision === 'symbol-level') {
+      try {
+        const symbols = await executeParameterized(
+          repoId,
+          `
+            MATCH (n)
+            WHERE n.filePath CONTAINS $filePath
+              AND n.startLine IS NOT NULL
+              AND n.endLine IS NOT NULL
+            RETURN n.id AS id, n.name AS name, labels(n)[0] AS type, n.filePath AS filePath,
+                   n.startLine AS startLine, n.endLine AS endLine
+            LIMIT $limit
+          `,
+          { filePath: file.path, limit: symbolLimit },
+        );
+
+        if (symbols.length > 0) {
+          fileInfo.symbols = symbols.map((sym) => {
+            const uid = sym.id || sym[0];
+            const name = sym.name || sym[1];
+            affectedSymbols.push({ name, uid, file: file.path });
+            totalSymbols++;
+            return {
+              name,
+              uid,
+              type: sym.type || sym[2],
+              line_start: sym.startLine || sym[4],
+              line_end: sym.endLine || sym[5],
+            };
+          });
+
+          // Add drill-down command for the first symbol
+          if (fileInfo.symbols.length > 0) {
+            const firstSym = fileInfo.symbols[0];
+            fileInfo.drill_down = {
+              command: `gitnexus impact ${firstSym.name} --uid ${firstSym.uid} --direction upstream`,
+              description: `Analyze impact of ${firstSym.name} (exact match by UID)`,
+            };
+          }
+        }
+      } catch (e) {
+        logQueryError('detect-changes:degraded-symbols', e);
+      }
+    }
+
+    files.push(fileInfo);
+  }
+
+  return {
+    truncated: true,
+    precision: diffResult.precision,
+    reason: diffResult.reason!,
+    original_diff_size: diffResult.diffSize,
+    stats: {
+      total_files: totalFiles,
+      total_symbols: totalSymbols,
+      diff_size_bytes: diffResult.diffSize,
+      diff_size_human: diffSizeHuman,
+    },
+    files,
+    suggestion,
+    alternative_commands: alternativeCommands,
+    // Backward compatibility fields
+    changed_files: diffResult.files.map((f) => f.path),
+    affected_symbols: affectedSymbols,
+    execution_flows: [],
+  };
 }
