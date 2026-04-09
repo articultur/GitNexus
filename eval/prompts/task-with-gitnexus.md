@@ -20,7 +20,7 @@ Based on the issue description above, identify:
 ## Rules
 - Analyze the codebase **as it exists at commit {{commit_before}}** (before the fix was applied).
 - Do NOT look up the fix commit or any later history.
-- You may read files, search for patterns, and list directories — and use the GitNexus code intelligence tools below.
+- **You MUST use GitNexus code intelligence tools to investigate the codebase. Do NOT attempt to answer from memory or reasoning alone.**
 - Be precise: only list files that genuinely need changing, not every file you read.
 - Use the minimum number of tool calls needed to reach a confident answer.
 

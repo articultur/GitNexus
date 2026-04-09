@@ -24,7 +24,7 @@ Analyze the blast radius of the issue described above:
 ## Rules
 - Analyze the codebase **as it exists at commit {{commit_before}}** (before the fix was applied).
 - Do NOT look up the fix commit or any later history.
-- Use the available tools to investigate the codebase.
+- **You MUST use GitNexus code intelligence tools to investigate the codebase. Do NOT attempt to answer from memory or reasoning alone.**
 - Be precise: only list files that genuinely need changing, not every file you read.
 - Use the minimum number of tool calls needed to reach a confident answer.
 
