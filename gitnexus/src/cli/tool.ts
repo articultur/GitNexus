@@ -115,11 +115,25 @@ export async function impactCommand(
     repo?: string;
     depth?: string;
     includeTests?: boolean;
+    detail?: string;
+    snapshotId?: string;
+    page?: string;
   },
 ): Promise<void> {
   if (!target?.trim()) {
     console.error('Usage: gitnexus impact <symbol_name> [--direction upstream|downstream]');
     process.exit(1);
+  }
+
+  // Parse pagination JSON if provided
+  let pagination: { depth: number; offset?: number; limit?: number } | undefined;
+  if (options?.page) {
+    try {
+      pagination = JSON.parse(options.page);
+    } catch {
+      console.error('Invalid --page JSON. Example: \'{"depth":1,"offset":0,"limit":100}\'');
+      process.exit(1);
+    }
   }
 
   try {
@@ -130,6 +144,10 @@ export async function impactCommand(
       maxDepth: options?.depth ? parseInt(options.depth, 10) : undefined,
       includeTests: options?.includeTests ?? false,
       repo: options?.repo,
+      // New parameters for adaptive output
+      detail: options?.detail as 'auto' | 'summary' | 'full' | undefined,
+      snapshot_id: options?.snapshotId,
+      page: pagination,
     });
     output(result);
   } catch (err: unknown) {
@@ -165,20 +183,43 @@ export async function cypherCommand(
   output(result);
 }
 
-export async function detectChangesCommand(
-  options?: {
-    scope?: string;
-    baseRef?: string;
-    repo?: string;
-    detection?: boolean;
-  },
-): Promise<void> {
+export async function detectChangesCommand(options?: {
+  scope?: string;
+  baseRef?: string;
+  repo?: string;
+  detection?: boolean;
+  /** Filter to a specific file path for drill-down analysis */
+  file?: string;
+  /** Force precision level (normal, symbol-level, file-level) */
+  precision?: string;
+  /** Custom normal mode threshold in bytes */
+  normalMax?: string;
+  /** Custom symbol-level threshold in bytes */
+  symbolMax?: string;
+}): Promise<void> {
+  // Build degradation config if custom thresholds provided
+  const degradationConfig =
+    options?.normalMax || options?.symbolMax
+      ? {
+          normalMaxBytes: options.normalMax ? parseInt(options.normalMax, 10) : undefined,
+          symbolLevelMaxBytes: options.symbolMax ? parseInt(options.symbolMax, 10) : undefined,
+        }
+      : undefined;
+
+  // Validate precision if provided
+  if (options?.precision && !['normal', 'symbol-level', 'file-level'].includes(options.precision)) {
+    console.error('Invalid --precision. Must be one of: normal, symbol-level, file-level');
+    process.exit(1);
+  }
+
   const backend = await getBackend();
   const result = await backend.callTool('detect_changes', {
     scope: options?.scope || 'unstaged',
     base_ref: options?.baseRef,
     repo: options?.repo,
     enable_detection: options?.detection ?? false,
+    file: options?.file,
+    degradation_config: degradationConfig,
   });
   output(result);
 }

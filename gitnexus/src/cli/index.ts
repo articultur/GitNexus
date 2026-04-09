@@ -109,10 +109,18 @@ program
 program
   .command('detect-changes')
   .description('Detect execution flows affected by git changes (pre-commit review)')
-  .option('-s, --scope <scope>', 'What to analyze: "unstaged" (default), "staged", "all", or "compare"', 'unstaged')
+  .option(
+    '-s, --scope <scope>',
+    'What to analyze: "unstaged" (default), "staged", "all", or "compare"',
+    'unstaged',
+  )
   .option('--base-ref <ref>', 'For "compare" scope: base branch to compare against (default: main)')
   .option('-r, --repo <name>', 'Target repository (omit if only one indexed)')
   .option('--detection', 'Enable bug detection rules on changed symbols (off by default)')
+  .option('-f, --file <path>', 'Filter to a specific file path for drill-down analysis')
+  .option('--precision <level>', 'Force precision level: normal, symbol-level, or file-level')
+  .option('--normal-max <bytes>', 'Custom normal mode threshold in bytes (default: 524288)')
+  .option('--symbol-max <bytes>', 'Custom symbol-level threshold in bytes (default: 2097152)')
   .action(createLazyAction(() => import('./tool.js'), 'detectChangesCommand'));
 
 program
@@ -141,6 +149,9 @@ program
   .option('-r, --repo <name>', 'Target repository')
   .option('--depth <n>', 'Max relationship depth (default: 3)')
   .option('--include-tests', 'Include test files in results')
+  .option('--detail <mode>', 'Output detail mode: auto, summary, or full', 'auto')
+  .option('--snapshot-id <id>', 'Snapshot ID for pagination (from previous layered result)')
+  .option('--page <json>', 'Pagination params as JSON: \'{"depth":1,"offset":0,"limit":100}\'')
   .action(createLazyAction(() => import('./tool.js'), 'impactCommand'));
 
 program
