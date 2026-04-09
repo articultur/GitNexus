@@ -8,12 +8,36 @@ const yaml = _require('js-yaml') as typeof import('js-yaml');
 export function registerGroupCommands(program: Command): void {
   const group = program
     .command('group')
-    .description('Manage repository groups for cross-index impact analysis');
+    .description('Manage repository groups for cross-index impact analysis')
+    .addHelpText(
+      'after',
+      `
+Groups allow cross-repo impact analysis by linking multiple indexed repositories.
+Each group has a group.yaml config that maps repo paths to registry names.
+
+Examples:
+  $ gitnexus group create my-project
+  $ gitnexus group add my-project backend/api api-service
+  $ gitnexus group sync my-project
+  $ gitnexus group query my-project "user authentication"
+
+Config location: ~/.gitnexus/groups/<name>/group.yaml
+`,
+    );
 
   group
     .command('create <name>')
     .description('Create a new group with template group.yaml')
     .option('--force', 'Overwrite existing group')
+    .addHelpText(
+      'after',
+      `
+Example:
+  $ gitnexus group create my-project
+  Created group "my-project" at /Users/you/.gitnexus/groups/my-project
+  Edit group.yaml to add repos, then run: gitnexus group sync my-project
+`,
+    )
     .action(async (name: string, opts: { force?: boolean }) => {
       const { createGroupDir, getDefaultGitnexusDir } = await import('../core/group/storage.js');
       const dir = await createGroupDir(getDefaultGitnexusDir(), name, opts.force);
@@ -25,6 +49,20 @@ export function registerGroupCommands(program: Command): void {
     .command('add <group> <groupPath> <registryName>')
     .description(
       'Add a repo to a group. <groupPath> = hierarchy path (e.g. hr/hiring/backend), <registryName> = name from registry',
+    )
+    .addHelpText(
+      'after',
+      `
+Arguments:
+  group        Group name (e.g. my-project)
+  groupPath    Hierarchical path within the group (e.g. backend/api, frontend/web)
+  registryName Name of the indexed repo in the global registry
+
+Example:
+  $ gitnexus group add my-project backend/api api-service
+  Added api-service as "backend/api" to group "my-project"
+  Run: gitnexus group sync my-project
+`,
     )
     .action(async (groupName: string, groupPath: string, registryName: string) => {
       const { getGroupDir, getDefaultGitnexusDir } = await import('../core/group/storage.js');
@@ -43,6 +81,14 @@ export function registerGroupCommands(program: Command): void {
   group
     .command('remove <group> <path>')
     .description('Remove a repo from a group')
+    .addHelpText(
+      'after',
+      `
+Example:
+  $ gitnexus group remove my-project backend/api
+  Removed "backend/api" from group "my-project"
+`,
+    )
     .action(async (groupName: string, repoPath: string) => {
       const { getGroupDir, getDefaultGitnexusDir } = await import('../core/group/storage.js');
       const { loadGroupConfig } = await import('../core/group/config-parser.js');
@@ -63,6 +109,16 @@ export function registerGroupCommands(program: Command): void {
   group
     .command('list [name]')
     .description('List all groups or details of one')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  $ gitnexus group list           # list all groups
+  $ gitnexus group list my-project  # show group details
+
+Output shows repos mapping and manifest links if configured.
+`,
+    )
     .action(async (name?: string) => {
       const { listGroups, getDefaultGitnexusDir, getGroupDir } =
         await import('../core/group/storage.js');
@@ -96,6 +152,19 @@ export function registerGroupCommands(program: Command): void {
   group
     .command('status <name>')
     .description('Check staleness of group and repos')
+    .addHelpText(
+      'after',
+      `
+Example:
+  $ gitnexus group status my-project
+
+Shows:
+  - Last sync timestamp
+  - Per-repo index staleness (commits behind)
+  - Contract registry staleness
+  - Missing repos from last sync
+`,
+    )
     .action(async (name: string) => {
       const { readContractRegistry, getGroupDir, getDefaultGitnexusDir } =
         await import('../core/group/storage.js');
@@ -153,6 +222,22 @@ export function registerGroupCommands(program: Command): void {
     .option('--allow-stale', 'Skip stale index warnings')
     .option('--verbose', 'Show each cross-link detail')
     .option('--json', 'JSON output')
+    .addHelpText(
+      'after',
+      `
+Example:
+  $ gitnexus group sync my-project
+  $ gitnexus group sync my-project --verbose
+
+This command:
+  1. Extracts HTTP contracts from each repo's index
+  2. Matches contracts across repos (exact + fuzzy matching)
+  3. Builds cross-links for cross-repo impact analysis
+  4. Writes contracts.json to the group directory
+
+Matching cascade: exact → BM25 → embedding (if --embeddings enabled)
+`,
+    )
     .action(async (name: string, opts: Record<string, boolean | undefined>) => {
       const { getGroupDir, getDefaultGitnexusDir } = await import('../core/group/storage.js');
       const { loadGroupConfig } = await import('../core/group/config-parser.js');
@@ -190,6 +275,18 @@ export function registerGroupCommands(program: Command): void {
     .option('--subgroup <path>', 'Limit search scope')
     .option('--limit <n>', 'Max merged results', '5')
     .option('--json', 'JSON output')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  $ gitnexus group query my-project "user authentication"
+  $ gitnexus group query my-project "payment flow" --subgroup backend
+  $ gitnexus group query my-project "API handler" --limit 10 --json
+
+Results are merged using Reciprocal Rank Fusion (RRF) from all repos.
+Use --subgroup to limit search to a specific path prefix.
+`,
+    )
     .action(
       async (
         name: string,
@@ -242,6 +339,20 @@ export function registerGroupCommands(program: Command): void {
     .option('--repo <repo>', 'Filter by repo')
     .option('--unmatched', 'Show only unmatched contracts')
     .option('--json', 'JSON output')
+    .addHelpText(
+      'after',
+      `
+Examples:
+  $ gitnexus group contracts my-project
+  $ gitnexus group contracts my-project --type http
+  $ gitnexus group contracts my-project --unmatched
+  $ gitnexus group contracts my-project --repo backend/api --json
+
+Output shows:
+  - Contracts: role, contractId, repo, symbol name
+  - Cross-links: from/to repo, match type, confidence
+`,
+    )
     .action(async (name: string, opts: Record<string, string | boolean | undefined>) => {
       const { LocalBackend } = await import('../mcp/local/local-backend.js');
 
