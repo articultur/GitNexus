@@ -262,7 +262,21 @@ Maps git diff hunks to indexed symbols, then traces which processes are impacted
 WHEN TO USE: Before committing — to understand what your changes affect. Pre-commit review, PR preparation.
 AFTER THIS: Review affected processes. Use context() on high-risk symbols. READ gitnexus://repo/{name}/process/{name} for full traces.
 
-Returns: changed symbols, affected processes, and a risk summary.`,
+DEGRADATION BEHAVIOR:
+When diff exceeds buffer limits (ENOBUFS), returns a degraded response with reduced precision:
+- normal (≤512KB): Full line-level precision with exact hunks
+- symbol-level (512KB-2MB): File-level changes + all symbols in each file (may include unchanged symbols)
+- file-level (>2MB): Only file paths, use drill_down commands for deeper analysis
+
+Degraded responses include:
+- truncated: true (signals degraded mode)
+- precision: "symbol-level" | "file-level"
+- stats: { total_files, total_symbols, diff_size_bytes, diff_size_human }
+- files[].drill_down: Commands to get more precise analysis for each file
+- suggestion: User guidance for next steps
+- alternative_commands: CLI commands for follow-up analysis
+
+Use the "file" parameter to drill down into a specific file with symbol-level precision.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -275,6 +289,11 @@ Returns: changed symbols, affected processes, and a risk summary.`,
         base_ref: {
           type: 'string',
           description: 'Branch/commit for "compare" scope (e.g., "main")',
+        },
+        file: {
+          type: 'string',
+          description:
+            'Analyze a single file (drill-down from degraded response). Returns symbol-level precision for that file.',
         },
         repo: {
           type: 'string',
