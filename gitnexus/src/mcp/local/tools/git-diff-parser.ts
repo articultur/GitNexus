@@ -729,6 +729,8 @@ async function getFileListFromGitLog(
     args = ['log', '--name-status', '--pretty=format:', `${baseRef}..HEAD`];
   } else if (scope === 'staged') {
     args = ['diff', '--cached', '--name-status'];
+  } else if (scope === 'all') {
+    args = ['diff', '--name-status', 'HEAD'];
   } else {
     args = ['diff', '--name-status'];
   }
@@ -753,6 +755,7 @@ async function getFileListFromGitLog(
 
     if (!fileMap.has(path)) {
       let status: 'added' | 'modified' | 'deleted' | 'renamed' = 'modified';
+      let oldPath: string | undefined;
       switch (statusChar?.[0]) {
         case 'A':
           status = 'added';
@@ -762,9 +765,10 @@ async function getFileListFromGitLog(
           break;
         case 'R':
           status = 'renamed';
+          oldPath = parts[1]; // For renames: R100\told\tnew
           break;
       }
-      fileMap.set(path, { path, status });
+      fileMap.set(path, { path, status, oldPath });
     }
   }
 
