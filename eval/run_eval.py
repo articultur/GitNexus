@@ -65,7 +65,7 @@ except ImportError:
 
 from eval.lib.executor import ToolLoopExecutor, RawResult
 from eval.lib.schema import load_cases, compute_dataset_hash
-from eval.lib.meta import generate_run_meta
+from eval.lib.meta import generate_run_meta, compute_prompt_hashes
 
 # ─── Prompt loading ──────────────────────────────────────────────────────────
 
@@ -169,6 +169,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--run-id", default="",
         help="Explicit run ID (default: auto-generated timestamp)",
     )
+    parser.add_argument(
+        "--allow-draft", action="store_true",
+        help="Include all case statuses. Without this flag only case_status=locked cases are used.",
+    )
 
     return parser
 
@@ -192,7 +196,7 @@ def main() -> None:
         print(f"ERROR: cases file not found: {cases_path}", file=sys.stderr)
         sys.exit(1)
 
-    cases = load_cases(cases_path)
+    cases = load_cases(cases_path, status_filter="" if args.allow_draft else "locked")
 
     # Filter by --case-ids (takes precedence over --case-filter)
     if args.case_ids:
@@ -320,6 +324,7 @@ def main() -> None:
         token_budget=args.token_budget,
         parallelism=args.parallelism,
         retry_count=args.retry_count,
+        prompt_hashes=compute_prompt_hashes(SCRIPT_DIR / "prompts" / "templates"),
     )
     meta_path = run_dir / "run-meta.json"
     with meta_path.open("w", encoding="utf-8") as f:

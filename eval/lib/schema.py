@@ -153,11 +153,16 @@ def migrate_case(case: dict) -> dict:
     return migrated
 
 
-def load_cases(path: Path) -> list[dict]:
+def load_cases(path: Path, *, status_filter: str = "") -> list[dict]:
     """Load and migrate all cases from a JSONL file.
 
     Each line is parsed as JSON, validated, and migrated to the current
     schema. Cases with validation errors are skipped (a warning is printed).
+
+    Args:
+        path: Path to JSONL file.
+        status_filter: If non-empty, only include cases whose case_status
+            matches this value (e.g. "locked"). Empty string means no filter.
     """
     cases: list[dict] = []
 
@@ -182,6 +187,17 @@ def load_cases(path: Path) -> list[dict]:
                 continue
 
             cases.append(migrate_case(case))
+
+    # Apply case_status filter
+    if status_filter:
+        before = len(cases)
+        cases = [c for c in cases if c.get("case_status") == status_filter]
+        skipped = before - len(cases)
+        if skipped:
+            print(
+                f"INFO: filtered {skipped} cases with case_status != {status_filter!r}",
+                file=sys.stderr,
+            )
 
     return cases
 

@@ -41,9 +41,9 @@ warn() { echo "[prepare][warn] $*" >&2; }
 gitnexus_analyze() {
   local dir="$1"
   if [[ -n "$GITNEXUS_BIN" ]]; then
-    node "$GITNEXUS_BIN" analyze --dir "$dir" --quiet
+    node "$GITNEXUS_BIN" analyze --dir "$dir"
   else
-    (cd "$dir" && npx gitnexus analyze --quiet) 2>&1 | grep -v "^$" || true
+    (cd "$dir" && npx gitnexus analyze) 2>&1 | grep -v "^$" || true
   fi
 }
 
