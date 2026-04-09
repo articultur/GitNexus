@@ -114,7 +114,11 @@ async function ensureOllamaAvailable(): Promise<boolean> {
  * Configure Ollama as the embedding backend.
  */
 function configureOllamaEmbedding(): void {
-  process.env.GITNEXUS_EMBEDDING_URL = OLLAMA_DEFAULT_URL;
+  // Use the OpenAI-compatible /v1 endpoint so that the http-client's
+  // `${baseUrl}/embeddings` resolves to /v1/embeddings (accepts `input`
+  // array, returns `{ data: [{ embedding }] }`).  The legacy /api/embeddings
+  // only accepts a single `prompt` string and returns a different schema.
+  process.env.GITNEXUS_EMBEDDING_URL = `${OLLAMA_DEFAULT_URL}/v1`;
   process.env.GITNEXUS_EMBEDDING_MODEL = OLLAMA_DEFAULT_MODEL;
   process.env.GITNEXUS_EMBEDDING_DIMS = String(OLLAMA_EMBEDDING_DIMS);
   console.log('  🔄 Using Ollama for embeddings\n');
