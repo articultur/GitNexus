@@ -114,9 +114,11 @@ export async function detectChangesTool(
   const symbolLimit = params.symbol_limit ?? 100;
 
   // Validate scope
-  const validScope = scope as 'unstaged' | 'staged' | 'all' | 'compare';
-  if (!['unstaged', 'staged', 'all', 'compare'].includes(validScope)) {
-    return { error: `Invalid scope: ${scope}. Must be one of: unstaged, staged, all, compare` };
+  const validScope = scope as 'unstaged' | 'staged' | 'all' | 'compare' | 'commit';
+  if (!['unstaged', 'staged', 'all', 'compare', 'commit'].includes(validScope)) {
+    return {
+      error: `Invalid scope: ${scope}. Must be one of: unstaged, staged, all, compare, commit`,
+    };
   }
 
   // Build diff options with degradation support
@@ -125,7 +127,7 @@ export async function detectChangesTool(
   const diffOptions: DiffParseOptions = {
     repoPath: repo.repoPath,
     scope: validScope,
-    baseRef: validScope === 'compare' ? params.base_ref : undefined,
+    baseRef: validScope === 'compare' || validScope === 'commit' ? params.base_ref : undefined,
     config: degradationConfig,
     fileFilter: params.file,
   };

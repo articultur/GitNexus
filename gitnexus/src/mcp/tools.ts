@@ -256,11 +256,22 @@ NOTE: ACCESSES edges (field read/write tracking) are included in context results
   },
   {
     name: 'detect_changes',
-    description: `Analyze uncommitted git changes and find affected execution flows.
+    description: `Analyze git changes and find affected execution flows.
 Maps git diff hunks to indexed symbols, then traces which processes are impacted.
 
-WHEN TO USE: Before committing — to understand what your changes affect. Pre-commit review, PR preparation.
+WHEN TO USE:
+- Before committing: understand what your current changes affect (scope: "unstaged"/"staged")
+- Evaluate a specific commit's risk: scope: "commit", base_ref: "<commit-hash>"
+- Compare branch vs base: scope: "compare", base_ref: "main"
+
 AFTER THIS: Review affected processes. Use context() on high-risk symbols. READ gitnexus://repo/{name}/process/{name} for full traces.
+
+SCOPE OPTIONS:
+- "unstaged" (default): uncommitted working tree changes
+- "staged": changes staged for commit
+- "all": all local changes vs HEAD
+- "compare": current HEAD vs a branch/ref (base_ref required)
+- "commit": analyze what a specific commit introduced (base_ref = commit hash). Handles merge commits automatically by diffing against first parent.
 
 DEGRADATION BEHAVIOR:
 When diff exceeds buffer limits (ENOBUFS), returns a degraded response with reduced precision:
@@ -282,13 +293,15 @@ Use the "file" parameter to drill down into a specific file with symbol-level pr
       properties: {
         scope: {
           type: 'string',
-          description: 'What to analyze: "unstaged" (default), "staged", "all", or "compare"',
-          enum: ['unstaged', 'staged', 'all', 'compare'],
+          description:
+            'What to analyze: "unstaged" (default), "staged", "all", "compare", or "commit" (analyze a specific commit — set base_ref to the commit hash)',
+          enum: ['unstaged', 'staged', 'all', 'compare', 'commit'],
           default: 'unstaged',
         },
         base_ref: {
           type: 'string',
-          description: 'Branch/commit for "compare" scope (e.g., "main")',
+          description:
+            'For "compare" scope: branch/ref to compare against (e.g., "main"). For "commit" scope: the commit hash to analyze.',
         },
         file: {
           type: 'string',

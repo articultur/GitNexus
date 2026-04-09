@@ -91,7 +91,7 @@ export interface FileChangeInfo {
 /** Diff 解析选项 */
 export interface DiffParseOptions {
   repoPath: string;
-  scope: 'unstaged' | 'staged' | 'all' | 'compare';
+  scope: 'unstaged' | 'staged' | 'all' | 'compare' | 'commit';
   baseRef?: string;
   config?: DegradationConfig;
   fileFilter?: string; // 单文件模式
@@ -283,12 +283,13 @@ export function parseGitDiff(diffOutput: string): DiffHunk[] {
  *   - 'staged': Changes staged for commit
  *   - 'all': All changes (unstaged + staged)
  *   - 'compare': Compare working tree against a base ref
- * @param baseRef - Required when scope is 'compare'. The git ref to compare against.
+ *   - 'commit': Changes introduced by a specific commit (use base_ref as commit hash)
+ * @param baseRef - Required when scope is 'compare' or 'commit'.
  * @returns Raw git diff output as string
  */
 export async function getGitDiff(
   repoPath: string,
-  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  scope: 'unstaged' | 'staged' | 'all' | 'compare' | 'commit',
   baseRef?: string,
 ): Promise<string> {
   let args: string[];
@@ -310,6 +311,34 @@ export async function getGitDiff(
       }
       args = ['diff', '-U0', baseRef];
       break;
+    case 'commit': {
+      if (!baseRef) {
+        throw new Error('base_ref (commit hash) is required for "commit" scope');
+      }
+      // Detect if this is a merge commit (has multiple parents)
+      let isMerge = false;
+      try {
+        const parents = execFileSync('git', ['rev-list', '--parents', '-n', '1', baseRef], {
+          cwd: repoPath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        }).trim();
+        // Output: "<hash> <parent1> [parent2 ...]" — merge has 2+ parents
+        isMerge = parents.split(' ').length > 2;
+      } catch {
+        // fall through, treat as normal commit
+      }
+
+      if (isMerge) {
+        // For merge commits: diff between first parent and the merge result
+        // This shows what was brought in from the feature branch
+        args = ['diff', '-U0', `${baseRef}^1`, baseRef];
+      } else {
+        // Normal commit: diff against its single parent
+        args = ['diff', '-U0', `${baseRef}^`, baseRef];
+      }
+      break;
+    }
     default:
       throw new Error(`Invalid scope: ${scope}`);
   }
@@ -346,7 +375,7 @@ export async function getGitDiff(
  */
 export async function getDiffHunks(
   repoPath: string,
-  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  scope: 'unstaged' | 'staged' | 'all' | 'compare' | 'commit',
   baseRef?: string,
 ): Promise<DiffHunk[]> {
   const diffOutput = await getGitDiff(repoPath, scope, baseRef);
@@ -536,7 +565,7 @@ export async function parseDiffWithDegradation(
  * 构建 git diff 参数
  */
 function buildDiffArgs(
-  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  scope: 'unstaged' | 'staged' | 'all' | 'compare' | 'commit',
   baseRef?: string,
   fileFilter?: string,
 ): string[] {
@@ -557,6 +586,14 @@ function buildDiffArgs(
         args.push(baseRef);
       } else {
         args.push('main'); // Default to main
+      }
+      break;
+    case 'commit':
+      // commit scope is resolved at a higher level via getGitDiff which handles
+      // merge vs normal commit detection. buildDiffArgs is only used in
+      // parseDiffWithDegradation, so re-use getGitDiff logic here.
+      if (baseRef) {
+        args.push(`${baseRef}^`, baseRef);
       }
       break;
   }
@@ -588,7 +625,7 @@ function isEnobufsError(err: unknown): boolean {
  */
 async function handleEnobufsError(
   repoPath: string,
-  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  scope: 'unstaged' | 'staged' | 'all' | 'compare' | 'commit',
   baseRef?: string,
   fileFilter?: string,
 ): Promise<DiffParseResult> {
@@ -648,7 +685,7 @@ function parseDiffOutputHeaderOnly(diffOutput: string): FileChangeInfo[] {
  */
 async function getFileListFromGit(
   repoPath: string,
-  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  scope: 'unstaged' | 'staged' | 'all' | 'compare' | 'commit',
   baseRef?: string,
   fileFilter?: string,
   diffSize: number = 0,
@@ -665,6 +702,11 @@ async function getFileListFromGit(
       break;
     case 'compare':
       args.push(baseRef || 'main');
+      break;
+    case 'commit':
+      if (baseRef) {
+        args.push(`${baseRef}^`, baseRef);
+      }
       break;
   }
 
@@ -719,7 +761,7 @@ async function getFileListFromGit(
  */
 async function getFileListFromGitLog(
   repoPath: string,
-  scope: 'unstaged' | 'staged' | 'all' | 'compare',
+  scope: 'unstaged' | 'staged' | 'all' | 'compare' | 'commit',
   baseRef?: string,
   fileFilter?: string,
 ): Promise<DiffParseResult> {
@@ -727,6 +769,8 @@ async function getFileListFromGitLog(
 
   if (scope === 'compare' && baseRef) {
     args = ['log', '--name-status', '--pretty=format:', `${baseRef}..HEAD`];
+  } else if (scope === 'commit' && baseRef) {
+    args = ['diff', '--name-status', `${baseRef}^`, baseRef];
   } else if (scope === 'staged') {
     args = ['diff', '--cached', '--name-status'];
   } else if (scope === 'all') {
