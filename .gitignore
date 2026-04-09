@@ -59,6 +59,15 @@ GitNexus.sln
 
 # Python
 /github/scripts/triage/__pycache__/
+
+# Eval
+eval/.cache/
+eval/__pycache__/
+eval/.venv/
+eval/tmp/*.jsonl
+eval/tmp/*.txt
+eval/snapshots/
+eval/results/
 eval/data/
 
 # Local documentation
