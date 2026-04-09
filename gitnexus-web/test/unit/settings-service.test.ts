@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   loadSettings,
   saveSettings,
@@ -9,6 +9,42 @@ import {
   getProviderDisplayName,
   getAvailableModels,
 } from '../../src/core/llm/settings-service';
+
+function createStorageMock(): Storage {
+  const store = new Map<string, string>();
+
+  return {
+    get length() {
+      return store.size;
+    },
+    clear() {
+      store.clear();
+    },
+    getItem(key: string) {
+      return store.has(key) ? store.get(key)! : null;
+    },
+    key(index: number) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    setItem(key: string, value: string) {
+      store.set(key, String(value));
+    },
+  };
+}
+
+beforeEach(() => {
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    value: createStorageMock(),
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: createStorageMock(),
+    configurable: true,
+  });
+});
 
 describe('loadSettings', () => {
   it('returns defaults when nothing is stored', () => {
