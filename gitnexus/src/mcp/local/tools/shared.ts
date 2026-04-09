@@ -29,7 +29,140 @@ export interface ImpactParams {
   include_content?: boolean;
   /** File path to filter impact results to a specific file. */
   file_path?: string;
+  /**
+   * Output detail level for large result sets.
+   * - "auto": Automatically select mode based on result size (default)
+   * - "summary": Force summary mode (counts only, no full item lists)
+   * - "full": Force full output (may be truncated for very large results)
+   */
+  detail?: 'auto' | 'summary' | 'full';
+  /**
+   * Pagination for layered output mode.
+   * Used when result size exceeds transition threshold.
+   */
+  page?: {
+    /** Depth level to retrieve (1 = direct, 2 = indirect, etc.) */
+    depth: number;
+    /** Offset within the depth level (0-indexed) */
+    offset?: number;
+    /** Maximum items to return per page (default: 100) */
+    limit?: number;
+  };
+  /**
+   * Snapshot ID for pagination consistency.
+   * Returned by the initial query when layered mode is triggered.
+   * Pass this value to subsequent page requests to ensure consistent results.
+   */
+  snapshot_id?: string;
 }
+
+// =============================================================================
+// Adaptive Layered Output Configuration
+// =============================================================================
+
+/** Output mode determined by result size and user preference */
+export type ImpactOutputMode = 'full' | 'transition' | 'layered';
+
+/** Scale category for result size */
+export type ImpactScale = 'small' | 'medium' | 'large' | 'huge';
+
+/** Configuration for each scale level */
+export interface ScaleConfig {
+  /** Maximum items per depth level to include in full output */
+  maxItemsPerDepth: number;
+  /** Whether to include evidence block */
+  includeEvidence: boolean;
+  /** Whether to include content for symbols */
+  includeContent: boolean;
+  /** Maximum depth levels to show in layered output */
+  maxDepthLayers: number;
+  /** Items per page in pagination */
+  itemsPerPage: number;
+}
+
+/** Scale configurations for different result sizes */
+export const IMPACT_SCALE_CONFIGS: Record<ImpactScale, ScaleConfig> = {
+  small: {
+    maxItemsPerDepth: 500,
+    includeEvidence: true,
+    includeContent: true,
+    maxDepthLayers: 3,
+    itemsPerPage: 100,
+  },
+  medium: {
+    maxItemsPerDepth: 200,
+    includeEvidence: true,
+    includeContent: false,
+    maxDepthLayers: 3,
+    itemsPerPage: 100,
+  },
+  large: {
+    maxItemsPerDepth: 100,
+    includeEvidence: false,
+    includeContent: false,
+    maxDepthLayers: 2,
+    itemsPerPage: 100,
+  },
+  huge: {
+    maxItemsPerDepth: 50,
+    includeEvidence: false,
+    includeContent: false,
+    maxDepthLayers: 1,
+    itemsPerPage: 50,
+  },
+};
+
+/** Result size thresholds for output mode selection */
+export const IMPACT_THRESHOLDS = {
+  /** Full output: result count <= this value */
+  FULL_MAX: 400,
+  /** Transition mode: result count in (FULL_MAX, TRANSITION_MAX] */
+  TRANSITION_MAX: 600,
+} as const;
+
+/**
+ * Determine output mode based on result count and user preference.
+ *
+ * Priority:
+ * 1. User explicitly requests "summary" or "full"
+ * 2. Auto mode: use size thresholds
+ */
+export function getImpactOutputMode(
+  resultCount: number,
+  userPreference?: 'auto' | 'summary' | 'full',
+): { mode: ImpactOutputMode; scale: ImpactScale } {
+  // Handle explicit user preference
+  if (userPreference === 'summary') {
+    return { mode: 'layered', scale: resultCount > 1000 ? 'huge' : 'large' };
+  }
+  if (userPreference === 'full') {
+    // Full mode can still have scale-based limits
+    const scale: ImpactScale =
+      resultCount <= 200
+        ? 'small'
+        : resultCount <= 500
+          ? 'medium'
+          : resultCount <= 1000
+            ? 'large'
+            : 'huge';
+    return { mode: 'full', scale };
+  }
+
+  // Auto mode: use size thresholds
+  if (resultCount <= IMPACT_THRESHOLDS.FULL_MAX) {
+    return { mode: 'full', scale: 'small' };
+  }
+  if (resultCount <= IMPACT_THRESHOLDS.TRANSITION_MAX) {
+    return { mode: 'transition', scale: 'medium' };
+  }
+  if (resultCount <= 1000) {
+    return { mode: 'layered', scale: 'large' };
+  }
+  return { mode: 'layered', scale: 'huge' };
+}
+
+/** Maximum nodes to traverse during BFS to prevent runaway computations */
+export const MAX_TRAVERSAL_NODES = 10000;
 
 /**
  * Quick test-file detection for filtering impact results.
@@ -530,4 +663,68 @@ export function createEvidenceBuilder(): EvidenceBuilder {
       return result;
     },
   };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Diff Degradation Support
+// ─────────────────────────────────────────────────────────────
+
+/** Diff 大小阈值 */
+export const DIFF_SIZE_THRESHOLDS = {
+  /** 正常模式最大值 - 行级精度 */
+  NORMAL_MAX: 512 * 1024, // 512KB
+
+  /** 降级模式最大值 - 符号级精度 */
+  SYMBOL_LEVEL_MAX: 2 * 1024 * 1024, // 2MB
+
+  /** 滞后系数 - 防止边界抖动 */
+  HYSTERESIS: 0.95,
+} as const;
+
+/** 精度级别 */
+export type DetectPrecision = 'normal' | 'symbol-level' | 'file-level';
+
+/** 降级原因 */
+export type DegradedReason = 'diff_exceeded_512kb' | 'diff_exceeded_2mb' | 'file_count_exceeded';
+
+/** 可配置阈值 */
+export interface DegradationConfig {
+  normalMaxBytes?: number;
+  symbolLevelMaxBytes?: number;
+  enableSymbolLevel?: boolean;
+}
+
+/**
+ * 根据diff大小确定精度级别
+ */
+export function determinePrecision(diffSize: number, config?: DegradationConfig): DetectPrecision {
+  const normalMax = config?.normalMaxBytes ?? DIFF_SIZE_THRESHOLDS.NORMAL_MAX;
+  const symbolMax = config?.symbolLevelMaxBytes ?? DIFF_SIZE_THRESHOLDS.SYMBOL_LEVEL_MAX;
+
+  // 应用滞后系数防止边界抖动
+  const effectiveNormalMax = normalMax * DIFF_SIZE_THRESHOLDS.HYSTERESIS;
+  const effectiveSymbolMax = symbolMax * DIFF_SIZE_THRESHOLDS.HYSTERESIS;
+
+  if (diffSize <= effectiveNormalMax) {
+    return 'normal';
+  }
+
+  if (diffSize <= effectiveSymbolMax) {
+    return 'symbol-level';
+  }
+
+  return 'file-level';
+}
+
+/**
+ * 格式化字节数为人类可读格式
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const size = bytes / Math.pow(1024, i);
+
+  return `${size.toFixed(2)} ${units[i]}`;
 }
