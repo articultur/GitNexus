@@ -54,6 +54,7 @@ class CaseScore:
     parse_ok: bool = True
     api_error: bool = False
     failure_bucket: str = ""  # empty = success
+    status: str = "success"   # "success" | "failed" | "no_tool_call"
 
 
 @dataclass
@@ -62,6 +63,8 @@ class GroupAggregate:
     n_cases: int = 0
     n_parse_ok: int = 0
     n_api_error: int = 0
+    n_failed: int = 0
+    n_no_tool_call: int = 0
     avg_file_f1: float = 0.0
     avg_file_prec: float = 0.0
     avg_file_recall: float = 0.0
@@ -276,6 +279,7 @@ def score_case(
     if raw.get("error"):
         s.api_error = True
         s.failure_bucket = classify_failure(s)
+        s.status = "failed"
         return s
 
     pred = raw.get("prediction") or {}
@@ -285,6 +289,7 @@ def score_case(
         s.total_tokens = raw.get("total_tokens", 0)
         s.duration_s = raw.get("duration_s", 0.0)
         s.failure_bucket = classify_failure(s)
+        s.status = "failed"
         return s
 
     # Extract GT layers
@@ -312,6 +317,13 @@ def score_case(
     s.duration_s = float(raw.get("duration_s", 0.0))
     s.steps_used = int(raw.get("steps_used", 0))
 
+    # NO_TOOL_CALL: gitnexus group didn't call any tools - invalid comparison
+    if group == "gitnexus" and s.tool_calls == 0:
+        s.status = "no_tool_call"
+        s.failure_bucket = "no_tool_call"
+    else:
+        s.status = "success"
+
     s.failure_bucket = classify_failure(s)
     return s
 
@@ -327,9 +339,11 @@ def aggregate(scores: list[CaseScore]) -> GroupAggregate:
     group = scores[0].group
     agg = GroupAggregate(group=group, n_cases=len(scores))
 
-    valid = [s for s in scores if not s.api_error and s.parse_ok]
+    valid = [s for s in scores if not s.api_error and s.parse_ok and s.status != "failed" and s.status != "no_tool_call"]
     agg.n_parse_ok = len(valid)
     agg.n_api_error = sum(1 for s in scores if s.api_error)
+    agg.n_failed = sum(1 for s in scores if s.status == "failed")
+    agg.n_no_tool_call = sum(1 for s in scores if s.status == "no_tool_call")
 
     def mean(vals: list[float]) -> float:
         return round(sum(vals) / len(vals), 4) if vals else 0.0

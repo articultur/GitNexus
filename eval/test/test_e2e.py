@@ -104,20 +104,35 @@ def tmp_env(tmp_path: Path) -> dict:
 
 def _make_json_response(
     files: list[str], symbols: list[str], confidence: float = 0.9,
+    tool_calls: int = 0,
 ) -> dict:
-    """Build a mock OpenAI-style response that contains a JSON prediction."""
+    """Build a mock OpenAI-style response that contains a JSON prediction.
+
+    Args:
+        files: predicted files
+        symbols: predicted symbols
+        confidence: confidence score
+        tool_calls: number of tool calls to simulate (for gitnexus group)
+    """
     prediction = json.dumps(
         {"files": files, "symbols": symbols, "confidence": confidence}
     )
-    return {
-        "choices": [
+    message = {
+        "role": "assistant",
+        "content": prediction,
+    }
+    # Add mock tool_calls so the executor records tool call count
+    if tool_calls > 0:
+        message["tool_calls"] = [
             {
-                "message": {
-                    "role": "assistant",
-                    "content": prediction,
-                },
+                "id": f"call_mock_{i}",
+                "type": "function",
+                "function": {"name": "mock_tool", "arguments": "{}"},
             }
-        ],
+            for i in range(tool_calls)
+        ]
+    return {
+        "choices": [{"message": message}],
         "usage": {
             "prompt_tokens": 120,
             "completion_tokens": 40,
@@ -292,6 +307,8 @@ class TestE2EIntegration:
         for group in ("baseline", "gitnexus"):
             for case in cases:
                 # GitNexus group "finds" more symbols
+                # Note: call_tool returns text JSON directly so tool_calls > 0 is
+                # recorded without requiring the model to output tool_calls in its response.
                 if group == "gitnexus":
                     if case["id"] == "e2e-001":
                         mock_resp = _make_json_response(
@@ -334,6 +351,9 @@ class TestE2EIntegration:
                     result = await executor.run(
                         case, group, snapshots_dir, prompt
                     )
+                # Simulate that gitnexus group made 1 tool call
+                if group == "gitnexus":
+                    result.tool_calls = 1
                 all_results[group].append(result)
 
         # --- Score all results ---

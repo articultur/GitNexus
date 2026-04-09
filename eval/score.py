@@ -54,39 +54,24 @@ def main() -> None:
         default="both",
         help="Scoring mode: strict (must items only), relaxed (must + optional), or both"
     )
+    parser.add_argument(
+        "--dataset",
+        default="",
+        help="Dataset name for results subdirectory, e.g. 'round-01-curated'. "
+             "If set, results go to eval/results/{dataset}/{timestamp}/"
+    )
     args = parser.parse_args()
 
     cases    = load_cases(Path(args.cases))
     raw_dir  = Path(args.raw)
     out_dir  = Path(args.output)
+
+    # If --dataset is specified, use results/{dataset}/{timestamp}/ structure
+    if args.dataset:
+        import time
+        timestamp = time.strftime("%Y-%m-%d-%H%M")
+        out_dir = out_dir / args.dataset / timestamp
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create raw results directory if it doesn't exist
-    raw_results_dir = out_dir / "raw"
-    raw_results_dir.mkdir(parents=True, exist_ok=True)
-
-    all_scores: dict[str, list[CaseScore]] = {"strict": [], "relaxed": []}
-
-    for case_id, case in cases.items():
-        for group in ["baseline", "gitnexus"]:
-            raw = load_raw(raw_dir, case_id, group)
-            if raw is None:
-                continue
-
-            # Copy raw result to output directory for evaluation framework
-            raw_output_path = raw_results_dir / f"{case_id}_{group}.json"
-            import json
-            with raw_output_path.open("w", encoding="utf-8") as f:
-                json.dump(raw, f, ensure_ascii=False)
-
-            # Score in both modes if requested
-            if args.mode in ["strict", "both"]:
-                strict_score = score_case(raw, case, group, mode="strict")
-                all_scores["strict"].append(strict_score)
-
-            if args.mode in ["relaxed", "both"]:
-                relaxed_score = score_case(raw, case, group, mode="relaxed")
-                all_scores["relaxed"].append(relaxed_score)
 
     if not any(all_scores.values()):
         print("No results found. Run run_eval.py first.", file=sys.stderr)
@@ -116,10 +101,17 @@ def main() -> None:
             gn_agg   = aggregate(gn_scores)
             delta    = compute_delta(base_agg, gn_agg)
 
+            # Collect invalid cases (failed + no_tool_call)
+            invalid_cases = []
+            for s in scores:
+                if s.status in ("failed", "no_tool_call"):
+                    invalid_cases.append({"case_id": s.case_id, "group": s.group, "reason": s.status})
+
             summary = {
                 "baseline":  asdict(base_agg),
                 "gitnexus":  asdict(gn_agg),
                 "delta":     delta,
+                "invalid_cases": invalid_cases,
             }
 
             summary_path = out_dir / f"summary{suffix}.json"
