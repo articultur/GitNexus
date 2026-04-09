@@ -9,7 +9,7 @@
  */
 
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import v8 from 'v8';
 import cliProgress from 'cli-progress';
 import { closeLbug } from '../core/lbug/lbug-adapter.js';
@@ -17,6 +17,108 @@ import { getStoragePaths, getGlobalRegistryPath } from '../storage/repo-manager.
 import { getGitRoot, hasGitDir } from '../storage/git.js';
 import { runFullAnalysis } from '../core/run-analyze.js';
 import fs from 'fs/promises';
+
+const OLLAMA_DEFAULT_URL = 'http://localhost:11434';
+const OLLAMA_DEFAULT_MODEL = 'snowflake-arctic-embed:xs';
+const OLLAMA_EMBEDDING_DIMS = 384;
+
+/**
+ * Check if Ollama binary is installed (exists in PATH).
+ */
+function isOllamaInstalled(): boolean {
+  try {
+    execFileSync('ollama', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if Ollama server is running and has a compatible embedding model.
+ */
+async function checkOllamaRunning(): Promise<boolean> {
+  // If user already configured HTTP embedding, respect their choice
+  if (process.env.GITNEXUS_EMBEDDING_URL) return false;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const resp = await fetch(`${OLLAMA_DEFAULT_URL}/api/tags`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!resp.ok) return false;
+
+    // Check if the embedding model is available
+    const data = (await resp.json()) as { models?: Array<{ name?: string }> };
+    const models = data.models ?? [];
+    return models.some((m) => m.name?.startsWith('snowflake-arctic-embed'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Attempt to start Ollama server in the background.
+ * Returns true if startup appears successful (server responds within 5s).
+ */
+async function tryStartOllama(): Promise<boolean> {
+  if (!isOllamaInstalled()) return false;
+
+  try {
+    spawn('ollama', ['serve'], {
+      stdio: 'ignore',
+      detached: true,
+      shell: true,
+    }).unref();
+
+    // Wait up to 5s for server to come up
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      try {
+        const resp = await fetch(`${OLLAMA_DEFAULT_URL}/api/tags`, {
+          signal: AbortSignal.timeout(1000),
+        });
+        if (resp.ok) return true;
+      } catch {
+        // not ready yet
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure Ollama is running with the embedding model.
+ * If installed but not running, tries to start it automatically.
+ * Returns true if Ollama is ready.
+ */
+async function ensureOllamaAvailable(): Promise<boolean> {
+  if (await checkOllamaRunning()) return true;
+
+  if (isOllamaInstalled()) {
+    console.log('  🔄 Ollama not running, starting it...\n');
+    const started = await tryStartOllama();
+    if (started) {
+      console.log('  ✅ Ollama started successfully\n');
+      return await checkOllamaRunning();
+    }
+    console.log('  ⚠️  Failed to start Ollama automatically\n');
+  }
+
+  return false;
+}
+
+/**
+ * Configure Ollama as the embedding backend.
+ */
+function configureOllamaEmbedding(): void {
+  process.env.GITNEXUS_EMBEDDING_URL = OLLAMA_DEFAULT_URL;
+  process.env.GITNEXUS_EMBEDDING_MODEL = OLLAMA_DEFAULT_MODEL;
+  process.env.GITNEXUS_EMBEDDING_DIMS = String(OLLAMA_EMBEDDING_DIMS);
+  console.log('  🔄 Using Ollama for embeddings\n');
+}
 
 const HEAP_MB = 8192;
 const HEAP_FLAG = `--max-old-space-size=${HEAP_MB}`;
@@ -185,23 +287,64 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
 
   const t0 = Date.now();
 
-  // ── Run shared analysis orchestrator ───────────────────────────────
-  try {
-    const result = await runFullAnalysis(
-      repoPath,
-      {
-        force: options?.force || options?.skills,
-        embeddings: options?.embeddings,
-        skipGit: options?.skipGit,
-        skipAgentsMd: options?.skipAgentsMd,
-      },
-      {
-        onProgress: (_phase, percent, message) => {
-          updateBar(percent, message);
-        },
-        onLog: barLog,
-      },
+  // ── Ollama fallback for embeddings ───────────────────────────────
+  const ollamaAvailable = await ensureOllamaAvailable();
+
+  if (options?.embeddings && !ollamaAvailable) {
+    // Show install guide, but still attempt ONNX local model first
+    barLog(
+      '  ℹ️  Ollama not found — will try local ONNX model (snowflake-arctic-embed-xs)\n' +
+        '  To use Ollama instead:\n\n' +
+        '    1. curl -fsSL https://ollama.com/install.sh | sh\n' +
+        '    2. ollama pull snowflake-arctic-embed:xs\n' +
+        '    3. (optional) ollama serve  # auto-started if not running\n' +
+        '    4. gitnexus analyze --embeddings\n',
     );
+  }
+
+  // ── Run shared analysis orchestrator ───────────────────────────────
+  let ollamaFallbackAttempted = false;
+
+  const runWithFallback = async (): Promise<any> => {
+    try {
+      return await runFullAnalysis(
+        repoPath,
+        {
+          force: options?.force || options?.skills,
+          embeddings: options?.embeddings,
+          skipGit: options?.skipGit,
+          skipAgentsMd: options?.skipAgentsMd,
+        },
+        {
+          onProgress: (_phase, percent, message) => {
+            updateBar(percent, message);
+          },
+          onLog: barLog,
+        },
+      );
+    } catch (err: any) {
+      const isNetworkError =
+        options?.embeddings &&
+        (err.message?.includes('fetch failed') ||
+          err.message?.includes('ENOTFOUND') ||
+          err.message?.includes('ETIMEDOUT') ||
+          err.message?.includes('EPERM') ||
+          err.message?.includes('rate limit')) &&
+        ollamaAvailable &&
+        !ollamaFallbackAttempted;
+
+      if (isNetworkError) {
+        barLog('  🔄 ONNX model fetch failed — retrying with Ollama...\n');
+        configureOllamaEmbedding();
+        ollamaFallbackAttempted = true;
+        return runWithFallback();
+      }
+      throw err;
+    }
+  };
+
+  try {
+    const result = await runWithFallback();
 
     if (result.alreadyUpToDate) {
       clearInterval(elapsedTimer);
