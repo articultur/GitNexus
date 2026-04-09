@@ -16,7 +16,11 @@ export { isWriteQuery };
 // at MCP server startup — crashes on unsupported Node ABI versions (#89)
 // git utilities available if needed
 // import { isGitRepo, getCurrentCommit, getGitRoot } from '../../storage/git.js';
-import { listRegisteredRepos, cleanupOldKuzuFiles } from '../../storage/repo-manager.js';
+import {
+  listRegisteredRepos,
+  cleanupOldKuzuFiles,
+  loadCLIConfig,
+} from '../../storage/repo-manager.js';
 import { GroupService, type GroupToolPort } from '../../core/group/service.js';
 
 // AI context generation is CLI-only (gitnexus analyze)
@@ -284,9 +288,31 @@ export class LocalBackend {
       const names = [...this.repos.values()].map((h) => h.name);
       throw new Error(`Repository "${repoParam}" not found. Available: ${names.join(', ')}`);
     }
+
+    // Multiple repos, no explicit param — try CWD match then config defaultRepo
+    const cwd = process.cwd();
+    for (const handle of this.repos.values()) {
+      if (cwd === handle.repoPath || cwd.startsWith(handle.repoPath + path.sep)) {
+        return handle;
+      }
+    }
+
+    // Fall back to defaultRepo from ~/.gitnexus/config.json
+    try {
+      const config = await loadCLIConfig();
+      if (config.defaultRepo) {
+        const defLower = config.defaultRepo.toLowerCase();
+        for (const handle of this.repos.values()) {
+          if (handle.name.toLowerCase() === defLower) return handle;
+        }
+      }
+    } catch {
+      // best-effort
+    }
+
     const names = [...this.repos.values()].map((h) => h.name);
     throw new Error(
-      `Multiple repositories indexed. Specify which one with the "repo" parameter. Available: ${names.join(', ')}`,
+      `Multiple repositories indexed. Specify with --repo, set a default with \`gitnexus use <name>\`, or run from inside the repo directory. Available: ${names.join(', ')}`,
     );
   }
 

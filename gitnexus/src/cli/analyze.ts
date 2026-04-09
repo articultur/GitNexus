@@ -306,6 +306,19 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     );
   }
 
+  // If Ollama is running, prefer it over local ONNX (CPU) for embedding.
+  // On Apple Silicon, Ollama uses Metal GPU and is faster than onnxruntime-node CPU.
+  // Skip this when the user already set a custom embedding URL or HF mirror
+  // (HF_ENDPOINT means they want ONNX from a mirror).
+  if (
+    options?.embeddings &&
+    ollamaAvailable &&
+    !process.env.HF_ENDPOINT &&
+    !process.env.GITNEXUS_EMBEDDING_URL
+  ) {
+    configureOllamaEmbedding();
+  }
+
   // ── Run shared analysis orchestrator ───────────────────────────────
   let ollamaFallbackAttempted = false;
 

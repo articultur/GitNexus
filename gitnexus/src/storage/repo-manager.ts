@@ -336,6 +336,17 @@ export interface CLIConfig {
   apiVersion?: string;
   /** Set true when the deployment is a reasoning model (o1, o3, o4-mini). Auto-detected for OpenAI; must be set for Azure deployments. */
   isReasoningModel?: boolean;
+  /**
+   * Named remote repositories for push/pull.
+   * Stored as { "<remote-name>": { "url": "<git-or-http-url>" } }
+   */
+  remotes?: Record<string, { url: string }>;
+  /**
+   * Default repository name used by query/context/impact/cypher when
+   * multiple repos are indexed and no --repo flag is supplied.
+   * Set via: gitnexus use <name>
+   */
+  defaultRepo?: string;
 }
 
 /**
