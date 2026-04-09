@@ -24,6 +24,7 @@ import {
   type DiffParseResult,
   type DiffParseOptions,
 } from './git-diff-parser.js';
+import { isGitRepo } from '../../../storage/git.js';
 
 /** Change type classification for a symbol */
 type ChangeType =
@@ -118,6 +119,17 @@ export async function detectChangesTool(
   if (!['unstaged', 'staged', 'all', 'compare', 'commit'].includes(validScope)) {
     return {
       error: `Invalid scope: ${scope}. Must be one of: unstaged, staged, all, compare, commit`,
+    };
+  }
+
+  // Guard: detect_changes requires a local git repository.
+  // Remotely-pulled indexes (stored in ~/.gitnexus/indexes/) have no source.
+  if (!isGitRepo(repo.repoPath)) {
+    return {
+      error:
+        'detect_changes requires a local git repository at the indexed repo path. ' +
+        'This index was pulled from a remote and has no local source tree. ' +
+        'Use query/context/impact tools to explore the graph without local source.',
     };
   }
 

@@ -259,6 +259,9 @@ NOTE: ACCESSES edges (field read/write tracking) are included in context results
     description: `Analyze git changes and find affected execution flows.
 Maps git diff hunks to indexed symbols, then traces which processes are impacted.
 
+PREREQUISITES: Requires a local git repository at the indexed repo path.
+Not available for remotely-pulled indexes (no local source). Returns an error if git is unavailable.
+
 WHEN TO USE:
 - Before committing: understand what your current changes affect (scope: "unstaged"/"staged")
 - Evaluate a specific commit's risk: scope: "commit", base_ref: "<commit-hash>"
@@ -328,6 +331,10 @@ Finds all references via graph (high confidence) and regex text search (lower co
 
 WHEN TO USE: Renaming a function, class, method, or variable across the codebase. Safer than find-and-replace.
 AFTER THIS: Run detect_changes() to verify no unexpected side effects.
+
+PREREQUISITES: Requires local source files.
+- dry_run=true (default): graph-based edits work without source; text_search edits require local files and will be skipped if unavailable.
+- dry_run=false: reads and writes local source files — requires full local source access. Not usable with remotely-pulled indexes.
 
 Each edit is tagged with confidence:
 - "graph": found via knowledge graph relationships (high confidence, safe to accept)

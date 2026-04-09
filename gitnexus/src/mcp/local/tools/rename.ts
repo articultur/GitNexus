@@ -7,6 +7,7 @@ import path from 'path';
 import { logQueryError } from './shared.js';
 import type { RepoHandle } from './shared.js';
 import { contextTool } from './context.js';
+import { isGitRepo } from '../../../storage/git.js';
 
 /**
  * Rename tool — multi-file coordinated rename using graph + text search.
@@ -149,62 +150,87 @@ export async function renameTool(
   );
 
   // Simple text search across the repo for the old name (in files not already covered by graph)
+  let textSearchSkipped = false;
   try {
-    const { execFileSync } = await import('child_process');
-    const rgArgs = [
-      '-l',
-      '--type-add',
-      'code:*.{ts,tsx,js,jsx,py,go,rs,java,c,h,cpp,cc,cxx,hpp,hxx,hh,cs,php,swift}',
-      '-t',
-      'code',
-      `\\b${oldName}\\b`,
-      '.',
-    ];
-    const output = execFileSync('rg', rgArgs, {
-      cwd: repo.repoPath,
-      encoding: 'utf-8',
-      timeout: 5000,
-    });
-    const files = output
-      .trim()
-      .split('\n')
-      .filter((f) => f.length > 0);
-
-    for (const file of files) {
-      const normalizedFile = file.replace(/\\/g, '/').replace(/^\.\//, '');
-      if (graphFiles.has(normalizedFile)) continue; // already covered by graph
-
-      try {
-        const content = await fs.readFile(assertSafePath(normalizedFile), 'utf-8');
-        const lines = content.split('\n');
-        const regex = new RegExp(`\\b${oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
-        for (let i = 0; i < lines.length; i++) {
-          regex.lastIndex = 0;
-          if (regex.test(lines[i])) {
-            regex.lastIndex = 0;
-            addEdit(
-              normalizedFile,
-              i + 1,
-              lines[i].trim(),
-              lines[i].replace(regex, new_name).trim(),
-              'text_search',
-            );
-            astSearchEdits++;
-          }
-        }
-      } catch (e) {
-        logQueryError('rename:text-search-read', e);
-      }
-    }
-  } catch (e) {
-    logQueryError('rename:ripgrep', e);
+    // If the repo path is not a local directory (e.g. remotely-pulled index), skip text search.
+    await fs.access(repo.repoPath);
+  } catch {
+    textSearchSkipped = true;
   }
+
+  if (!textSearchSkipped) {
+    try {
+      const { execFileSync } = await import('child_process');
+      const rgArgs = [
+        '-l',
+        '--type-add',
+        'code:*.{ts,tsx,js,jsx,py,go,rs,java,c,h,cpp,cc,cxx,hpp,hxx,hh,cs,php,swift}',
+        '-t',
+        'code',
+        `\\b${oldName}\\b`,
+        '.',
+      ];
+      const output = execFileSync('rg', rgArgs, {
+        cwd: repo.repoPath,
+        encoding: 'utf-8',
+        timeout: 5000,
+      });
+      const files = output
+        .trim()
+        .split('\n')
+        .filter((f) => f.length > 0);
+
+      for (const file of files) {
+        const normalizedFile = file.replace(/\\/g, '/').replace(/^\.\//, '');
+        if (graphFiles.has(normalizedFile)) continue; // already covered by graph
+
+        try {
+          const content = await fs.readFile(assertSafePath(normalizedFile), 'utf-8');
+          const lines = content.split('\n');
+          const regex = new RegExp(`\\b${oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
+          for (let i = 0; i < lines.length; i++) {
+            regex.lastIndex = 0;
+            if (regex.test(lines[i])) {
+              regex.lastIndex = 0;
+              addEdit(
+                normalizedFile,
+                i + 1,
+                lines[i].trim(),
+                lines[i].replace(regex, new_name).trim(),
+                'text_search',
+              );
+              astSearchEdits++;
+            }
+          }
+        } catch (e) {
+          logQueryError('rename:text-search-read', e);
+        }
+      }
+    } catch (e) {
+      logQueryError('rename:ripgrep', e);
+    }
+  } // end if (!textSearchSkipped)
 
   // Step 4: Apply or preview
   const allChanges = Array.from(changes.values());
   const totalEdits = allChanges.reduce((sum, c) => sum + c.edits.length, 0);
 
   if (!dry_run) {
+    // Guard: cannot apply file edits without local source access.
+    let sourceAccessible = true;
+    try {
+      await fs.access(repo.repoPath);
+    } catch {
+      sourceAccessible = false;
+    }
+    if (!sourceAccessible || !isGitRepo(repo.repoPath)) {
+      return {
+        error:
+          'rename with dry_run=false requires local source files. ' +
+          'This index was pulled from a remote and has no local source tree. ' +
+          'Use dry_run=true to preview graph-based edits, then apply them manually.',
+      };
+    }
     // Apply edits to files
     for (const change of allChanges) {
       try {
@@ -227,6 +253,12 @@ export async function renameTool(
     total_edits: totalEdits,
     graph_edits: graphEdits,
     text_search_edits: astSearchEdits,
+    ...(textSearchSkipped
+      ? {
+          text_search_note:
+            'text_search skipped: source files not accessible (remote-pulled index). Graph-based edits are complete.',
+        }
+      : {}),
     changes: allChanges,
     applied: !dry_run,
   };

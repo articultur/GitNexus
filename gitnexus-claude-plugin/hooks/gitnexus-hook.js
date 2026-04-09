@@ -208,6 +208,12 @@ function handlePostToolUse(input) {
   const gitNexusDir = findGitNexusDir(cwd);
   if (!gitNexusDir) return;
 
+  // Skip stale-check for remote-pulled indexes stored in ~/.gitnexus/indexes/.
+  // These have no local source tree and cannot be re-analyzed in place.
+  const homedir = require('os').homedir();
+  const pulledIndexesDir = path.join(homedir, '.gitnexus', 'indexes');
+  if (gitNexusDir.startsWith(pulledIndexesDir)) return;
+
   // Compare HEAD against last indexed commit — skip if unchanged
   let currentHead = '';
   try {
