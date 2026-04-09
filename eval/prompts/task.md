@@ -24,6 +24,23 @@ Based on the issue description above, identify:
 - Be precise: only list files that genuinely need changing, not every file you read.
 - Use the minimum number of tool calls needed to reach a confident answer.
 
+## IMPORTANT: How to Output Your Answer
+After you have gathered enough information to answer, you MUST:
+1. Stop calling any more tools
+2. Respond with ONLY a JSON object (no tool calls, no text before/after) in this exact format:
+
+```json
+{
+  "files": ["path/to/file1.py", "path/to/file2.py"],
+  "symbols": ["ClassName.method_name", "standalone_function"],
+  "call_chain": ["entry_function → intermediate → root_cause"],
+  "confidence": 0.85,
+  "reasoning": "One-paragraph explanation."
+}
+```
+
+Do NOT output `[TOOL_CALL]` blocks or any other format. The answer must be valid JSON.
+
 ## Available Tools
 - `read_file(path, start_line?, end_line?)` — Read file contents
 - `grep_search(query, is_regexp?, include_pattern?)` — Search by exact string or regex

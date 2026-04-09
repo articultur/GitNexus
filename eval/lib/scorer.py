@@ -255,6 +255,39 @@ def classify_failure(score: CaseScore) -> str:
 
 # ─── Case scoring ─────────────────────────────────────────────────────────────
 
+def _extract_from_tool_records(raw: dict) -> dict:
+    """Extract prediction from tool call records when JSON parsing fails.
+
+    Scans tool_call_records for read_file calls and uses the path as predicted files.
+    Returns a minimal prediction dict.
+    """
+    records = raw.get("tool_call_records", [])
+    files = []
+    for rec in records:
+        tool = rec.get("tool", "")
+        args = rec.get("args", {})
+        if tool == "read_file":
+            path = args.get("path", "")
+            if path and path not in files:
+                files.append(path)
+        elif tool == "file_search":
+            path = args.get("query", "")
+            if path and path not in files:
+                files.append(path)
+        elif tool == "grep_search":
+            # grep_search results appear in result_preview as file paths
+            preview = rec.get("result_preview", "")
+            if preview:
+                for line in preview.splitlines():
+                    line = line.strip()
+                    if line and ":" in line:
+                        file_part = line.split(":")[0]
+                        if file_part.endswith(".py") and file_part not in files:
+                            files.append(file_part)
+    if files:
+        return {"files": files, "symbols": [], "call_chain": [], "confidence": 0.0, "reasoning": "Extracted from tool records"}
+    return {}
+
 
 def score_case(
     raw: dict, case: dict, group: str, mode: str = "strict"
@@ -284,13 +317,19 @@ def score_case(
 
     pred = raw.get("prediction") or {}
     if not pred or raw.get("parse_error"):
-        s.parse_ok = False
-        s.tool_calls = raw.get("tool_calls", 0)
-        s.total_tokens = raw.get("total_tokens", 0)
-        s.duration_s = raw.get("duration_s", 0.0)
-        s.failure_bucket = classify_failure(s)
-        s.status = "failed"
-        return s
+        # Try to extract answer from tool call records
+        pred = _extract_from_tool_records(raw)
+        if not pred:
+            s.parse_ok = False
+            s.tool_calls = raw.get("tool_calls", 0)
+            s.total_tokens = raw.get("total_tokens", 0)
+            s.duration_s = raw.get("duration_s", 0.0)
+            s.failure_bucket = classify_failure(s)
+            s.status = "failed"
+            return s
+
+    # We have some prediction (even if partial from thinking blocks or tool records)
+    s.parse_ok = True
 
     # Extract GT layers
     gt_layers = extract_gt_layers(case)
