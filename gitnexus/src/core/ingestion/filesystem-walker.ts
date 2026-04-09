@@ -1,3 +1,4 @@
+import { isVerboseIngestionEnabled } from './utils/verbose.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { globIterate } from 'glob';
@@ -27,7 +28,7 @@ const MAX_FILE_SIZE = 512 * 1024;
 /**
  * Phase 1: Scan repository — stat files to get paths + sizes, no content loaded.
  * Memory: ~10MB for 100K files vs ~1GB+ with content.
- * 
+ *
  * Uses globIterate for streaming to memory-efficiently process large repositories
  * without loading all file paths into memory at once.
  */
@@ -40,6 +41,7 @@ export const walkRepositoryPaths = async (
   const entries: ScannedFile[] = [];
   let processed = 0;
   let skippedLarge = 0;
+  const skippedLargePaths: string[] = [];
   let batch: string[] = [];
 
   // Stream files from glob instead of loading all at once
@@ -59,6 +61,7 @@ export const walkRepositoryPaths = async (
           const stat = await fs.stat(fullPath);
           if (stat.size > MAX_FILE_SIZE) {
             skippedLarge++;
+            skippedLargePaths.push(p.replace(/\\/g, '/'));
             return null;
           }
           return { path: p.replace(/\\/g, '/'), size: stat.size };
@@ -87,6 +90,7 @@ export const walkRepositoryPaths = async (
         const stat = await fs.stat(fullPath);
         if (stat.size > MAX_FILE_SIZE) {
           skippedLarge++;
+          skippedLargePaths.push(p.replace(/\\/g, '/'));
           return null;
         }
         return { path: p.replace(/\\/g, '/'), size: stat.size };
@@ -109,6 +113,11 @@ export const walkRepositoryPaths = async (
     console.warn(
       `  Skipped ${skippedLarge} large files (>${MAX_FILE_SIZE / 1024}KB, likely generated/vendored)`,
     );
+    if (isVerboseIngestionEnabled()) {
+      for (const p of skippedLargePaths) {
+        console.warn(`  - ${p}`);
+      }
+    }
   }
 
   return entries;
