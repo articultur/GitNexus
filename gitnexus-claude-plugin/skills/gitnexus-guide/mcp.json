@@ -2,7 +2,7 @@
   "mcpServers": {
     "gitnexus": {
       "command": "npx",
-      "args": ["-y", "@alipay/ep-gitnexus@latest", "mcp"]
+      "args": ["-y", "gitnexus@latest", "mcp"]
     }
   }
 }
