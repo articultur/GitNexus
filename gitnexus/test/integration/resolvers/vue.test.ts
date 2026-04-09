@@ -14,9 +14,14 @@ import {
 
 describe('Vue SFC support', () => {
   let result: PipelineResult;
+  let dynamicResult: PipelineResult;
 
   beforeAll(async () => {
     result = await runPipelineFromRepo(path.join(FIXTURES, 'vue-basic'), () => {});
+    dynamicResult = await runPipelineFromRepo(
+      path.join(FIXTURES, 'vue-dynamic-component'),
+      () => {},
+    );
   }, 60000);
 
   // -------------------------------------------------------------------------
@@ -99,6 +104,17 @@ describe('Vue SFC support', () => {
       (e) => e.sourceFilePath.endsWith('App.vue') && e.targetFilePath.endsWith('Button.vue'),
     );
     expect(templateCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('emits CALLS edges for simple dynamic components in <template>', () => {
+    const calls = getRelationships(dynamicResult, 'CALLS');
+    const dynamicCalls = calls.filter(
+      (e) =>
+        e.sourceFilePath.endsWith('App.vue') &&
+        e.targetFilePath.endsWith('Button.vue') &&
+        e.rel.reason === 'vue-template-component',
+    );
+    expect(dynamicCalls.length).toBeGreaterThanOrEqual(1);
   });
 
   it('does not mark non-setup <script> symbols as implicitly exported', () => {

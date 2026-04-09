@@ -87,6 +87,10 @@ export default defineConfig({
             'test/integration/lbug-lock-retry.test.ts',
             'test/integration/api-impact-e2e.test.ts',
             'test/integration/shape-check-regression.test.ts',
+            // Uses node:test runner (not vitest) to avoid OOM from LadybugDB native addon in forks
+            'test/unit/detection/detection-rules.node.test.ts',
+            // Node 25.5 does not support --stack-size in NODE_OPTIONS
+            'test/unit/skip-git-cli.test.ts',
           ],
         },
       },

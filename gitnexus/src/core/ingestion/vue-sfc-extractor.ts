@@ -25,6 +25,8 @@ interface ScriptBlock {
 
 const SCRIPT_RE = /<script(\s[^>]*)?>([^]*?)<\/script>/g;
 const TEMPLATE_COMPONENT_RE = /<([A-Z][A-Za-z0-9]+)/g;
+const TEMPLATE_DYNAMIC_COMPONENT_RE =
+  /<component\b[^>]*\s:is\s*=\s*(?:"(?:'([A-Z][A-Za-z0-9]*)'|\"([A-Z][A-Za-z0-9]*)\"|([A-Z][A-Za-z0-9]*))"|'(?:\"([A-Z][A-Za-z0-9]*)\"|([A-Z][A-Za-z0-9]*))')/g;
 // Matches @event="handler" and v-on:event="handler" in template blocks.
 // Only captures simple identifiers — complex expressions (increments, ternary, etc.) are skipped.
 const TEMPLATE_EVENT_RE = /(?:@[\w.:]+|v-on:[\w.]+)="([a-zA-Z_$][a-zA-Z0-9_$]*)(?:\([^)]*\))?"/g;
@@ -122,6 +124,17 @@ export function extractTemplateComponents(vueContent: string): string[] {
   TEMPLATE_COMPONENT_RE.lastIndex = 0;
   while ((componentMatch = TEMPLATE_COMPONENT_RE.exec(templateContent)) !== null) {
     components.add(componentMatch[1]);
+  }
+
+  TEMPLATE_DYNAMIC_COMPONENT_RE.lastIndex = 0;
+  while ((componentMatch = TEMPLATE_DYNAMIC_COMPONENT_RE.exec(templateContent)) !== null) {
+    const componentName =
+      componentMatch[1] ||
+      componentMatch[2] ||
+      componentMatch[3] ||
+      componentMatch[4] ||
+      componentMatch[5];
+    if (componentName) components.add(componentName);
   }
 
   return [...components];

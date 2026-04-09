@@ -74,12 +74,11 @@ import { detectFrameworkFromAST } from '../framework-detection.js';
 import { generateId } from '../../../lib/utils.js';
 import { preprocessImportPath } from '../import-processor.js';
 import {
-  extractVueScript,
   extractTemplateComponents,
   extractTemplateEventHandlers,
   isVueSetupTopLevel,
 } from '../vue-sfc-extractor.js';
-import { preprocessArktsContent } from '../languages/arkts-preprocess.js';
+import { prepareParseContent } from '../parse-content.js';
 import type { NamedBinding } from '../named-bindings/types.js';
 import type { NodeLabel } from 'gitnexus-shared';
 import type { FieldInfo, FieldExtractorContext } from '../field-types.js';
@@ -319,12 +318,6 @@ function detectOCHeaderLanguageFallback(content: string): SupportedLanguages {
  * These macros wrap OC headers but are not valid preprocessor directives in the grammar.
  * We remove the tokens, not the content between them (unlike #if/#endif pairs).
  */
-const stripNullabilityMacros = (content: string): string => {
-  return content
-    .replace(/\bNS_ASSUME_NONNULL_BEGIN\b/g, '')
-    .replace(/\bNS_ASSUME_NONNULL_END\b/g, '');
-};
-
 const languageMap: Record<string, TreeSitterLanguage> = {
   [SupportedLanguages.JavaScript]: JavaScript,
   [SupportedLanguages.TypeScript]: TypeScript.typescript,
@@ -1479,25 +1472,9 @@ const processFileGroup = (
     // Skip files larger than the max tree-sitter buffer (32 MB)
     if (file.content.length > TREE_SITTER_MAX_BUFFER) continue;
 
-    // Vue SFC preprocessing: extract <script> block content
-    let parseContent = file.content;
-    let lineOffset = 0;
-    let isVueSetup = false;
-    if (language === SupportedLanguages.Vue) {
-      const extracted = extractVueScript(file.content);
-      if (!extracted) continue; // skip .vue files with no script block
-      parseContent = extracted.scriptContent;
-      lineOffset = extracted.lineOffset;
-      isVueSetup = extracted.isSetup;
-    }
-
-    // OC headers contain NS_ASSUME_NONNULL_BEGIN / NS_ASSUME_NONNULL_END macros that
-    // tree-sitter-objc grammar cannot parse — strip them so heritage queries match.
-    if (language === SupportedLanguages.ObjectiveC) {
-      parseContent = stripNullabilityMacros(parseContent);
-    } else if (language === SupportedLanguages.ArkTS) {
-      parseContent = preprocessArktsContent(parseContent);
-    }
+    const prepared = prepareParseContent(language, file.content);
+    if (!prepared) continue;
+    const { parseContent, lineOffset, isVueSetup } = prepared;
 
     clearCaches(); // Reset memoization before each new file
 

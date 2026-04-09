@@ -30,6 +30,8 @@ import { phpFileToRouteURL } from './route-extractors/php.js';
 import { isDjangoUrlFile, extractDjangoRoutes } from './route-extractors/django.js';
 import { isRailsRouteFile, extractRailsRoutes } from './route-extractors/rails.js';
 import { isSpringControllerFile, extractSpringRoutes } from './route-extractors/spring.js';
+import { isFlaskFile, extractFlaskRoutes } from './route-extractors/flask.js';
+import { isLaravelRouteFile, extractLaravelRoutes } from './route-extractors/laravel.js';
 import {
   isFastAPIFile,
   extractFastAPIRoutes,
@@ -831,6 +833,14 @@ async function runChunkedParseAndResolve(
         } else if (isFastAPIFile(file.content)) {
           for (const r of extractFastAPIRoutes(file.content, file.path)) {
             allDecoratorRoutes.push({ ...r, decoratorName: 'fastapi-route' });
+          }
+        } else if (isFlaskFile(file.content)) {
+          for (const r of extractFlaskRoutes(file.content, file.path)) {
+            allDecoratorRoutes.push({ ...r, decoratorName: 'flask-route' });
+          }
+        } else if (isLaravelRouteFile(file.content, file.path)) {
+          for (const r of extractLaravelRoutes(file.content, file.path)) {
+            allDecoratorRoutes.push({ ...r, decoratorName: 'laravel-route' });
           }
         } else if (isGinRouteFile(file.content)) {
           for (const r of extractGinRoutes(file.content, file.path)) {

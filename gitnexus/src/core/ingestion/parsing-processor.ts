@@ -7,8 +7,8 @@ import { generateId } from '../../lib/utils.js';
 import { SymbolTable } from './symbol-table.js';
 import { ASTCache } from './ast-cache.js';
 import { getLanguageFromFilename, SupportedLanguages } from 'gitnexus-shared';
-import { extractVueScript, isVueSetupTopLevel } from './vue-sfc-extractor.js';
-import { preprocessArktsContent } from './languages/arkts-preprocess.js';
+import { isVueSetupTopLevel } from './vue-sfc-extractor.js';
+import { prepareParseContent } from './parse-content.js';
 import { yieldToEventLoop } from './utils/event-loop.js';
 import {
   getDefinitionNodeFromCaptures,
@@ -340,27 +340,9 @@ const processParsingSequential = async (
     // Skip files larger than the max tree-sitter buffer (32 MB)
     if (file.content.length > TREE_SITTER_MAX_BUFFER) continue;
 
-    // Vue SFC preprocessing: extract <script> block content
-    let parseContent = file.content;
-    let lineOffset = 0;
-    let isVueSetup = false;
-    if (language === SupportedLanguages.Vue) {
-      const extracted = extractVueScript(file.content);
-      if (!extracted) continue; // skip .vue files with no script block
-      parseContent = extracted.scriptContent;
-      lineOffset = extracted.lineOffset;
-      isVueSetup = extracted.isSetup;
-    }
-
-    // OC headers contain NS_ASSUME_NONNULL_BEGIN / NS_ASSUME_NONNULL_END macros that
-    // tree-sitter-objc grammar cannot parse — strip them so heritage queries match.
-    if (language === SupportedLanguages.ObjectiveC) {
-      parseContent = parseContent
-        .replace(/\bNS_ASSUME_NONNULL_BEGIN\b/g, '')
-        .replace(/\bNS_ASSUME_NONNULL_END\b/g, '');
-    } else if (language === SupportedLanguages.ArkTS) {
-      parseContent = preprocessArktsContent(parseContent);
-    }
+    const prepared = prepareParseContent(language, file.content);
+    if (!prepared) continue;
+    const { parseContent, lineOffset, isVueSetup } = prepared;
 
     try {
       await loadLanguage(language, file.path);

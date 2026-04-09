@@ -16,6 +16,7 @@ import { routeRubyCall } from '../call-routing.js';
 import { rubyExportChecker } from '../export-detection.js';
 import { resolveRubyImport } from '../import-resolvers/ruby.js';
 import { RUBY_QUERIES } from '../tree-sitter-queries.js';
+import { extractRubyNamedBindings } from '../named-bindings/ruby.js';
 import { createFieldExtractor } from '../field-extractors/generic.js';
 import { rubyConfig as rubyFieldConfig } from '../field-extractors/configs/ruby.js';
 import { createMethodExtractor } from '../method-extractors/generic.js';
@@ -112,5 +113,6 @@ export const rubyProvider = defineLanguage({
     ...rubyMethodConfig,
     extractFunctionName: rubyExtractFunctionName,
   }),
+  namedBindingExtractor: extractRubyNamedBindings,
   builtInNames: BUILT_INS,
 });

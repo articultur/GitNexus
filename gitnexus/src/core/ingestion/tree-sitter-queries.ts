@@ -641,7 +641,7 @@ export const CSHARP_QUERIES = `
 (object_creation_expression type: (qualified_name name: (identifier) @call.name)) @call
 
 ; Namespace-qualified generic constructor calls: new System.Collections.Generic.List<int>()
-(object_creation_expression type: (generic_name type: (qualified_name name: (identifier) @call.name))) @call
+(object_creation_expression type: (qualified_name name: (generic_name (identifier) @call.name))) @call
 
 ; Target-typed new (C# 9): User u = new("x", 5)
 (variable_declaration type: (identifier) @call.name (variable_declarator (implicit_object_creation_expression) @call))

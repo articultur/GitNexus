@@ -82,8 +82,9 @@ export function extractFastAPIRoutes(content: string, filePath: string): FastAPI
 
 // Matches: <receiver>.GET("/path", ...) where GET is an HTTP verb method
 // Receiver is a short Go identifier (r, e, v1, router, g, etc.)
+// Also matches Fiber camelCase: app.Get("/path"), app.Post("/path")
 const GIN_ROUTE_RE =
-  /\b(\w+)\s*\.\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Any)\s*\(\s*["']([^"']+)["']/g;
+  /\b(\w+)\s*\.\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Any|Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*["'](\/[^"']*)["']/g;
 
 /**
  * Normalise a Gin/Echo path: :id → [id], *any → [any], strip trailing slash.
@@ -101,7 +102,9 @@ function normaliseGinPath(raw: string): string {
  * True when a Go file contains Gin / Echo / Fiber style route registrations.
  */
 export function isGinRouteFile(content: string): boolean {
-  return /\.\s*(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Any)\s*\(\s*["']/.test(content);
+  return /\.\s*(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Any|Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*["']\//.test(
+    content,
+  );
 }
 
 /**

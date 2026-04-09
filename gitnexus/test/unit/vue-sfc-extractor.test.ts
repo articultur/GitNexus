@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   extractVueScript,
   extractTemplateComponents,
+  extractTemplateEventHandlers,
 } from '../../src/core/ingestion/vue-sfc-extractor.js';
 
 describe('extractVueScript', () => {
@@ -184,5 +185,90 @@ const x = 1;
 `;
     const components = extractTemplateComponents(vue);
     expect(components).toEqual(['MyComponent']);
+  });
+
+  it('extracts simple dynamic component identifiers from :is bindings', () => {
+    const vue = `<template>
+  <component :is="Button" />
+  <component :is="'Badge'" />
+  <component :is='"Avatar"' />
+</template>
+`;
+    const components = extractTemplateComponents(vue);
+    expect(components).toContain('Button');
+    expect(components).toContain('Badge');
+    expect(components).toContain('Avatar');
+  });
+
+  it('ignores non-component dynamic expressions', () => {
+    const vue = `<template>
+  <component :is="currentComponent" />
+  <component :is="isPrimary ? Button : LinkButton" />
+</template>
+`;
+    const components = extractTemplateComponents(vue);
+    expect(components).not.toContain('currentComponent');
+    expect(components).not.toContain('isPrimary');
+  });
+});
+
+describe('extractTemplateEventHandlers', () => {
+  it('extracts @event handler names', () => {
+    const vue = `<template>
+  <button @click="handleClick">Submit</button>
+  <input @keyup="onKeyUp" />
+</template>
+`;
+    const handlers = extractTemplateEventHandlers(vue);
+    expect(handlers).toContain('handleClick');
+    expect(handlers).toContain('onKeyUp');
+  });
+
+  it('extracts v-on:event handler names', () => {
+    const vue = `<template>
+  <button v-on:click="submitForm">Submit</button>
+</template>
+`;
+    const handlers = extractTemplateEventHandlers(vue);
+    expect(handlers).toContain('submitForm');
+  });
+
+  it('deduplicates repeated handler usage', () => {
+    const vue = `<template>
+  <button @click="handleClick">A</button>
+  <button @click="handleClick">B</button>
+</template>
+`;
+    const handlers = extractTemplateEventHandlers(vue);
+    expect(handlers.filter((h) => h === 'handleClick')).toHaveLength(1);
+  });
+
+  it('ignores inline expressions with operators', () => {
+    const vue = `<template>
+  <button @click="count++">Inc</button>
+  <button @click="isOpen = !isOpen">Toggle</button>
+  <button @click="doSomething">OK</button>
+</template>
+`;
+    const handlers = extractTemplateEventHandlers(vue);
+    expect(handlers).toContain('doSomething');
+    expect(handlers).not.toContain('count++');
+  });
+
+  it('returns empty array when no template block', () => {
+    const vue = `<script setup lang="ts">
+const x = 1;
+</script>
+`;
+    expect(extractTemplateEventHandlers(vue)).toEqual([]);
+  });
+
+  it('handles method calls with arguments', () => {
+    const vue = `<template>
+  <button @click="handleClick(item)">OK</button>
+</template>
+`;
+    const handlers = extractTemplateEventHandlers(vue);
+    expect(handlers).toContain('handleClick');
   });
 });

@@ -4,6 +4,8 @@
     <Button variant="primary" @click="onButtonClick">
       Click me
     </Button>
+    <component :is="Button" />
+    <component :is="'Button'" />
     <p>{{ userDisplay }}</p>
   </div>
 </template>

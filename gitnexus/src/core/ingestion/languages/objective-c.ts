@@ -15,6 +15,7 @@ import { typeConfig as objcTypeConfig } from '../type-extractors/objective-c.js'
 import { cCppExportChecker } from '../export-detection.js';
 import { resolveCppImport } from '../import-resolvers/standard.js';
 import { OBJECTIVEC_QUERIES } from '../tree-sitter-queries.js';
+import { extractObjCNamedBindings } from '../named-bindings/objective-c.js';
 
 import { isObjcInsideContainer, type SyntaxNode } from '../utils/ast-helpers.js';
 import type { LanguageProvider } from '../language-provider.js';
@@ -118,6 +119,7 @@ export const objectiveCProvider = defineLanguage({
   mroStrategy: 'leftmost-base',
   fieldExtractor: createFieldExtractor(objcConfig),
   methodExtractor: createMethodExtractor(objcMethodConfig),
+  namedBindingExtractor: extractObjCNamedBindings,
   labelOverride: objcLabelOverride,
   descriptionExtractor: objcDescriptionExtractor,
   builtInNames: OBJC_BUILT_INS,

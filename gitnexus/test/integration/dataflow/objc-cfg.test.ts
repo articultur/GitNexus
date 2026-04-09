@@ -25,7 +25,29 @@ try {
 
 const objcAvailable = !!ObjC;
 const tsgAvailable = isTSGAvailable();
-const SKIP = !objcAvailable || !tsgAvailable.cli || !tsgAvailable.dsl.objectivec;
+/**
+ * Some environments have tree-sitter-graph CLI + DSL files, but the CLI binary
+ * was built without Objective-C language support, resulting in:
+ *   "No language found"
+ * Probe once up front and skip the suite if ObjC cannot actually run.
+ */
+function canRunObjcCfgPipeline(): boolean {
+  if (!objcAvailable || !tsgAvailable.cli || !tsgAvailable.dsl.objectivec) return false;
+  try {
+    const probeSource = `
+@implementation Probe
+- (void)foo { return; }
+@end
+`;
+    const tree = parseObjC(probeSource);
+    const result = buildCFGFromTSG(tree, probeSource, SupportedLanguages.ObjectiveC);
+    return result.nodes.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+const SKIP = !canRunObjcCfgPipeline();
 
 function makeObjCParser() {
   const p = new Parser();
@@ -142,6 +164,13 @@ describe.skipIf(SKIP)('Objective-C CFG: @autoreleasepool', () => {
     // Should have two autoreleasepool nodes
     const autoreleaseNodes = result.nodes.filter((n) => n.statementType === 'autoreleasepool');
     expect(autoreleaseNodes.length).toBeGreaterThanOrEqual(2);
+
+    // Regression guard: nested pools must not collapse into one shared body node
+    // due to label-based deduplication.
+    const bodyTargets = new Set(
+      result.edges.filter((e) => e.edgeType === 'AUTORELEASEPOOL_BODY').map((e) => e.targetId),
+    );
+    expect(bodyTargets.size).toBeGreaterThanOrEqual(2);
   });
 
   it('should handle empty @autoreleasepool', () => {

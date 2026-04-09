@@ -32,6 +32,7 @@ import {
 } from '../storage/repo-manager.js';
 import { getCurrentCommit, hasGitDir } from '../storage/git.js';
 import { generateAIContextFiles } from '../cli/ai-context.js';
+import { CURRENT_SCHEMA_VERSION } from './lbug/schema-version.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -295,6 +296,7 @@ export async function runFullAnalysis(
       repoPath,
       lastCommit: currentCommit,
       indexedAt: new Date().toISOString(),
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       stats: {
         files: pipelineResult.totalFileCount,
         nodes: stats.nodes,

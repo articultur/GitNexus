@@ -138,7 +138,9 @@
 }
 
 ; ---- case label (non-default) ----
-(case_statement) @case
+; tree-sitter-objc represents both `case X:` and `default:` as case_statement.
+; Anchor on the "case" keyword to exclude default: branches.
+(case_statement . "case") @case
 {
   node @case.cfg
   attr (@case.cfg) label = "case"
@@ -146,7 +148,8 @@
 }
 
 ; ---- default label ----
-(default_statement) @default
+; `default:` is a case_statement whose first child is the "default" keyword.
+(case_statement . "default") @default
 {
   node @default.cfg
   attr (@default.cfg) label = "default"
@@ -283,17 +286,23 @@
 
 ; ============================================================
 ; @AUTORELEASEPOOL STATEMENT
+; tree-sitter-objc parses `@autoreleasepool { body }` as a compound_statement
+; whose first child is the anonymous "@autoreleasepool" keyword token.
+; There is no separate autoreleasepool_statement node type.
+;
+; Use source-text as label so nested pools get distinct labels and survive
+; label-based deduplication in parseTSGOutput.
 ; ============================================================
-(autoreleasepool_statement
-  (compound_statement) @pool_body
-) @pool
+(compound_statement . "@autoreleasepool") @pool
 {
   node @pool.cfg
-  attr (@pool.cfg) label = "autoreleasepool"
+  attr (@pool.cfg) label = (source-text @pool)
   attr (@pool.cfg) statementType = "autoreleasepool"
 
   node @pool.body_node
-  attr (@pool.body_node) label = (source-text @pool_body)
+  ; Must not use a constant label here: parseTSGOutput deduplicates by label,
+  ; which would merge nested pool bodies into a single node.
+  attr (@pool.body_node) label = (source-text @pool)
   edge @pool.cfg -> @pool.body_node
   attr (@pool.cfg -> @pool.body_node) type = "AUTORELEASEPOOL_BODY"
 }
@@ -313,15 +322,17 @@
 ; post-processor (cfg-post-processor.ts) by detecting the selector name
 ; "performSelector" during edge resolution. This stanza captures the
 ; message expression and marks it with a special attribute for detection.
+;
+; NOTE: `method` is a multiple:true field in tree-sitter-objc.  Use anchored
+; captures `. method: …` to match only the FIRST selector keyword so the
+; stanza executes once per message_expression.
 ; ============================================================
 (message_expression
   receiver: (_) @dyn_receiver
-  method: (identifier) @dyn_method
+  . method: (identifier) @dyn_method
 ) @dyn_msg
 {
-  ; Check if this is a performSelector variant by examining the method name
-  ; The selector text will be "performSelector:", "performSelector:withObject:", etc.
-  ; We mark these for post-processing to create DYNAMIC_DISPATCH edges
+  ; Mark the message expression for post-processing DYNAMIC_DISPATCH detection.
   node @dyn_msg.cfg
   attr (@dyn_msg.cfg) label = (source-text @dyn_msg)
   attr (@dyn_msg.cfg) statementType = "message"

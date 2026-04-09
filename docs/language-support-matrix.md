@@ -1,6 +1,6 @@
 # GitNexus 语言支持全景矩阵
 
-> 最后更新：2026-04-08 · 基于 commit `7d4e982` (main)  
+> 最后更新：2026-04-09 · 基于 main + 当前工作区变更  
 > 数据来源：`gitnexus/src/core/ingestion/` 源码实际分析（非文档推测）
 
 ---
@@ -63,11 +63,11 @@
 | C / C++ | ✅ | ⚫ | 🟡 | standard resolver（`#include`/`#import` 扫描，项目内路径）；**无 named-bindings**，宏/全局变量无法绑定 |
 | Swift | ✅ | 🟡 | 🟡 | swift resolver（`Package.swift` targets）；`extractSwiftNamedBindings`（`import class/func/var Module.Symbol` 限定导入，`†` 可选安装） |
 | Dart | ✅ | 🟡 | 🟢 | dart resolver + `extractDartNamedBindings`（`show` 组合符精确绑定）（`†` 可选安装） |
-| Ruby | ✅ | ⚫ | 🟡 | ruby resolver（require/require_relative via callRouter）；**无 named-bindings**，mixin/extend 无法追踪 |
-| Objective-C | ✅ | 🟡 | 🟢 | standard resolver（`#import` 扫描）；named-bindings 提取器文件已存在（`named-bindings/objective-c.ts`），但 provider 尚未挂载，当前仍以 wildcard 语义为主 |
-| COBOL | ⚫ | ⚫ | ⚫ | COPY 语句无解析；无绑定实现 |
+| Ruby | ✅ | ⚫ | 🟡 | ruby resolver（require/require_relative via callRouter）；provider 已挂载，但 Ruby `require` 语义为 wildcard，无法静态提取具名绑定 |
+| Objective-C | ✅ | 🟡 | 🟢 | standard resolver（`#import` 扫描）；named-bindings provider 已挂载（`languages/objective-c.ts` → `extractObjCNamedBindings`） |
+| COBOL | 🟡 | ⚫ | 🔴 | COPY 已通过预处理展开并生成 IMPORTS 边；暂未接入通用 import-resolver / named-bindings |
 
-> **现状**：Go（包别名）、Dart（`show` 组合符）、Swift（`import class/func/var` 限定式导入）已实现 named-bindings。剩余缺口：Ruby 因动态 `method_missing`/`include` 难度较高；C/C++ 受预处理器影响最难；Objective-C 仍需完成 provider 挂载。
+> **现状**：Go（包别名）、Dart（`show` 组合符）、Swift（`import class/func/var` 限定式导入）、Objective-C（provider 挂载）均已落地。剩余缺口主要集中在：C/C++（预处理器宏影响）、Ruby（语言语义决定的 wildcard import）。
 
 ---
 
@@ -93,7 +93,7 @@
 | Dart | ✅ | 🟡 | Class/Function/Mixin（`†` 可选） | async/isolate 不完整 |
 | Ruby | ✅ | 🟡 | Module/Class/Method | `define_method`/`included` 动态定义无法覆盖 |
 | Objective-C | ✅ | 🟢 | Interface/Protocol/Category/Property/Method | Category 方法合并建模已优化；methodExtractor 已注册 |
-| COBOL | ⚫ | 🔴 | 仅 DIVISION/SECTION/PARAGRAPH（Regex 提取） | Data Division 变量未完整提取 |
+| COBOL | 🟡 | 🟡 | DIVISION/SECTION/PARAGRAPH + Data Item(Property，含 `parentName` 层级、88-level 子项、REDEFINES 目标) | 仍为 Regex 路径；缺少 tree-sitter AST 与类型/控制流语义建模 |
 
 ---
 
@@ -119,10 +119,11 @@
 | Dart | ✅ | ✅ | ⚫ | 🟡 | ✅ | 🟡 |
 | C / C++ | ✅ | 🟡 | ⚫ | 🔴 | 🟡 | 🔴 |
 | Objective-C | ✅ | 🟡 | ⚫ | ⚫ | 🟢 | 🔴 |
-| COBOL | 🔴 | ⚫ | ⚫ | ⚫ | 🔴 | ⚫ |
+| COBOL | 🟢 | 🟡 | ⚫ | ⚫ | 🔴 | 🟡 |
 
 > **路由边现状**：`HANDLES_ROUTE` 边在 TS/JS（Next.js/Expo/Express）+ PHP（file-based）+ Python（Django urlpatterns + FastAPI @app.get/@router.post）+ Ruby（Rails routes.rb）+ **Java/Kotlin（Spring @GetMapping/@PostMapping/@RequestMapping）** + **Go（Gin/Echo/Fiber r.GET/.POST）** 生成。  
 > **注**：C/C++/ObjC 的 `#include`/`#import` 通过 `standard.ts` 解析，可生成 IMPORTS 图谱边（仅相对路径/项目内头文件，系统库如 `<stdio.h>` 被过滤）。ArkTS 跨文件 `.ets` 导入已在 commit `2de882c` 修复。
+> **COBOL（2026-04-09）**：Data Division 数据项已从扁平 `CONTAINS` 迁移为层级 `HAS_PROPERTY`（program->top-level、parent->child），并新增 `ACCESSES(cobol-redefines)` 覆盖 REDEFINES 叠加关系。
 
 ---
 
@@ -133,7 +134,7 @@
 | 语言 | 框架检测 | 路由提取 (HANDLES_ROUTE) | 入口点评分 | 综合评级 |
 |------|:---:|:---:|:---:|:---:|
 | TypeScript / JavaScript | ✅ Next.js/Expo Router/Express/NestJS/React/Prisma/Supabase | ✅ Next.js + Expo → URL 映射 | ✅ | ✅ |
-| PHP | ✅ Laravel（routes/controllers/jobs/middleware/providers） | 🟡 仅文件级路由（api/*.php） | 🟢 | 🟢 |
+| PHP | ✅ Laravel（routes/controllers/jobs/middleware/providers） | 🟢 文件级 + 显式路由（`Route::get/post/resource/apiResource` 等） | 🟢 | 🟢 |
 | Java | ✅ Spring Boot/JAX-RS/Java service | ✅ Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` | 🟢 | 🟢 |
 | Kotlin | ✅ Spring-Kotlin/Ktor/Android（Activity/Fragment） | ✅ Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` | 🟢 | 🟢 |
 | Python | ✅ Django/FastAPI/Flask/generic API | ✅ Django `urlpatterns` + FastAPI `@app.get`/`@router.post` | 🟢 | 🟢 |
@@ -148,8 +149,8 @@
 | Objective-C | 🟢 CoreData/ReactiveObjC/CocoaTouch | ⚫ | 🟢 | 🟢 |
 | COBOL | ⚫ | ⚫ | ⚫ | ⚫ |
 
-> **路由提取器现状**：Django（`urlpatterns`/`path()`/`re_path()`）、Rails（`routes.rb` DSL）、Spring（`@GetMapping`/`@PostMapping`/`@RequestMapping`）、FastAPI（`@app.get`/`@router.post`）、Gin/Echo/Fiber（`r.GET()`/`.POST()`）均已集成至 pipeline.ts。剩余缺口：
-> 1. **低** — Vapor (Swift)；Laravel explicit routes；Ktor (Kotlin)
+> **路由提取器现状**：Django（`urlpatterns`/`path()`/`re_path()`）、Rails（`routes.rb` DSL）、Spring（`@GetMapping`/`@PostMapping`/`@RequestMapping`）、FastAPI（`@app.get`/`@router.post`）、Flask（`@app.route`/`@blueprint.route`）、Laravel 显式路由（`Route::get/post/resource/apiResource`）、Gin/Echo/Fiber（`r.GET()`/`.POST()`）均已集成至 `pipeline.ts`。剩余缺口：
+> 1. **低** — Vapor (Swift)；Ktor (Kotlin)
 
 ---
 
@@ -231,9 +232,9 @@
 | **Dart** | 🟢 | 🟡 | 🟡 | 🟢 | 🔴 | 🟡 | 🟡 |
 | **C / C++** | 🟡 | 🟢 | 🔴 | 🟢 | 🟢 | 🟡 | 🟢 |
 | **Objective-C** | 🟢 | 🟢 | 🟡 | 🟢 | 🟢 | 🟡 | 🟢 |
-| **COBOL** | ⚫ | 🔴 | ⚫ | ⚫ | ⚫ | ⚫ | ⚫ |
+| **COBOL** | 🔴 | 🟡 | 🟡 | ⚫ | ⚫ | ⚫ | 🔴 |
 
-> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C#/C/C++/Objective-C 升入 **Tier-2**（CFG DSL + 数据流/规则增强完成，Objective-C named-bindings 挂载仍待补齐）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 为 **Tier-3**（bug 规则 + named-bindings 改善）；COBOL 为 **未就绪**。
+> **Tier 划分**：TypeScript/JavaScript 为 **Tier-1**（全维度完整）；Python/Java/Go/Kotlin/Vue SFC/Ruby 为 **Tier-2**（核心能力完整，有局部缺口）；Rust/C#/C/C++/Objective-C 为 **Tier-2**（CFG DSL + 数据流/规则增强完成，Objective-C named-bindings 已挂载）；PHP/ArkTS 为 **Tier-3**；Swift/Dart 为 **Tier-3**（bug 规则 + named-bindings 改善）；COBOL 为 **Tier-4（基础图谱可用，深度分析未就绪）**。
 
 ---
 
@@ -244,14 +245,14 @@
 | 路由提取器：Spring `@RequestMapping`/`@GetMapping`（缺 HANDLES_ROUTE 边） | Java, Kotlin | 🟡 中 | 🔴 P1 | ✅ 已完成（e60099a） |
 | 路由提取器：FastAPI `@router.xxx` / Gin / Echo / Fiber handler | Python, Go | 🟡 中 | 🔴 P1 | ✅ 已完成（e60099a） |
 | named-bindings：Swift（`import class/func/var` 限定式） | Swift | 🟡 中 | 🟡 P2 | ✅ 已完成（e60099a） |
-| named-bindings：Objective-C provider 挂载（提取器已存在） | Objective-C | 🟢 低 | 🟢 P3 | 🔲 待完成 |
+| named-bindings：Objective-C provider 挂载（提取器已存在） | Objective-C | 🟢 低 | 🟢 P3 | ✅ 已完成（工作区变更） |
 | Objective-C 无 Method 节点（HAS_METHOD 边） | Objective-C | 🟢 低 | 🟡 P2 | ✅ 已完成（未发布） |
 | named-bindings：Ruby（`require` 为 wildcard，无 named-import 语义） | Ruby | 🔴 高 | ⚪ 不适用 | ⚫ 跳过（Ruby 无具名导入） |
 | C# 无构造函数推断 | C# | 🟢 低 | 🟢 P3 | ✅ 已完成 |
-| Vue SFC 模板层无符号提取 | Vue SFC | 🟡 中 | 🟢 P3 | ✅ 已完成 |
+| Vue SFC 模板层无符号提取 | Vue SFC | 🟡 中 | 🟢 P3 | 🔲 待完成（当前仅 `<script>` / `<script setup>`） |
 | ObjC CFG DSL（控制流图 + limited-tier 数据流分析） | Objective-C | 🟢 低 | 🟡 P2 | ✅ 已完成 |
 | ObjC bug 规则（missing-guard / resource / return-check + taint sinks） | Objective-C | 🟡 中 | 🟡 P2 | ✅ 已完成 |
-| COBOL 全面支持（tree-sitter 替代 Regex + DATA DIVISION 变量提取） | COBOL | 🔴 高 | ⚫ 战略 | 🔲 开放 |
+| COBOL 深化支持（在已完成 Data Item 层级化后补齐 CFG/污点/规则） | COBOL | 🔴 高 | ⚫ 战略 | 🔲 开放 |
 
 ---
 
@@ -262,6 +263,10 @@
 | 2026-04-08 | `6838e30` | **Phase 2 增强**：ObjC named-bindings 提取器文件落地（`objective-c.ts`，后续需 provider 挂载）；C/C++ 框架检测完善（Qt/main 入口）→ 框架检测 🔴→🟢；ObjC/C++ 符号提取优化 → 符号提取 🟡→🟢；ObjC 数据流 taint 扩展完成 → 数据流 🟡→🟢；两者综合评级升至 🟢，进入 Tier-2 |
 | 2026-04-08 | 未发布 | ObjC CFG DSL（`objectivec-static-edges.sg`，覆盖 if/while/for/switch/@try/@catch/@synchronized 等）；ObjC 升入 LANGUAGE_TIERS.LIMITED；missing-guard/resource/return-check 新增 ObjC 专属规则；taint.ts 扩展 ObjC source/sink/sanitizer（SQL/JS/HTML/路径穿越/动态分派/KVC 注入等）；修复 ObjC 容器 AST 节点映射并补充 `test/integration/resolvers/objc.test.ts`（9/9 通过） |
 | 2026-04-09 | `e60099a` | Spring `@GetMapping`/`@PostMapping`/`@RequestMapping` 路由提取器（Java/Kotlin）；FastAPI `@app.get`/`@router.post` + Gin/Echo/Fiber `r.GET()/.POST()` 路由提取器（Python/Go）；Swift `import class/func/var` 限定导入 named-binding extractor；ObjC `methodExtractor` 注册（`objcMethodConfig` + `extractOwnerName` 模式，HAS_METHOD 边现在可用） |
+| 2026-04-09 | `19c2ba8` | COBOL Data Item 图谱对齐完成：数据项边迁移至 `HAS_PROPERTY`（含 parent->child 层级），新增 `ACCESSES(cobol-redefines)`，集成测试更新为新边模型 |
+| 2026-04-09 | `9b4d43d` / `1eb5291` / `ad85dbb` / `44a3572` | COBOL Data Item 对齐分步提交：`parentName` 字段、level-stack 提取、单测补齐（含 88-level/section reset/嵌套程序作用域） |
+| 2026-04-09 | `93b7893` / `11b2579` | COBOL Data Item Graph Alignment 设计与实施文档（spec + plan） |
+| 2026-04-09 | 工作区变更 | Flask 路由提取器（`flask.ts`）与 Laravel 显式路由提取器（`laravel.ts`）接入 pipeline；Ruby/Objective-C named-binding provider 挂载确认；Fiber camelCase (`.Get/.Post`) 路由匹配补齐 |
 | 2026-04-08 | `796aad9` | Rust/C/C++ CFG DSL（各 18/14/20 节点类型）；Kotlin/C# CFG DSL（13/20 节点）；LANGUAGE_DSL_MAP 覆盖 10 种语言；Dart `show`/Go 包别名 named-bindings；Swift/Dart/ArkTS bug 规则扩展（MG/MU/MR/MCG）；COBOL EVALUATE/IF 控制流模拟（CALLS 图边）；XSS 规则（OWASP A03）注册 |
 | 2026-04-08 | `36506d0` | 新增 Java/Go CFG DSL（14/9 边）；新增 SQL 注入（OWASP A03）和路径穿越（OWASP A01/CWE-22）检测规则；`builtinRules` 从 6 条扩展为 8 条；Django/Rails 路由提取器集成至 pipeline.ts |
 | 2026-04-08 | `b57da45` | 修正 C/C++/ObjC IMPORTS 边误判（已通过 `standard.ts` 实现）；更新 ArkTS/C/C++/ObjC 综合等级 |

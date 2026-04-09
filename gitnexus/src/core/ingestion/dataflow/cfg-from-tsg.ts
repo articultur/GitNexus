@@ -177,6 +177,7 @@ export function buildCFGFromTSG(
     typescript: 'ts',
     javascript: 'js',
     python: 'py',
+    objectivec: 'm',
   };
   const ext = EXT_MAP[langKey] ?? 'txt';
   const tmpSource = join(
