@@ -52,7 +52,7 @@ If always-on instructions grow, load deep conventions via conditional reads (e.g
 GitNexus MCP rules are in the `<!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **GitNexus** (5814 symbols, 13454 relationships, 460 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **GitNexus** (5593 symbols, 12500 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

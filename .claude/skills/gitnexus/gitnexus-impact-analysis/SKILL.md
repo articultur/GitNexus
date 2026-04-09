@@ -23,11 +23,6 @@ description: "Use when the user wants to know what will break if they change som
 4. Assess risk and report to user
 ```
 
-Data-flow note:
-
-- Default impact traversal is usage-based (CALLS/IMPORTS/EXTENDS/IMPLEMENTS) and does not include DATA_FLOW.
-- If you need variable/value propagation, pass `relationTypes` with `DATA_FLOW` (optionally `TAINTED`, `SINK_REACHABLE`).
-
 > If "Index is stale" → run `npx gitnexus analyze` in terminal.
 
 ## Checklist
@@ -76,18 +71,6 @@ gitnexus_impact({
 
 → d=2 (LIKELY AFFECTED):
   - authRouter (src/routes/auth.ts:22) [CALLS, 95%]
-```
-
-**gitnexus_impact with data-flow edges** — include value propagation:
-
-```
-gitnexus_impact({
-  target: "validateUser",
-  direction: "upstream",
-  relationTypes: ["CALLS", "IMPORTS", "EXTENDS", "IMPLEMENTS", "DATA_FLOW", "TAINTED", "SINK_REACHABLE"],
-  minConfidence: 0.8,
-  maxDepth: 3
-})
 ```
 
 **gitnexus_detect_changes** — git-diff based impact analysis:

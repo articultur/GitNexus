@@ -40,11 +40,6 @@ For any task involving code understanding, debugging, impact analysis, or refact
 | `cypher`         | Raw graph queries (read `gitnexus://repo/{name}/schema` first)           |
 | `list_repos`     | Discover indexed repos                                                   |
 
-Impact traversal note:
-
-- Default traversal is usage-based and excludes DATA_FLOW.
-- For variable/data-flow tracing, call impact with `relationTypes` including `DATA_FLOW` (optionally `TAINTED`, `SINK_REACHABLE`).
-
 ## Resources Reference
 
 Lightweight reads (~100-500 tokens) for navigation:
@@ -61,7 +56,7 @@ Lightweight reads (~100-500 tokens) for navigation:
 ## Graph Schema
 
 **Nodes:** File, Function, Class, Interface, Method, Community, Process
-**Edges (via CodeRelation.type):** CALLS, IMPORTS, EXTENDS, IMPLEMENTS, DEFINES, MEMBER_OF, STEP_IN_PROCESS, DATA_FLOW, TAINTED, SINK_REACHABLE
+**Edges (via CodeRelation.type):** CALLS, IMPORTS, EXTENDS, IMPLEMENTS, DEFINES, MEMBER_OF, STEP_IN_PROCESS
 
 ```cypher
 MATCH (caller)-[:CodeRelation {type: 'CALLS'}]->(f:Function {name: "myFunc"})
