@@ -695,6 +695,53 @@ export interface DegradationConfig {
 }
 
 /**
+ * 从环境变量读取降级配置
+ *
+ * 支持的环境变量:
+ * - GITNEXUS_DIFF_NORMAL_MAX: 正常模式最大字节数 (default: 524288)
+ * - GITNEXUS_DIFF_SYMBOL_MAX: 符号级模式最大字节数 (default: 2097152)
+ * - GITNEXUS_DIFF_DISABLE_SYMBOL_LEVEL: 设为 '1' 禁用符号级降级
+ */
+export function getDegradationConfigFromEnv(): DegradationConfig {
+  const config: DegradationConfig = {};
+
+  const normalMax = process.env.GITNEXUS_DIFF_NORMAL_MAX;
+  if (normalMax) {
+    const parsed = parseInt(normalMax, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      config.normalMaxBytes = parsed;
+    }
+  }
+
+  const symbolMax = process.env.GITNEXUS_DIFF_SYMBOL_MAX;
+  if (symbolMax) {
+    const parsed = parseInt(symbolMax, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      config.symbolLevelMaxBytes = parsed;
+    }
+  }
+
+  const disableSymbolLevel = process.env.GITNEXUS_DIFF_DISABLE_SYMBOL_LEVEL;
+  if (disableSymbolLevel === '1' || disableSymbolLevel === 'true') {
+    config.enableSymbolLevel = false;
+  }
+
+  return config;
+}
+
+/**
+ * 合并配置：环境变量作为默认值，显式参数可覆盖
+ */
+export function mergeDegradationConfig(explicit?: DegradationConfig): DegradationConfig {
+  const envConfig = getDegradationConfigFromEnv();
+  return {
+    normalMaxBytes: explicit?.normalMaxBytes ?? envConfig.normalMaxBytes,
+    symbolLevelMaxBytes: explicit?.symbolLevelMaxBytes ?? envConfig.symbolLevelMaxBytes,
+    enableSymbolLevel: explicit?.enableSymbolLevel ?? envConfig.enableSymbolLevel,
+  };
+}
+
+/**
  * 根据diff大小确定精度级别
  */
 export function determinePrecision(diffSize: number, config?: DegradationConfig): DetectPrecision {

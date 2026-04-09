@@ -15,6 +15,7 @@ import {
   type DetectPrecision,
   type DegradedReason,
   type DegradationConfig,
+  mergeDegradationConfig,
 } from './shared.js';
 import {
   parseDiffWithDegradation,
@@ -119,11 +120,13 @@ export async function detectChangesTool(
   }
 
   // Build diff options with degradation support
+  // Merge environment variables with explicit config
+  const degradationConfig = mergeDegradationConfig(params.degradation_config);
   const diffOptions: DiffParseOptions = {
     repoPath: repo.repoPath,
     scope: validScope,
     baseRef: validScope === 'compare' ? params.base_ref : undefined,
-    config: params.degradation_config,
+    config: degradationConfig,
     fileFilter: params.file,
   };
 
