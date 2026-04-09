@@ -256,11 +256,13 @@ def classify_failure(score: CaseScore) -> str:
 # ─── Case scoring ─────────────────────────────────────────────────────────────
 
 def _extract_from_tool_records(raw: dict) -> dict:
-    """Extract prediction from tool call records when JSON parsing fails.
+    """Extract prediction from tool call records and thinking text.
 
     Scans tool_call_records for read_file calls and uses the path as predicted files.
+    Also extracts file paths mentioned in thinking text.
     Returns a minimal prediction dict.
     """
+    import re
     records = raw.get("tool_call_records", [])
     files = []
     for rec in records:
@@ -275,7 +277,6 @@ def _extract_from_tool_records(raw: dict) -> dict:
             if path and path not in files:
                 files.append(path)
         elif tool == "grep_search":
-            # grep_search results appear in result_preview as file paths
             preview = rec.get("result_preview", "")
             if preview:
                 for line in preview.splitlines():
@@ -284,6 +285,22 @@ def _extract_from_tool_records(raw: dict) -> dict:
                         file_part = line.split(":")[0]
                         if file_part.endswith(".py") and file_part not in files:
                             files.append(file_part)
+
+    # Also extract file paths from thinking text in raw_output
+    raw_output = raw.get("raw_output", "")
+    if raw_output and not files:
+        # Match Python file paths in natural language
+        path_patterns = [
+            r'\b([a-zA-Z_][a-zA-Z0-9_./-]*\.py)\b',
+            r'`([a-zA-Z_][a-zA-Z0-9_./-]*\.py)`',
+            r'["\']([a-zA-Z_][a-zA-Z0-9_./-]*\.py)["\']',
+        ]
+        for pattern in path_patterns:
+            for match in re.finditer(pattern, raw_output):
+                path = match.group(1)
+                if path and not path.startswith("/") and path not in files:
+                    files.append(path)
+
     if files:
         return {"files": files, "symbols": [], "call_chain": [], "confidence": 0.0, "reasoning": "Extracted from tool records"}
     return {}
@@ -316,10 +333,15 @@ def score_case(
         return s
 
     pred = raw.get("prediction") or {}
-    if not pred or raw.get("parse_error"):
-        # Try to extract answer from tool call records
-        pred = _extract_from_tool_records(raw)
-        if not pred:
+    parse_err = raw.get("parse_error") or ""
+    has_prediction_with_files = bool(pred.get("files"))
+
+    if not has_prediction_with_files or parse_err:
+        # Try to extract answer from tool call records / thinking text
+        extracted = _extract_from_tool_records(raw)
+        if extracted:
+            pred = extracted
+        elif parse_err or not has_prediction_with_files:
             s.parse_ok = False
             s.tool_calls = raw.get("tool_calls", 0)
             s.total_tokens = raw.get("total_tokens", 0)
