@@ -158,6 +158,13 @@ export const initEmbedder = async (
       // Configure transformers.js environment
       env.allowLocalModels = false;
 
+      // Support custom HuggingFace mirror via HF_ENDPOINT env var.
+      // Useful in environments where huggingface.co is unreachable
+      // (e.g. set HF_ENDPOINT=https://hf-mirror.com for mainland China).
+      if (process.env.HF_ENDPOINT) {
+        env.remoteHost = process.env.HF_ENDPOINT.replace(/\/+$/, '');
+      }
+
       const isDev = process.env.NODE_ENV === 'development';
       if (isDev) {
         console.log(`🧠 Loading embedding model: ${finalConfig.modelId}`);

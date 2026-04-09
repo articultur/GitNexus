@@ -8,7 +8,12 @@
 const HTTP_TIMEOUT_MS = 30_000;
 const HTTP_MAX_RETRIES = 2;
 const HTTP_RETRY_BACKOFF_MS = 1_000;
-const HTTP_BATCH_SIZE = 64;
+// Larger batches reduce round-trip overhead; Ollama /v1/embeddings handles 128+ fine.
+// Override with GITNEXUS_EMBEDDING_BATCH_SIZE env var.
+const HTTP_BATCH_SIZE = parseInt(process.env.GITNEXUS_EMBEDDING_BATCH_SIZE ?? '128', 10);
+// Number of concurrent batch requests. Ollama on Apple Silicon (Metal) benefits
+// from light concurrency; set GITNEXUS_EMBEDDING_CONCURRENCY=1 to disable.
+const HTTP_CONCURRENCY = parseInt(process.env.GITNEXUS_EMBEDDING_CONCURRENCY ?? '3', 10);
 const DEFAULT_DIMS = 384;
 
 interface HttpConfig {
@@ -143,6 +148,27 @@ const httpEmbedBatch = async (
  * @param texts - Array of texts to embed
  * @returns Array of Float32Array embedding vectors
  */
+/**
+ * Process an array of promises with bounded concurrency.
+ */
+const runWithConcurrency = async <T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency: number,
+): Promise<T[]> => {
+  const results: T[] = new Array(tasks.length);
+  let nextIdx = 0;
+
+  const worker = async (): Promise<void> => {
+    while (nextIdx < tasks.length) {
+      const idx = nextIdx++;
+      results[idx] = await tasks[idx]();
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
+  return results;
+};
+
 export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
   if (texts.length === 0) return [];
 
@@ -150,40 +176,44 @@ export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
   if (!config) throw new Error('HTTP embedding not configured');
 
   const url = `${config.baseUrl}/embeddings`;
-  const allVectors: Float32Array[] = [];
+  const expected = config.dimensions ?? DEFAULT_DIMS;
 
+  // Split into batches
+  const batches: string[][] = [];
   for (let i = 0; i < texts.length; i += HTTP_BATCH_SIZE) {
-    const batch = texts.slice(i, i + HTTP_BATCH_SIZE);
-    const batchIndex = Math.floor(i / HTTP_BATCH_SIZE);
-    const items = await httpEmbedBatch(url, batch, config.model, config.apiKey, batchIndex);
+    batches.push(texts.slice(i, i + HTTP_BATCH_SIZE));
+  }
 
-    if (items.length !== batch.length) {
-      throw new Error(
-        `Embedding endpoint returned ${items.length} vectors for ${batch.length} texts ` +
-          `(${safeUrl(url)}, batch ${batchIndex})`,
-      );
-    }
+  // Run batches with bounded concurrency
+  const batchResults = await runWithConcurrency(
+    batches.map((batch, batchIndex) => async () => {
+      const items = await httpEmbedBatch(url, batch, config.model, config.apiKey, batchIndex);
 
-    for (const item of items) {
-      const vec = new Float32Array(item.embedding);
-      // Fail fast on dimension mismatch rather than inserting bad vectors
-      // into the FLOAT[N] column which would cause a cryptic Kuzu error.
-      const expected = config.dimensions ?? DEFAULT_DIMS;
-      if (vec.length !== expected) {
-        const hint = config.dimensions
-          ? 'Update GITNEXUS_EMBEDDING_DIMS to match your model output.'
-          : `Set GITNEXUS_EMBEDDING_DIMS=${vec.length} to match your model output.`;
+      if (items.length !== batch.length) {
         throw new Error(
-          `Embedding dimension mismatch: endpoint returned ${vec.length}d vector, ` +
-            `but expected ${expected}d. ${hint}`,
+          `Embedding endpoint returned ${items.length} vectors for ${batch.length} texts ` +
+            `(${safeUrl(url)}, batch ${batchIndex})`,
         );
       }
 
-      allVectors.push(vec);
-    }
-  }
+      return items.map((item) => {
+        const vec = new Float32Array(item.embedding);
+        if (vec.length !== expected) {
+          const hint = config.dimensions
+            ? 'Update GITNEXUS_EMBEDDING_DIMS to match your model output.'
+            : `Set GITNEXUS_EMBEDDING_DIMS=${vec.length} to match your model output.`;
+          throw new Error(
+            `Embedding dimension mismatch: endpoint returned ${vec.length}d vector, ` +
+              `but expected ${expected}d. ${hint}`,
+          );
+        }
+        return vec;
+      });
+    }),
+    HTTP_CONCURRENCY,
+  );
 
-  return allVectors;
+  return batchResults.flat();
 };
 
 /**
