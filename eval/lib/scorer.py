@@ -431,5 +431,7 @@ def load_raw(raw_dir: Path, case_id: str, group: str) -> Optional[dict]:
     p = raw_dir / f"{case_id}_{group}.json"
     if not p.exists():
         return None
+    if p.stat().st_size == 0:
+        return None
     with p.open(encoding="utf-8") as f:
         return json.load(f)

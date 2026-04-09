@@ -73,6 +73,29 @@ def main() -> None:
         out_dir = out_dir / args.dataset / timestamp
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    all_scores: dict[str, list[CaseScore]] = {"strict": [], "relaxed": []}
+
+    for case_id, case in cases.items():
+        for group in ["baseline", "gitnexus"]:
+            raw = load_raw(raw_dir, case_id, group)
+            if raw is None:
+                continue
+
+            # Copy raw result to output directory for evaluation framework
+            raw_output_path = out_dir / "raw" / f"{case_id}_{group}.json"
+            raw_output_path.parent.mkdir(parents=True, exist_ok=True)
+            with raw_output_path.open("w", encoding="utf-8") as f:
+                json.dump(raw, f, ensure_ascii=False)
+
+            # Score in both modes if requested
+            if args.mode in ["strict", "both"]:
+                strict_score = score_case(raw, case, group, mode="strict")
+                all_scores["strict"].append(strict_score)
+
+            if args.mode in ["relaxed", "both"]:
+                relaxed_score = score_case(raw, case, group, mode="relaxed")
+                all_scores["relaxed"].append(relaxed_score)
+
     if not any(all_scores.values()):
         print("No results found. Run run_eval.py first.", file=sys.stderr)
         sys.exit(1)
@@ -86,7 +109,6 @@ def main() -> None:
         suffix = "-relaxed" if mode == "relaxed" else ""
         scores_path = out_dir / f"scores{suffix}.jsonl"
         with scores_path.open("w", encoding="utf-8") as f:
-            import json
             from dataclasses import asdict
             for s in scores:
                 f.write(json.dumps(asdict(s), ensure_ascii=False) + "\n")
