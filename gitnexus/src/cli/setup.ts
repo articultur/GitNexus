@@ -471,6 +471,169 @@ async function installCodexSkills(result: SetupResult): Promise<void> {
   }
 }
 
+// ─── AntCC (CodeFuse CC engine) ────────────────────────────────────
+
+/**
+ * AntCC uses Claude Code's engine under ~/.codefuse/engine/cc/.
+ * MCP config lives in ~/.codefuse/engine/cc/.claude.json (same format
+ * as ~/.claude.json), skills in ~/.codefuse/engine/cc/skills/, and
+ * hooks in ~/.codefuse/engine/cc/settings.json.
+ */
+async function setupAntCC(result: SetupResult): Promise<void> {
+  const antccDir = path.join(os.homedir(), '.codefuse', 'engine', 'cc');
+  if (!(await dirExists(antccDir))) {
+    result.skipped.push('AntCC (not installed)');
+    return;
+  }
+
+  const mcpPath = path.join(antccDir, '.claude.json');
+  try {
+    const existing = await readJsonFile(mcpPath);
+    const updated = mergeMcpConfig(existing);
+    await writeJsonFile(mcpPath, updated);
+    result.configured.push('AntCC');
+  } catch (err: any) {
+    result.errors.push(`AntCC: ${err.message}`);
+  }
+}
+
+async function installAntCCSkills(result: SetupResult): Promise<void> {
+  const antccDir = path.join(os.homedir(), '.codefuse', 'engine', 'cc');
+  if (!(await dirExists(antccDir))) return;
+
+  const skillsDir = path.join(antccDir, 'skills');
+  try {
+    const installed = await installSkillsTo(skillsDir);
+    if (installed.length > 0) {
+      result.configured.push(
+        `AntCC skills (${installed.length} skills → ~/.codefuse/engine/cc/skills/)`,
+      );
+    }
+  } catch (err: any) {
+    result.errors.push(`AntCC skills: ${err.message}`);
+  }
+}
+
+async function installAntCCHooks(result: SetupResult): Promise<void> {
+  const antccDir = path.join(os.homedir(), '.codefuse', 'engine', 'cc');
+  if (!(await dirExists(antccDir))) return;
+
+  const settingsPath = path.join(antccDir, 'settings.json');
+  const pluginHooksPath = path.join(__dirname, '..', '..', 'hooks', 'claude');
+  const destHooksDir = path.join(antccDir, 'hooks', 'gitnexus');
+
+  try {
+    await fs.mkdir(destHooksDir, { recursive: true });
+
+    const src = path.join(pluginHooksPath, 'gitnexus-hook.cjs');
+    const dest = path.join(destHooksDir, 'gitnexus-hook.cjs');
+    try {
+      let content = await fs.readFile(src, 'utf-8');
+      const resolvedCli = path.join(__dirname, '..', 'cli', 'index.js');
+      const normalizedCli = path.resolve(resolvedCli).replace(/\\/g, '/');
+      const jsonCli = JSON.stringify(normalizedCli);
+      content = content.replace(
+        "let cliPath = path.resolve(__dirname, '..', '..', 'dist', 'cli', 'index.js');",
+        `let cliPath = ${jsonCli};`,
+      );
+      await fs.writeFile(dest, content, 'utf-8');
+    } catch {
+      // Script not found in source — skip
+    }
+
+    const hookPath = path.join(destHooksDir, 'gitnexus-hook.cjs').replace(/\\/g, '/');
+    const hookCmd = `node "${hookPath.replace(/"/g, '\\"')}"`;
+
+    const existing = (await readJsonFile(settingsPath)) || {};
+    if (!existing.hooks) existing.hooks = {};
+
+    interface HookEntry {
+      hooks?: Array<{ command?: string }>;
+    }
+    function ensureHookEntry(
+      eventName: string,
+      matcher: string,
+      timeout: number,
+      statusMessage: string,
+    ) {
+      if (!existing.hooks[eventName]) existing.hooks[eventName] = [];
+      const hasHook = existing.hooks[eventName].some((h: HookEntry) =>
+        h.hooks?.some((hh) => hh.command?.includes('gitnexus-hook')),
+      );
+      if (!hasHook) {
+        existing.hooks[eventName].push({
+          matcher,
+          hooks: [{ type: 'command', command: hookCmd, timeout, statusMessage }],
+        });
+      }
+    }
+
+    ensureHookEntry('PreToolUse', 'Grep|Glob|Bash', 10, 'Enriching with GitNexus graph context...');
+    ensureHookEntry('PostToolUse', 'Bash', 10, 'Checking GitNexus index freshness...');
+
+    await writeJsonFile(settingsPath, existing);
+    result.configured.push('AntCC hooks (PreToolUse, PostToolUse)');
+  } catch (err: any) {
+    result.errors.push(`AntCC hooks: ${err.message}`);
+  }
+}
+
+// ─── CodeFuse CLI ──────────────────────────────────────────────────
+
+/**
+ * CodeFuse CLI stores MCP config in ~/.codefuse/codefuse.json with
+ * a slightly extended entry format: type, name, env, description fields.
+ */
+function getCodeFuseMcpEntry() {
+  const base = getMcpEntry();
+  return {
+    type: 'stdio' as const,
+    name: 'gitnexus',
+    command: base.command,
+    args: base.args,
+    env: {} as Record<string, string>,
+    description: 'GitNexus code intelligence — query, context, impact, detect-changes',
+  };
+}
+
+async function setupCodeFuseCLI(result: SetupResult): Promise<void> {
+  const codefuseDir = path.join(os.homedir(), '.codefuse');
+  if (!(await dirExists(codefuseDir))) {
+    result.skipped.push('CodeFuse CLI (not installed)');
+    return;
+  }
+
+  const configPath = path.join(codefuseDir, 'codefuse.json');
+  try {
+    const existing = (await readJsonFile(configPath)) || {};
+    if (!existing.mcpServers || typeof existing.mcpServers !== 'object') {
+      existing.mcpServers = {};
+    }
+    existing.mcpServers.gitnexus = getCodeFuseMcpEntry();
+    await writeJsonFile(configPath, existing);
+    result.configured.push('CodeFuse CLI');
+  } catch (err: any) {
+    result.errors.push(`CodeFuse CLI: ${err.message}`);
+  }
+}
+
+async function installCodeFuseCLISkills(result: SetupResult): Promise<void> {
+  const codefuseDir = path.join(os.homedir(), '.codefuse');
+  if (!(await dirExists(codefuseDir))) return;
+
+  const skillsDir = path.join(codefuseDir, 'skills');
+  try {
+    const installed = await installSkillsTo(skillsDir);
+    if (installed.length > 0) {
+      result.configured.push(
+        `CodeFuse CLI skills (${installed.length} skills → ~/.codefuse/skills/)`,
+      );
+    }
+  } catch (err: any) {
+    result.errors.push(`CodeFuse CLI skills: ${err.message}`);
+  }
+}
+
 // ─── Main command ──────────────────────────────────────────────────
 
 export const setupCommand = async () => {
@@ -494,6 +657,8 @@ export const setupCommand = async () => {
   await setupClaudeCode(result);
   await setupOpenCode(result);
   await setupCodex(result);
+  await setupAntCC(result);
+  await setupCodeFuseCLI(result);
 
   // Install global skills for platforms that support them
   await installClaudeCodeSkills(result);
@@ -501,6 +666,9 @@ export const setupCommand = async () => {
   await installCursorSkills(result);
   await installOpenCodeSkills(result);
   await installCodexSkills(result);
+  await installAntCCSkills(result);
+  await installAntCCHooks(result);
+  await installCodeFuseCLISkills(result);
 
   // Print results
   if (result.configured.length > 0) {
