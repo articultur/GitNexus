@@ -2,7 +2,12 @@
  * Graph traversal tools — shortest path, get code, API impact analysis.
  */
 
-import { executeParameterized } from '../../../core/lbug/pool-adapter.js';
+import {
+  executeParameterized,
+  executeQuery,
+  isLbugReady,
+  isWriteQuery,
+} from '../../../core/lbug/pool-adapter.js';
 import { logQueryError, VALID_NODE_LABELS, createEvidenceBuilder } from './shared.js';
 import type { RepoHandle, StandardEvidence } from './shared.js';
 import { fetchRoutesWithConsumers, fetchLinkedFlowsBatch } from './route-tools.js';
@@ -517,4 +522,32 @@ export async function apiImpactTool(
   }
 
   return { routes: results, total: results.length };
+}
+
+// ─── Cypher query tool ─────────────────────────────────────────────────────
+
+export async function cypherTool(
+  repo: RepoHandle,
+  params: { query: string },
+  ensureInitialized: (id: string) => Promise<void>,
+): Promise<any> {
+  await ensureInitialized(repo.id);
+
+  if (!isLbugReady(repo.id)) {
+    return { error: 'LadybugDB not ready. Index may be corrupted.' };
+  }
+
+  if (isWriteQuery(params.query)) {
+    return {
+      error:
+        'Write operations (CREATE, DELETE, SET, MERGE, REMOVE, DROP, ALTER, COPY, DETACH) are not allowed. The knowledge graph is read-only.',
+    };
+  }
+
+  try {
+    const result = await executeQuery(repo.id, params.query);
+    return result;
+  } catch (err: any) {
+    return { error: err.message || 'Query failed' };
+  }
 }

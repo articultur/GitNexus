@@ -11,6 +11,11 @@ import {
   EMBEDDING_TABLE_NAME,
   NodeTableName,
 } from './schema.js';
+import {
+  CURRENT_SCHEMA_VERSION,
+  attemptIncrementalMigration,
+  formatSchemaRebuildInstructions,
+} from './schema-version.js';
 import { streamAllCSVsToDisk } from './csv-generator.js';
 
 let db: lbug.Database | null = null;
@@ -170,14 +175,42 @@ const doInitLbug = async (dbPath: string) => {
   db = new lbug.Database(dbPath);
   conn = new lbug.Connection(db);
 
-  for (const schemaQuery of SCHEMA_QUERIES) {
-    try {
-      await conn.query(schemaQuery);
-    } catch (err) {
-      // Only ignore "already exists" errors - log everything else
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('already exists')) {
-        console.warn(`⚠️ Schema creation warning: ${msg.slice(0, 120)}`);
+  // ── Schema migration ────────────────────────────────────────────────────
+  // Read the stored schema version from meta.json (if present) and compare
+  // with the current schema fingerprint. Apply incremental migration when the
+  // schema changed additively; warn and request rebuild on breaking changes.
+  const metaPath = path.join(path.dirname(dbPath), 'meta.json');
+  let storedSchemaVersion = '';
+  try {
+    const raw = await fs.readFile(metaPath, 'utf-8');
+    const meta = JSON.parse(raw) as { schemaVersion?: string };
+    storedSchemaVersion = meta.schemaVersion ?? '';
+  } catch {
+    // meta.json missing or unreadable — treat as fresh DB
+  }
+
+  if (storedSchemaVersion && storedSchemaVersion !== CURRENT_SCHEMA_VERSION) {
+    const result = await attemptIncrementalMigration(conn, storedSchemaVersion);
+    if (result.needsRebuild) {
+      const repoRoot = path.dirname(path.dirname(dbPath));
+      throw new Error(
+        `LadybugDB schema mismatch: stored=${storedSchemaVersion} current=${CURRENT_SCHEMA_VERSION}.\n` +
+          `${result.message}\n` +
+          `${formatSchemaRebuildInstructions(repoRoot)}`,
+      );
+    } else if (result.message !== 'Schema is up-to-date.') {
+      console.log(`ℹ️  LadybugDB schema migrated: ${result.message}`);
+    }
+  } else {
+    // Fresh DB or same version — apply schema normally (ignore "already exists")
+    for (const schemaQuery of SCHEMA_QUERIES) {
+      try {
+        await conn.query(schemaQuery);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes('already exists')) {
+          console.warn(`⚠️ Schema creation warning: ${msg.slice(0, 120)}`);
+        }
       }
     }
   }

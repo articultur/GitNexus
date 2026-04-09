@@ -14,6 +14,12 @@ export interface RepoMeta {
   repoPath: string;
   lastCommit: string;
   indexedAt: string;
+  /**
+   * SHA-256 fingerprint (12 hex chars) of the LadybugDB schema at index time.
+   * Used to detect schema drift and trigger incremental migration or rebuild.
+   * Absent in indexes created before schema versioning was introduced.
+   */
+  schemaVersion?: string;
   stats?: {
     files?: number;
     nodes?: number;

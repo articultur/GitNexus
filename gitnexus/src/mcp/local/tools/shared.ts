@@ -151,6 +151,44 @@ export const filterRelationTypes = (raw?: string[]): string[] => {
   return filtered.length > 0 ? filtered : ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS'];
 };
 
+export interface CodebaseContext {
+  projectName: string;
+  stats: {
+    fileCount: number;
+    functionCount: number;
+    communityCount: number;
+    processCount: number;
+  };
+}
+
+export interface RepoOverview {
+  context: CodebaseContext;
+  maintainability: {
+    fileImportCycles: number;
+    oversizedSymbols: number;
+    crossModuleEdges: number;
+    hotspots: {
+      incoming: Array<{ name: string; filePath: string; count: number }>;
+      outgoing: Array<{ name: string; filePath: string; count: number }>;
+    };
+  };
+  coverage: {
+    parserCoverage: {
+      available: number;
+      total: number;
+    };
+    languages: Array<{
+      language: string;
+      parserMode: 'tree-sitter' | 'standalone';
+      parserAvailable: boolean;
+      status: 'available' | 'unavailable' | 'standalone';
+      note?: string;
+    }>;
+    blindSpots: string[];
+    analysisConfidence: 'high' | 'medium' | 'low';
+  };
+}
+
 /** Structured error logging for query failures — replaces empty catch blocks */
 export function logQueryError(context: string, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);

@@ -94,6 +94,24 @@ function runCliRaw(extraArgs: string[], cwd: string, timeoutMs = 15000) {
   });
 }
 
+function ensureMiniRepoIndexed() {
+  const metaPath = path.join(MINI_REPO, '.gitnexus', 'meta.json');
+  if (fs.existsSync(metaPath)) return;
+
+  const result = runCli('analyze', MINI_REPO, 30000);
+  if (result.status === null) return;
+
+  expect(
+    result.status,
+    [
+      `analyze exited with code ${result.status}`,
+      `stdout: ${result.stdout}`,
+      `stderr: ${result.stderr}`,
+    ].join('\n'),
+  ).toBe(0);
+  expect(fs.existsSync(metaPath)).toBe(true);
+}
+
 describe('CLI end-to-end', () => {
   it('status command exits cleanly', () => {
     const result = runCli('status', MINI_REPO);
@@ -343,6 +361,10 @@ describe('CLI end-to-end', () => {
   // All tool commands pass --repo to disambiguate when the global registry
   // has multiple indexed repos (e.g. the parent project is also indexed).
   describe('tool output goes to stdout via fd 1 (#324)', () => {
+    beforeAll(() => {
+      ensureMiniRepoIndexed();
+    });
+
     it('cypher: JSON appears on stdout, not stderr', () => {
       const result = runCliRaw(
         ['cypher', 'MATCH (n) RETURN n.name LIMIT 3', '--repo', 'mini-repo'],

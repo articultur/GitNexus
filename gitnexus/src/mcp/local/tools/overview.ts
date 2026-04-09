@@ -3,9 +3,11 @@
  * Also exports aggregateClusters and formatCypherAsMarkdown utilities.
  */
 
-import { executeParameterized } from '../../../core/lbug/pool-adapter.js';
+import { executeParameterized, executeQuery } from '../../../core/lbug/pool-adapter.js';
+import { SupportedLanguages } from 'gitnexus-shared';
+import { isLanguageAvailable } from '../../../core/tree-sitter/parser-loader.js';
 import { logQueryError } from './shared.js';
-import type { RepoHandle } from './shared.js';
+import type { RepoHandle, CodebaseContext, RepoOverview } from './shared.js';
 
 /**
  * Aggregate same-named clusters: group by heuristicLabel, sum symbols,
@@ -159,4 +161,152 @@ export async function overviewTool(
   }
 
   return result;
+}
+
+export async function queryRepoOverviewTool(
+  repo: RepoHandle,
+  context: CodebaseContext | null,
+  ensureInitialized: (id: string) => Promise<void>,
+): Promise<RepoOverview> {
+  await ensureInitialized(repo.id);
+
+  const ctx: CodebaseContext = context || {
+    projectName: repo.name,
+    stats: {
+      fileCount: repo.stats?.files || 0,
+      functionCount: repo.stats?.nodes || 0,
+      communityCount: repo.stats?.communities || 0,
+      processCount: repo.stats?.processes || 0,
+    },
+  };
+
+  const [fileImportCycles, oversizedSymbols, crossModuleEdges, topIncoming, topOutgoing] =
+    await Promise.all([
+      executeQuery(
+        repo.id,
+        `
+          MATCH (a:File)-[:CodeRelation {type: 'IMPORTS'}]->(b:File)
+          MATCH (b)-[:CodeRelation {type: 'IMPORTS'}]->(a)
+          WHERE a.id < b.id
+          RETURN COUNT(*) AS count
+        `,
+      ).catch(() => []),
+      executeQuery(
+        repo.id,
+        `
+          MATCH (n)
+          WHERE labels(n)[0] IN ['Function', 'Method', 'Class']
+            AND n.startLine IS NOT NULL AND n.endLine IS NOT NULL
+            AND (
+              (labels(n)[0] IN ['Function', 'Method'] AND (n.endLine - n.startLine + 1) >= 80)
+              OR (labels(n)[0] = 'Class' AND (n.endLine - n.startLine + 1) >= 200)
+            )
+          RETURN COUNT(*) AS count
+        `,
+      ).catch(() => []),
+      executeQuery(
+        repo.id,
+        `
+          MATCH (a)-[:CodeRelation {type: 'MEMBER_OF'}]->(c1:Community)
+          MATCH (a)-[r:CodeRelation]->(b)
+          MATCH (b)-[:CodeRelation {type: 'MEMBER_OF'}]->(c2:Community)
+          WHERE r.type IN ['CALLS', 'IMPORTS'] AND c1.id <> c2.id
+          RETURN COUNT(DISTINCT r) AS count
+        `,
+      ).catch(() => []),
+      executeQuery(
+        repo.id,
+        `
+          MATCH (src)-[r:CodeRelation]->(n)
+          WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS']
+          RETURN n.name AS name, n.filePath AS filePath, COUNT(*) AS count
+          ORDER BY count DESC
+          LIMIT 5
+        `,
+      ).catch(() => []),
+      executeQuery(
+        repo.id,
+        `
+          MATCH (n)-[r:CodeRelation]->(dst)
+          WHERE r.type IN ['CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS']
+          RETURN n.name AS name, n.filePath AS filePath, COUNT(*) AS count
+          ORDER BY count DESC
+          LIMIT 5
+        `,
+      ).catch(() => []),
+    ]);
+
+  const optionalParsers = new Set<string>([
+    SupportedLanguages.Kotlin,
+    SupportedLanguages.Swift,
+    SupportedLanguages.Dart,
+    SupportedLanguages.ObjectiveC,
+  ]);
+
+  const languages: RepoOverview['coverage']['languages'] = Object.values(SupportedLanguages).map(
+    (language) => {
+      const parserMode: 'tree-sitter' | 'standalone' =
+        language === SupportedLanguages.Cobol ? 'standalone' : 'tree-sitter';
+      const parserAvailable =
+        parserMode === 'standalone' ? true : isLanguageAvailable(language as SupportedLanguages);
+      let note: string | undefined;
+      if (language === SupportedLanguages.Cobol) {
+        note = 'Regex-based standalone processor';
+      } else if (!parserAvailable && optionalParsers.has(language)) {
+        note = 'Optional native parser not installed';
+      }
+      return {
+        language,
+        parserMode,
+        parserAvailable,
+        status: (parserMode === 'standalone'
+          ? 'standalone'
+          : parserAvailable
+            ? 'available'
+            : 'unavailable') as 'available' | 'unavailable' | 'standalone',
+        ...(note ? { note } : {}),
+      };
+    },
+  );
+
+  const availableParserCount = languages.filter(
+    (lang) => lang.status === 'available' || lang.status === 'standalone',
+  ).length;
+  const parserCoverageRatio = availableParserCount / Math.max(languages.length, 1);
+
+  return {
+    context: ctx,
+    maintainability: {
+      fileImportCycles: fileImportCycles[0]?.count ?? fileImportCycles[0]?.[0] ?? 0,
+      oversizedSymbols: oversizedSymbols[0]?.count ?? oversizedSymbols[0]?.[0] ?? 0,
+      crossModuleEdges: crossModuleEdges[0]?.count ?? crossModuleEdges[0]?.[0] ?? 0,
+      hotspots: {
+        incoming: topIncoming.map((row: any) => ({
+          name: row.name ?? row[0] ?? 'unknown',
+          filePath: row.filePath ?? row[1] ?? '',
+          count: row.count ?? row[2] ?? 0,
+        })),
+        outgoing: topOutgoing.map((row: any) => ({
+          name: row.name ?? row[0] ?? 'unknown',
+          filePath: row.filePath ?? row[1] ?? '',
+          count: row.count ?? row[2] ?? 0,
+        })),
+      },
+    },
+    coverage: {
+      parserCoverage: {
+        available: availableParserCount,
+        total: languages.length,
+      },
+      languages,
+      blindSpots: [
+        'Variable-level data flow is not yet modeled end-to-end.',
+        'Path-sensitive control-flow reasoning is partial.',
+        'Security rule execution and taint propagation are not productized in MCP outputs.',
+        'Parser availability can reduce language coverage on optional native grammars.',
+      ],
+      analysisConfidence:
+        parserCoverageRatio >= 0.85 ? 'high' : parserCoverageRatio >= 0.65 ? 'medium' : 'low',
+    },
+  };
 }

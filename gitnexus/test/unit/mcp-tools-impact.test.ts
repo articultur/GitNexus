@@ -152,7 +152,8 @@ describe('runImpactBFS — empty graph', () => {
     });
 
     expect(result).toHaveProperty('evidence');
-    expect(result.evidence).toHaveProperty('traversal');
+    expect(result.evidence).toHaveProperty('explanation');
+    expect(result.evidence).toHaveProperty('paths');
   });
 });
 

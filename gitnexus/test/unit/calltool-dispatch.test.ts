@@ -339,26 +339,30 @@ describe('LocalBackend.callTool', () => {
   });
 
   it('api_impact detects mismatches and bumps risk level', async () => {
-    (executeParameterized as any).mockResolvedValue([
-      {
-        routeId: 'Route:/api/data',
-        routeName: '/api/data',
-        handlerFile: 'api/data.ts',
-        responseKeys: ['items'],
-        errorKeys: ['error'],
-        middleware: null,
-        consumerName: 'DataView',
-        consumerFile: 'src/DataView.tsx',
-        fetchReason: 'fetch-url-match|keys:items,meta',
-      },
-    ]);
+    // First call: fetchRoutesWithConsumers returns route data;
+    // subsequent calls (fetchLinkedFlowsBatch) return empty.
+    (executeParameterized as any)
+      .mockResolvedValueOnce([
+        {
+          routeId: 'Route:/api/data',
+          routeName: '/api/data',
+          handlerFile: 'api/data.ts',
+          responseKeys: ['items'],
+          errorKeys: ['error'],
+          middleware: null,
+          consumerName: 'DataView',
+          consumerFile: 'src/DataView.tsx',
+          fetchReason: 'fetch-url-match|keys:items,meta',
+        },
+      ])
+      .mockResolvedValue([]);
     const result = await backend.callTool('api_impact', { route: '/api/data' });
     expect(result.mismatches).toBeDefined();
     expect(result.mismatches).toHaveLength(1);
     expect(result.mismatches[0].field).toBe('meta');
     expect(result.mismatches[0].reason).toContain('not in response shape');
-    // 1 consumer = LOW, but mismatch bumps to MEDIUM
-    expect(result.impactSummary.riskLevel).toBe('MEDIUM');
+    // 1 consumer = LOW, but mismatch + breaking contract change bumps to HIGH
+    expect(result.impactSummary.riskLevel).toBe('HIGH');
   });
 
   it('api_impact supports file param lookup', async () => {

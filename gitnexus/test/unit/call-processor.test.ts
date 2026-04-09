@@ -6,7 +6,16 @@ import {
   processNextjsFetchRoutes,
   buildImplementorMap,
   mergeImplementorMaps,
+  buildImportedReturnTypes,
+  buildImportedRawReturnTypes,
+  buildExportedTypeMapFromGraph,
+  processAssignmentsFromExtracted,
+  processRoutesFromExtracted,
 } from '../../src/core/ingestion/call-processor.js';
+import type {
+  ExtractedAssignment,
+  ExtractedRoute,
+} from '../../src/core/ingestion/workers/parse-worker.js';
 import { extractReturnTypeName } from '../../src/core/ingestion/type-extractors/shared.js';
 import {
   createResolutionContext,
@@ -1526,5 +1535,385 @@ describe('processCallsFromExtracted — interface dispatch', () => {
     expect(toA?.reason).toBe('interface-dispatch');
     expect(toB?.confidence).toBe(0.7);
     expect(toB?.reason).toBe('interface-dispatch');
+  });
+});
+
+// ---- buildImportedReturnTypes ----
+
+describe('buildImportedReturnTypes', () => {
+  it('returns empty map when file has no imports', () => {
+    const result = buildImportedReturnTypes('src/index.ts', new Map(), {
+      lookupExactFull: () => undefined,
+    });
+    expect(result.size).toBe(0);
+  });
+
+  it('resolves return type from imported symbol', () => {
+    const namedImportMap = new Map([
+      [
+        'src/index.ts',
+        new Map([['getUser', { sourcePath: 'src/api.ts', exportedName: 'getUser' }]]),
+      ],
+    ]);
+    const symbolTable = {
+      lookupExactFull: (fp: string, name: string) => {
+        if (fp === 'src/api.ts' && name === 'getUser') return { returnType: 'User' };
+        return undefined;
+      },
+    };
+
+    const result = buildImportedReturnTypes('src/index.ts', namedImportMap, symbolTable);
+    expect(result.get('getUser')).toBe('User');
+  });
+
+  it('skips imports with no return type', () => {
+    const namedImportMap = new Map([
+      ['src/index.ts', new Map([['render', { sourcePath: 'src/ui.ts', exportedName: 'render' }]])],
+    ]);
+    const symbolTable = {
+      lookupExactFull: () => ({ returnType: undefined }),
+    };
+
+    const result = buildImportedReturnTypes('src/index.ts', namedImportMap, symbolTable);
+    expect(result.size).toBe(0);
+  });
+
+  it('skips imports where return type is a primitive', () => {
+    const namedImportMap = new Map([
+      [
+        'src/index.ts',
+        new Map([['getCount', { sourcePath: 'src/utils.ts', exportedName: 'getCount' }]]),
+      ],
+    ]);
+    const symbolTable = {
+      lookupExactFull: () => ({ returnType: 'number' }),
+    };
+
+    const result = buildImportedReturnTypes('src/index.ts', namedImportMap, symbolTable);
+    expect(result.size).toBe(0);
+  });
+
+  it('resolves multiple imports', () => {
+    const namedImportMap = new Map([
+      [
+        'src/index.ts',
+        new Map([
+          ['getUser', { sourcePath: 'src/api.ts', exportedName: 'getUser' }],
+          ['getRepo', { sourcePath: 'src/api.ts', exportedName: 'getRepo' }],
+        ]),
+      ],
+    ]);
+    const symbolTable = {
+      lookupExactFull: (_fp: string, name: string) => {
+        if (name === 'getUser') return { returnType: 'User' };
+        if (name === 'getRepo') return { returnType: 'Repo' };
+        return undefined;
+      },
+    };
+
+    const result = buildImportedReturnTypes('src/index.ts', namedImportMap, symbolTable);
+    expect(result.get('getUser')).toBe('User');
+    expect(result.get('getRepo')).toBe('Repo');
+  });
+});
+
+// ---- buildImportedRawReturnTypes ----
+
+describe('buildImportedRawReturnTypes', () => {
+  it('returns empty map when file has no imports', () => {
+    const result = buildImportedRawReturnTypes('src/index.ts', new Map(), {
+      lookupExactFull: () => undefined,
+    });
+    expect(result.size).toBe(0);
+  });
+
+  it('stores raw return type (e.g., User[]) unlike buildImportedReturnTypes', () => {
+    const namedImportMap = new Map([
+      [
+        'src/index.ts',
+        new Map([['getUsers', { sourcePath: 'src/api.ts', exportedName: 'getUsers' }]]),
+      ],
+    ]);
+    const symbolTable = {
+      lookupExactFull: () => ({ returnType: 'User[]' }),
+    };
+
+    const result = buildImportedRawReturnTypes('src/index.ts', namedImportMap, symbolTable);
+    expect(result.get('getUsers')).toBe('User[]');
+  });
+
+  it('skips imports with no return type', () => {
+    const namedImportMap = new Map([
+      ['src/index.ts', new Map([['render', { sourcePath: 'src/ui.ts', exportedName: 'render' }]])],
+    ]);
+    const symbolTable = {
+      lookupExactFull: () => undefined,
+    };
+
+    const result = buildImportedRawReturnTypes('src/index.ts', namedImportMap, symbolTable);
+    expect(result.size).toBe(0);
+  });
+});
+
+// ---- buildExportedTypeMapFromGraph ----
+
+describe('buildExportedTypeMapFromGraph', () => {
+  it('returns empty map for empty graph', () => {
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+    const result = buildExportedTypeMapFromGraph(graph, ctx.symbols);
+    expect(result.size).toBe(0);
+  });
+
+  it('collects exported function return types', () => {
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+
+    ctx.symbols.add('src/api.ts', 'getUser', 'Function:src/api.ts:getUser', 'Function', {
+      returnType: 'User',
+    });
+    graph.addNode({
+      id: 'Function:src/api.ts:getUser',
+      label: 'Function',
+      properties: { name: 'getUser', filePath: 'src/api.ts', isExported: true },
+    });
+
+    const result = buildExportedTypeMapFromGraph(graph, ctx.symbols);
+    expect(result.size).toBe(1);
+    expect(result.get('src/api.ts')?.get('getUser')).toBe('User');
+  });
+
+  it('skips non-exported nodes', () => {
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+
+    ctx.symbols.add('src/api.ts', 'internal', 'Function:src/api.ts:internal', 'Function');
+    graph.addNode({
+      id: 'Function:src/api.ts:internal',
+      label: 'Function',
+      properties: { name: 'internal', filePath: 'src/api.ts', isExported: false },
+    });
+
+    const result = buildExportedTypeMapFromGraph(graph, ctx.symbols);
+    expect(result.size).toBe(0);
+  });
+
+  it('skips nodes without filePath or name', () => {
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+
+    ctx.symbols.add('src/api.ts', 'orphan', 'Function:src/api.ts:orphan', 'Function');
+    graph.addNode({
+      id: 'Function:src/api.ts:orphan',
+      label: 'Function',
+      properties: { isExported: true },
+    });
+
+    const result = buildExportedTypeMapFromGraph(graph, ctx.symbols);
+    expect(result.size).toBe(0);
+  });
+});
+
+// ---- processAssignmentsFromExtracted ----
+
+describe('processAssignmentsFromExtracted', () => {
+  let graph: ReturnType<typeof createKnowledgeGraph>;
+  let ctx: ResolutionContext;
+
+  beforeEach(() => {
+    graph = createKnowledgeGraph();
+    ctx = createResolutionContext();
+  });
+
+  it('creates ACCESSES write edge for assignment to known property', () => {
+    // Set up: User class with address property
+    ctx.symbols.add('src/models.ts', 'User', 'Class:src/models.ts:User', 'Class');
+    ctx.symbols.add('src/models.ts', 'address', 'Property:src/models.ts:User.address', 'Property', {
+      ownerId: 'Class:src/models.ts:User',
+    });
+    ctx.importMap.set('src/index.ts', new Set(['src/models.ts']));
+
+    const assignments: ExtractedAssignment[] = [
+      {
+        filePath: 'src/index.ts',
+        sourceId: 'Function:src/index.ts:updateUser',
+        receiverText: 'user',
+        propertyName: 'address',
+        receiverTypeName: 'User',
+      },
+    ];
+
+    processAssignmentsFromExtracted(graph, assignments, ctx);
+
+    const rels = graph.relationships.filter((r) => r.type === 'ACCESSES');
+    expect(rels).toHaveLength(1);
+    expect(rels[0].reason).toBe('write');
+    expect(rels[0].confidence).toBe(1.0);
+  });
+
+  it('skips assignments with no resolvable receiver type', () => {
+    const assignments: ExtractedAssignment[] = [
+      {
+        filePath: 'src/index.ts',
+        sourceId: 'Function:src/index.ts:fn',
+        receiverText: 'unknown',
+        propertyName: 'prop',
+      },
+    ];
+
+    processAssignmentsFromExtracted(graph, assignments, ctx);
+    expect(graph.relationshipCount).toBe(0);
+  });
+
+  it('handles empty assignments array', () => {
+    processAssignmentsFromExtracted(graph, [], ctx);
+    expect(graph.relationshipCount).toBe(0);
+  });
+});
+
+// ---- processRoutesFromExtracted ----
+
+describe('processRoutesFromExtracted', () => {
+  let graph: ReturnType<typeof createKnowledgeGraph>;
+  let ctx: ResolutionContext;
+
+  beforeEach(() => {
+    graph = createKnowledgeGraph();
+    ctx = createResolutionContext();
+  });
+
+  it('creates CALLS edge for resolved controller method', async () => {
+    ctx.symbols.add(
+      'src/Controllers/UserController.php',
+      'UserController',
+      'Class:src/Controllers/UserController.php:UserController',
+      'Class',
+    );
+    ctx.symbols.add(
+      'src/Controllers/UserController.php',
+      'index',
+      'Method:src/Controllers/UserController.php:index',
+      'Method',
+      {
+        ownerId: 'Class:src/Controllers/UserController.php:UserController',
+      },
+    );
+
+    const routes: ExtractedRoute[] = [
+      {
+        filePath: 'routes/web.php',
+        httpMethod: 'GET',
+        routePath: '/users',
+        controllerName: 'UserController',
+        methodName: 'index',
+        middleware: [],
+        prefix: null,
+        lineNumber: 5,
+      },
+    ];
+
+    await processRoutesFromExtracted(graph, routes, ctx);
+
+    const rels = graph.relationships.filter((r) => r.type === 'CALLS');
+    expect(rels).toHaveLength(1);
+    expect(rels[0].reason).toBe('laravel-route');
+    expect(rels[0].targetId).toContain('index');
+  });
+
+  it('skips routes without controllerName or methodName', async () => {
+    const routes: ExtractedRoute[] = [
+      {
+        filePath: 'routes/web.php',
+        httpMethod: 'GET',
+        routePath: '/fallback',
+        controllerName: null,
+        methodName: null,
+        middleware: [],
+        prefix: null,
+        lineNumber: 1,
+      },
+    ];
+
+    await processRoutesFromExtracted(graph, routes, ctx);
+    expect(graph.relationshipCount).toBe(0);
+  });
+
+  it('creates guessed CALLS edge when method not directly resolved', async () => {
+    ctx.symbols.add(
+      'src/Controllers/PostController.php',
+      'PostController',
+      'Class:src/Controllers/PostController.php:PostController',
+      'Class',
+    );
+
+    const routes: ExtractedRoute[] = [
+      {
+        filePath: 'routes/web.php',
+        httpMethod: 'GET',
+        routePath: '/posts',
+        controllerName: 'PostController',
+        methodName: 'show',
+        middleware: [],
+        prefix: null,
+        lineNumber: 10,
+      },
+    ];
+
+    await processRoutesFromExtracted(graph, routes, ctx);
+
+    const rels = graph.relationships.filter((r) => r.type === 'CALLS');
+    expect(rels).toHaveLength(1);
+    // Guessed edge has lower confidence
+    expect(rels[0].confidence).toBeLessThan(1);
+  });
+
+  it('calls progress callback', async () => {
+    ctx.symbols.add('src/Ctrl.ts', 'Ctrl', 'Class:src/Ctrl.ts:Ctrl', 'Class');
+    ctx.symbols.add('src/Ctrl.ts', 'list', 'Method:src/Ctrl.ts:list', 'Method', {
+      ownerId: 'Class:src/Ctrl.ts:Ctrl',
+    });
+
+    const routes: ExtractedRoute[] = [
+      {
+        filePath: 'routes/api.php',
+        httpMethod: 'GET',
+        routePath: '/items',
+        controllerName: 'Ctrl',
+        methodName: 'list',
+        middleware: [],
+        prefix: null,
+        lineNumber: 1,
+      },
+    ];
+
+    const onProgress = vi.fn();
+    await processRoutesFromExtracted(graph, routes, ctx, onProgress);
+    expect(onProgress).toHaveBeenCalled();
+  });
+
+  it('skips ambiguous global controller resolution', async () => {
+    ctx.symbols.add('src/a/Ctrl.ts', 'Ctrl', 'Class:src/a/Ctrl.ts:Ctrl', 'Class');
+    ctx.symbols.add('src/b/Ctrl.ts', 'Ctrl', 'Class:src/b/Ctrl.ts:Ctrl', 'Class');
+
+    const routes: ExtractedRoute[] = [
+      {
+        filePath: 'routes/api.php',
+        httpMethod: 'GET',
+        routePath: '/items',
+        controllerName: 'Ctrl',
+        methodName: 'list',
+        middleware: [],
+        prefix: null,
+        lineNumber: 1,
+      },
+    ];
+
+    await processRoutesFromExtracted(graph, routes, ctx);
+    expect(graph.relationshipCount).toBe(0);
+  });
+
+  it('handles empty routes array', async () => {
+    await processRoutesFromExtracted(graph, [], ctx);
+    expect(graph.relationshipCount).toBe(0);
   });
 });

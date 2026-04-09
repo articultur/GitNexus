@@ -32,6 +32,7 @@ vi.mock('../../src/mcp/core/lbug-adapter.js', async (importOriginal) => {
 });
 
 import { LocalBackend } from '../../src/mcp/local/local-backend';
+import { impactTool } from '../../src/mcp/local/tools/impact.js';
 
 describe('impact: batching and grouping', () => {
   beforeEach(() => {
@@ -135,7 +136,7 @@ describe('impact: batching and grouping', () => {
 
     const params = { target: 'Target', direction: 'downstream', maxDepth: 1 } as any;
 
-    const res = await (backend as any)._impactImpl(repoHandle, params);
+    const res = await impactTool(repoHandle, params, async () => {});
 
     // Expect 3 chunk calls: 100 + 100 + 50
     expect(chunkSizes.length).toBe(3);
@@ -237,7 +238,7 @@ describe('impact: batching and grouping', () => {
     });
 
     const params = { target: 'TargetA', direction: 'downstream', maxDepth: 1 } as any;
-    const res = await (backend as any)._impactImpl(repoHandle, params);
+    const res = await impactTool(repoHandle, params, async () => {});
 
     // affected_processes should be grouped by entryPointId: ep-1, ep-2, ep-3 => 3 unique
     expect(Array.isArray(res.affected_processes)).toBe(true);
@@ -335,7 +336,7 @@ describe('impact: batching and grouping', () => {
     });
 
     const params = { target: 'TargetX', direction: 'downstream', maxDepth: 1 } as any;
-    const res = await (backend as any)._impactImpl(repoHandle, params);
+    const res = await impactTool(repoHandle, params, async () => {});
 
     // Expect we processed only MAX_CHUNKS chunks (3) -> total ids handled = 300
     expect(chunkSizes.length).toBe(3);
