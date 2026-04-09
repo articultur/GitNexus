@@ -706,6 +706,12 @@ async function buildDegradedResponse(
       } catch (e) {
         logQueryError('detect-changes:degraded-symbols', e);
       }
+    } else if (diffResult.precision === 'file-level') {
+      // For file-level precision, provide drill-down to analyze single file
+      fileInfo.drill_down = {
+        command: `gitnexus detect_changes --file "${file.path}"`,
+        description: `Analyze ${file.path} with symbol-level precision`,
+      };
     }
 
     files.push(fileInfo);
