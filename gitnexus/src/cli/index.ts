@@ -7,6 +7,7 @@ import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { createLazyAction } from './lazy-action.js';
 import { registerGroupCommands } from './group.js';
+import { registerRemoteCommands } from './remote.js';
 
 const _require = createRequire(import.meta.url);
 const pkg = _require('../../package.json');
@@ -66,8 +67,8 @@ program
   .action(createLazyAction(() => import('./status.js'), 'statusCommand'));
 
 program
-  .command('clean')
-  .description('Delete GitNexus index for current repo')
+  .command('clean [name]')
+  .description('Delete GitNexus index for current repo, or for a named repo')
   .option('-f, --force', 'Skip confirmation prompt')
   .option('--all', 'Clean all indexed repos')
   .action(createLazyAction(() => import('./clean.js'), 'cleanCommand'));
@@ -172,6 +173,41 @@ program
   .option('--idle-timeout <seconds>', 'Auto-shutdown after N seconds idle (0 = disabled)', '0')
   .action(createLazyAction(() => import('./eval-server.js'), 'evalServerCommand'));
 
+program
+  .command('use [name]')
+  .description(
+    'Set the default repository for query/context/impact/cypher. No arg shows current default.',
+  )
+  .option('--clear', 'Remove the default repository setting')
+  .action(createLazyAction(() => import('./use.js'), 'useCommand'));
+
+program
+  .command('push [remote-name-or-url]')
+  .description(
+    'Push local index to a remote. Arg is a remote NAME (e.g. origin) or direct URL. Index slot name defaults to the local repo dir name; use --name to override.',
+  )
+  .option(
+    '--name <name>',
+    'Override the index slot name in the remote (default: local repo dir name)',
+  )
+  .option('--token <token>', 'Auth token (injected into HTTPS URL or sent as Bearer header)')
+  .option('--path <path>', 'Path to the git repository (default: current directory)')
+  .option('--force', 'Overwrite remote index without confirmation')
+  .action(createLazyAction(() => import('./push.js'), 'pushCommand'));
+
+program
+  .command('pull <index-name>')
+  .description(
+    'Pull an index from a remote. Arg is the index slot NAME in the remote (e.g. GitNexus). Use --remote to specify which remote.',
+  )
+  .option('--remote <remote>', 'Use this named remote from config (e.g. origin)')
+  .option('--name <name>', 'Override the local index name after download')
+  .option('--token <token>', 'Auth token (injected into HTTPS URL or sent as Bearer header)')
+  .option('-f, --force', 'Overwrite existing local index')
+  .option('--path <path>', 'Path to the git repository (default: current directory)')
+  .action(createLazyAction(() => import('./pull.js'), 'pullCommand'));
+
+registerRemoteCommands(program);
 registerGroupCommands(program);
 
 program.parse(process.argv);
