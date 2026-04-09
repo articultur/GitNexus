@@ -1,5 +1,10 @@
 /**
  * Impact analysis tools — BFS-based impact traversal.
+ *
+ * Supports adaptive layered output for large result sets:
+ * - Full mode: complete output for small results (≤400 items)
+ * - Transition mode: hybrid output for medium results (400-600 items)
+ * - Layered mode: paginated output for large results (>600 items)
  */
 
 import { executeParameterized } from '../../../core/lbug/pool-adapter.js';
@@ -11,8 +16,34 @@ import {
   isTestFilePath,
   computeImpactScore,
   createEvidenceBuilder,
+  getImpactOutputMode,
+  IMPACT_SCALE_CONFIGS,
+  IMPACT_THRESHOLDS,
+  MAX_TRAVERSAL_NODES,
 } from './shared.js';
 import type { ImpactParams, RepoHandle, ImpactedItem } from './shared.js';
+
+// Simple in-memory snapshot cache for pagination consistency
+// Key: snapshot_id, Value: { impacted: any[], grouped: Record<number, any[]>, timestamp: number }
+const snapshotCache = new Map<
+  string,
+  {
+    impacted: any[];
+    grouped: Record<number, any[]>;
+    timestamp: number;
+  }
+>();
+
+// Clean up snapshots older than 5 minutes
+const SNAPSHOT_TTL_MS = 5 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, data] of snapshotCache.entries()) {
+    if (now - data.timestamp > SNAPSHOT_TTL_MS) {
+      snapshotCache.delete(id);
+    }
+  }
+}, 60000);
 
 export async function impactTool(
   repo: RepoHandle,
@@ -75,6 +106,11 @@ async function impactImpl(
   const includeTests = params.includeTests ?? false;
   const minConfidence = params.minConfidence ?? 0;
   const include_content = params.include_content ?? false;
+
+  // New parameters for adaptive layered output
+  const detailMode = params.detail ?? 'auto';
+  const pagination = params.page;
+  const snapshotId = params.snapshot_id;
 
   // Resolve target by name, preferring Class/Interface over Constructor
   let sym: any = null;
@@ -176,11 +212,20 @@ async function impactImpl(
     include_evidence,
     include_content,
     file_path: params.file_path,
+    // New parameters for adaptive output
+    detailMode,
+    pagination,
+    snapshotId,
   });
 }
 
 /**
  * Shared BFS traversal for impact analysis (name-resolved or UID-resolved symbol).
+ *
+ * Supports adaptive layered output for large result sets:
+ * - Full mode: complete output for small results (≤400 items)
+ * - Transition mode: hybrid output for medium results (400-600 items)
+ * - Layered mode: paginated output for large results (>600 items)
  */
 export async function runImpactBFS(
   repo: RepoHandle,
@@ -195,6 +240,10 @@ export async function runImpactBFS(
     include_evidence: boolean;
     include_content: boolean;
     file_path?: string;
+    // New parameters for adaptive output
+    detailMode?: 'auto' | 'summary' | 'full';
+    pagination?: { depth: number; offset?: number; limit?: number };
+    snapshotId?: string;
   },
 ): Promise<any> {
   const {
@@ -205,6 +254,9 @@ export async function runImpactBFS(
     include_evidence,
     include_content,
     file_path,
+    detailMode = 'auto',
+    pagination,
+    snapshotId,
   } = opts;
   const effectiveMinConf = minConfidence > 0 ? minConfidence : 0;
 
@@ -262,6 +314,12 @@ export async function runImpactBFS(
   }
 
   for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
+    // Computation truncation: stop if we've exceeded max traversal nodes
+    if (visited.size >= MAX_TRAVERSAL_NODES) {
+      traversalComplete = false;
+      break;
+    }
+
     const nextFrontier: string[] = [];
 
     const relTypeFilter = relationTypes.map((t) => `r.type = '${t}'`).join(' OR ');
@@ -284,6 +342,12 @@ export async function runImpactBFS(
       });
 
       for (const rel of related) {
+        // Computation truncation: stop adding items if we've exceeded max
+        if (visited.size >= MAX_TRAVERSAL_NODES) {
+          traversalComplete = false;
+          break;
+        }
+
         const relId = rel.id || rel[1];
         const filePath = rel.filePath || rel[4] || '';
 
@@ -314,6 +378,11 @@ export async function runImpactBFS(
             },
           });
         }
+      }
+
+      // Break outer loop if computation truncated
+      if (!traversalComplete && visited.size >= MAX_TRAVERSAL_NODES) {
+        break;
       }
     } catch (e) {
       logQueryError('impact:depth-traversal', e);
@@ -626,7 +695,50 @@ export async function runImpactBFS(
     evidenceBuilder.addExclusion('BFS truncated: maxDepth or chunk limit reached');
   }
 
-  return {
+  // ── Adaptive Layered Output ────────────────────────────────────────────────
+  // Determine output mode based on result count and user preference
+  const { mode, scale } = getImpactOutputMode(impacted.length, detailMode);
+  const scaleConfig = IMPACT_SCALE_CONFIGS[scale];
+
+  // Handle pagination request for layered mode
+  if (pagination && snapshotId) {
+    const cached = snapshotCache.get(snapshotId);
+    if (cached) {
+      const { depth, offset = 0, limit = 100 } = pagination;
+      const depthItems = cached.grouped[depth] || [];
+      const paginatedItems = depthItems.slice(offset, offset + limit);
+
+      return {
+        _version: 2,
+        _mode: 'layered',
+        _scale: scale,
+        _info: {
+          snapshot_id: snapshotId,
+          depth,
+          offset,
+          limit,
+          total_at_depth: depthItems.length,
+          has_more: offset + limit < depthItems.length,
+        },
+        items: paginatedItems,
+      };
+    }
+    // Snapshot expired or invalid, continue with fresh query
+  }
+
+  // Generate snapshot ID for large results
+  let newSnapshotId: string | undefined;
+  if (mode === 'layered' && impacted.length > IMPACT_THRESHOLDS.TRANSITION_MAX) {
+    newSnapshotId = `snap_${symId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    snapshotCache.set(newSnapshotId, {
+      impacted,
+      grouped,
+      timestamp: Date.now(),
+    });
+  }
+
+  // Build base result object (common to all modes)
+  const baseResult = {
     target: {
       id: symId,
       name: sym.name || sym[1],
@@ -635,7 +747,7 @@ export async function runImpactBFS(
     },
     direction,
     impactedCount: impacted.length,
-    risk: scoreResult.risk, // Use unified risk level
+    risk: scoreResult.risk,
     score_v2: {
       score: scoreResult.score,
       risk: scoreResult.risk,
@@ -651,30 +763,125 @@ export async function runImpactBFS(
     },
     affected_processes: affectedProcesses,
     affected_modules: affectedModules,
-    byDepth: grouped,
-    ...(include_evidence && {
-      evidence: evidenceBuilder.build(),
-      evidence_legacy: {
-        explanation:
-          'Impact is computed by breadth-first traversal over graph relations from the target symbol using the selected relation types.',
-        relation_types: relationTypes,
-        traversal: impacted.map((item) => ({
-          depth: item.depth,
-          relationType: item.relationType,
-          confidence: item.confidence,
-          reason: item.reason,
-          from: item.source,
-          to: {
-            id: item.id,
-            name: item.name,
-            filePath: item.filePath,
-            type: item.type,
-            ...(include_content &&
-              contentMap.has(String(item.id)) && { content: contentMap.get(String(item.id)) }),
+  };
+
+  // ── Mode-specific output formatting ──────────────────────────────────────
+  if (mode === 'full') {
+    // Full mode: complete output for small results
+    return {
+      _version: 2,
+      _mode: 'full',
+      _scale: scale,
+      ...baseResult,
+      byDepth: grouped,
+      ...(include_evidence &&
+        scaleConfig.includeEvidence && {
+          evidence: evidenceBuilder.build(),
+          evidence_legacy: {
+            explanation:
+              'Impact is computed by breadth-first traversal over graph relations from the target symbol using the selected relation types.',
+            relation_types: relationTypes,
+            traversal: impacted.map((item) => ({
+              depth: item.depth,
+              relationType: item.relationType,
+              confidence: item.confidence,
+              reason: item.reason,
+              from: item.source,
+              to: {
+                id: item.id,
+                name: item.name,
+                filePath: item.filePath,
+                type: item.type,
+                ...(include_content &&
+                  scaleConfig.includeContent &&
+                  contentMap.has(String(item.id)) && { content: contentMap.get(String(item.id)) }),
+              },
+            })),
           },
-        })),
+        }),
+    };
+  }
+
+  if (mode === 'transition') {
+    // Transition mode: hybrid output for medium results
+    // - Include full byDepth but truncate each depth level
+    // - Include evidence but limit paths
+    const truncatedByDepth: Record<number, any[]> = {};
+    for (const [depth, items] of Object.entries(grouped)) {
+      truncatedByDepth[Number(depth)] = items.slice(0, scaleConfig.maxItemsPerDepth);
+    }
+
+    return {
+      _version: 2,
+      _mode: 'transition',
+      _scale: scale,
+      _info: {
+        truncated: true,
+        max_items_per_depth: scaleConfig.maxItemsPerDepth,
       },
-    }),
+      ...baseResult,
+      byDepth: truncatedByDepth,
+      ...(include_evidence && {
+        evidence: evidenceBuilder.build(),
+        evidence_legacy: {
+          explanation:
+            'Impact is computed by breadth-first traversal over graph relations from the target symbol using the selected relation types.',
+          relation_types: relationTypes,
+          traversal: impacted.slice(0, 500).map((item) => ({
+            depth: item.depth,
+            relationType: item.relationType,
+            confidence: item.confidence,
+            reason: item.reason,
+            from: item.source,
+            to: {
+              id: item.id,
+              name: item.name,
+              filePath: item.filePath,
+              type: item.type,
+            },
+          })),
+        },
+      }),
+    };
+  }
+
+  // Layered mode: paginated output for large results
+  // Return depth summary with pagination hints
+  const depthSummary: Record<number, { count: number; sample: any[] }> = {};
+  for (const [depth, items] of Object.entries(grouped)) {
+    const depthNum = Number(depth);
+    if (depthNum <= scaleConfig.maxDepthLayers) {
+      depthSummary[depthNum] = {
+        count: items.length,
+        sample: items.slice(0, 5).map((item: any) => ({
+          name: item.name,
+          type: item.type,
+          filePath: item.filePath,
+          relationType: item.relationType,
+        })),
+      };
+    }
+  }
+
+  // Include first page of depth 1 by default
+  const firstPageItems = (grouped[1] || []).slice(0, scaleConfig.itemsPerPage);
+
+  return {
+    _version: 2,
+    _mode: 'layered',
+    _scale: scale,
+    _info: {
+      snapshot_id: newSnapshotId,
+      total_depths: Object.keys(grouped).length,
+      max_depth_available: scaleConfig.maxDepthLayers,
+      items_per_page: scaleConfig.itemsPerPage,
+      pagination_hint: `Use page={{depth: N, offset: 0, limit: ${scaleConfig.itemsPerPage}}} with snapshot_id to paginate`,
+    },
+    ...baseResult,
+    depth_summary: depthSummary,
+    // Include first page of depth 1 for convenience
+    items: firstPageItems,
+    // Omit full byDepth and evidence for layered mode
   };
 }
 
@@ -693,6 +900,10 @@ export async function impactByUidTool(
     includeTests: boolean;
     include_evidence?: boolean;
     include_content?: boolean;
+    // New parameters for adaptive output
+    detailMode?: 'auto' | 'summary' | 'full';
+    pagination?: { depth: number; offset?: number; limit?: number };
+    snapshotId?: string;
   },
   ensureInitialized: (id: string) => Promise<void>,
   getRepo: (id: string) => RepoHandle | undefined,
@@ -767,6 +978,10 @@ export async function impactByUidTool(
       minConfidence: opts.minConfidence,
       include_evidence: opts.include_evidence ?? true,
       include_content: opts.include_content ?? false,
+      // New parameters for adaptive output
+      detailMode: opts.detailMode,
+      pagination: opts.pagination,
+      snapshotId: opts.snapshotId,
     });
   } catch (e) {
     logQueryError('impactByUid:bfs', e);
