@@ -112,6 +112,16 @@ This project is indexed by GitNexus as **${projectName}** (${stats.nodes || 0} s
 - **Extracting/Splitting**: MUST run \`gitnexus_context({name: "target"})\` to see all incoming/outgoing refs, then \`gitnexus_impact({target: "target", direction: "upstream"})\` to find all external callers before moving code.
 - After any refactor: run \`gitnexus_detect_changes({scope: "all"})\` to verify only expected files changed.
 
+## When Analyzing Remote Code (Commit / PR Review)
+
+When asked to review a commit, PR, or any non-local change — NEVER analyze without fetching actual changes first:
+
+1. **Retrieve** — Use available remote code tools to fetch the diff, changed files list, and commit metadata.
+2. **Extract key symbols** — From the diff, identify: modified functions/methods, changed class definitions, exported API changes, and altered imports.
+3. **Query each symbol** — \`gitnexus_context({name: "symbolName"})\` for callers/callees; \`gitnexus_query({query: "symbolName"})\` for related execution flows.
+4. **Assess blast radius** — \`gitnexus_impact({target: "symbolName", direction: "upstream"})\` for each changed public API. Report risk level and list d=1 (WILL BREAK) dependents.
+5. **Report** — Summary of changes, affected symbols with risk level, and recommendations.
+
 ## Never Do
 
 - NEVER edit a function, class, or method without first running \`gitnexus_impact\` on it.
