@@ -919,11 +919,13 @@ async function runChunkedParseAndResolve(
             );
           }
         }
-        deferredWorkerCalls.push(...chunkWorkerData.calls);
-        deferredWorkerHeritage.push(...chunkWorkerData.heritage);
-        deferredConstructorBindings.push(...chunkWorkerData.constructorBindings);
+        // Use concat (avoids spread-operator stack overflow on very large arrays)
+        for (const item of chunkWorkerData.calls) deferredWorkerCalls.push(item);
+        for (const item of chunkWorkerData.heritage) deferredWorkerHeritage.push(item);
+        for (const item of chunkWorkerData.constructorBindings)
+          deferredConstructorBindings.push(item);
         if (chunkWorkerData.assignments?.length) {
-          deferredAssignments.push(...chunkWorkerData.assignments);
+          for (const item of chunkWorkerData.assignments) deferredAssignments.push(item);
         }
 
         // Heritage + Routes — calls deferred until all chunks have contributed heritage
