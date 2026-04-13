@@ -7,7 +7,8 @@ def test_delta_calculation():
     """测试 delta 计算"""
     scorer = DualScorer()
 
-    baseline_pred = {"files": ["src/tls.c", "src/ssl.c"], "symbols": ["connTLSGetPeerCert"]}
+    # Baseline predicts wrong file (ssl.c), gitnexus predicts correct file (tls.c)
+    baseline_pred = {"files": ["src/ssl.c"], "symbols": ["someFunc"]}
     gitnexus_pred = {"files": ["src/tls.c"], "symbols": ["connTLSGetPeerCert", "SSL_get_peer_certificate", "X509_free"]}
 
     result = scorer.compare(
@@ -18,3 +19,5 @@ def test_delta_calculation():
 
     assert result.baseline_f1 < result.gitnexus_f1
     assert result.delta_f1 > 0
+    assert result.gitnexus_f1 == 1.0  # Perfect file match
+    assert result.baseline_f1 == 0.0  # No match
