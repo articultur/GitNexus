@@ -152,11 +152,11 @@ def run_execution(dataset_path: str, run_dir: str):
             print(f"  ERROR: worktree failed: {worktree.error}")
             errors += 1
             error_state = {"error": worktree.error, "phase": "worktree"}
-            (raw_dir / f"{case_id}_baseline.json").write_text(json.dumps(error_state))
-            (raw_dir / f"{case_id}_gitnexus.json").write_text(json.dumps(error_state))
+            for grp in ("baseline", "search_agent", "gitnexus"):
+                (raw_dir / f"{case_id}_{grp}.json").write_text(json.dumps(error_state))
             continue
 
-        for group in ("baseline", "gitnexus"):
+        for group in ("baseline", "search_agent", "gitnexus"):
             print(f"  {group}...")
             prompt = build_prompt(case, group)
             result = executor.execute(prompt, worktree.path, group)
