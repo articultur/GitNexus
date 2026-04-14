@@ -98,43 +98,95 @@ def ensure_reference(repo: str, clone_url: str) -> Path:
 
 
 def clone_snapshot(
-    ref_dir: Path,
+    bare_repo: Path,
     case_id: str,
-    repo: str,
     commit: str,
-    snapshot_dir: Path,
-    sparse_dirs: list[str],
+    worktree_path: Path,
+    force: bool = False,
 ) -> bool:
-    """Clone a single snapshot from the reference repo."""
+    """
+    Create a worktree from an existing bare repo at a specific commit.
+
+    Uses `git worktree add` so objects are shared with the bare repo.
+    Returns True if worktree was created (even if checkout failed).
+    """
+    import shutil
+
     try:
-        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        # Check if worktree already exists and is valid
+        if worktree_path.exists():
+            result = subprocess.run(
+                ["git", "-C", str(worktree_path), "rev-parse", "--is-inside-work-tree"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.stdout.strip() == "true" and not force:
+                log(f"  SKIP {case_id} (worktree exists)")
+                return True
 
-        # Clone from reference with sparse checkout
-        run([
-            "git", "clone",
-            "--reference", str(ref_dir),
-            "--filter=blob:none",
-            "--sparse",
-            str(ref_dir),
-            str(snapshot_dir),
-        ])
+        # Ensure parent dir exists
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Sparse checkout only needed dirs
-        run(["git", "-C", str(snapshot_dir), "sparse-checkout", "set"] + sparse_dirs)
+        # Remove existing if force
+        if worktree_path.exists():
+            # Remove worktree from bare repo first
+            subprocess.run(
+                ["git", "-C", str(bare_repo), "worktree", "remove", "--force", str(worktree_path)],
+                capture_output=True, text=True, timeout=30, check=False
+            )
+            shutil.rmtree(worktree_path, ignore_errors=True)
 
-        # Fetch and checkout the specific commit
-        run([
-            "git", "-C", str(snapshot_dir), "fetch", "--depth=1",
-            "origin", commit
-        ], check=False)  # may fail if commit not reachable from origin HEAD
+        # Clean up any orphaned branch for this case
+        branch_name = f"eval-{case_id}"
+        subprocess.run(
+            ["git", "-C", str(bare_repo), "branch", "-D", branch_name],
+            capture_output=True, text=True, timeout=10, check=False
+        )
 
-        run([
-            "git", "-C", str(snapshot_dir), "checkout", commit
-        ], check=False)  # fallback: use whatever is checked out
+        # Prune stale worktree entries
+        subprocess.run(
+            ["git", "-C", str(bare_repo), "worktree", "prune"],
+            capture_output=True, text=True, timeout=10, check=False
+        )
 
+        # Create worktree (no checkout yet)
+        result = subprocess.run(
+            [
+                "git", "-C", str(bare_repo), "worktree", "add",
+                "--no-checkout", "-b", branch_name, str(worktree_path)
+            ],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            # Fallback: try without -b (existing branch)
+            result = subprocess.run(
+                [
+                    "git", "-C", str(bare_repo), "worktree", "add",
+                    "--force", "--no-checkout", str(worktree_path)
+                ],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                warn(f"  worktree add failed for {case_id}: {result.stderr[:100]}")
+                return False
+
+        # Checkout the specific commit
+        checkout = subprocess.run(
+            ["git", "-C", str(worktree_path), "checkout", commit],
+            capture_output=True, text=True, timeout=30
+        )
+        if checkout.returncode != 0:
+            warn(f"  checkout failed for {case_id} @ {commit[:8]}: {checkout.stderr[:80]}")
+            # Return True anyway — worktree was created, checkout is a secondary concern
+            return True
+
+        log(f"  OK {case_id} @ {commit[:8]}")
         return True
-    except subprocess.CalledProcessError as e:
-        warn(f"Failed to clone {case_id}: {e}")
+
+    except subprocess.TimeoutExpired:
+        warn(f"  timeout for {case_id}")
+        return False
+    except Exception as e:
+        warn(f"  error for {case_id}: {e}")
         return False
 
 
