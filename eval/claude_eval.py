@@ -21,7 +21,7 @@ from typing import List, Optional
 
 from eval.lib.agent_executor import AgentExecutor, classify_failure
 from eval.lib.difficulty_scorer import DifficultyScorer
-from eval.lib.dual_scorer import DualScorer
+from eval.lib.dual_scorer import DualScorer, TripleScorer, breakdown_tool_calls
 from eval.lib.stats import bootstrap_ci, cohen_d, wilcoxon_signed_rank_test, compute_dimension_stats
 from eval.lib.worktree_manager import WorktreeManager
 
@@ -229,7 +229,7 @@ def run_scoring(run_dir: str, results_dir: str, cleanup: bool = False):
     results_file = results_path / f"results-{meta.get('run_id', time.strftime('%Y%m%d-%H%M%S'))}.json"
 
     difficulty_scorer = DifficultyScorer()
-    dual_scorer = DualScorer()
+    triple_scorer = TripleScorer()
 
     results = []
     summary = {"total": len(case_ids), "scored": 0, "errors": 0}
@@ -242,100 +242,136 @@ def run_scoring(run_dir: str, results_dir: str, cleanup: bool = False):
         print(f"[{i}/{len(case_ids)}] Scoring: {case_id}")
 
         b_path = raw_dir / f"{case_id}_baseline.json"
+        s_path = raw_dir / f"{case_id}_search_agent.json"
         g_path = raw_dir / f"{case_id}_gitnexus.json"
 
-        if not b_path.exists() or not g_path.exists():
+        if not b_path.exists() or not s_path.exists() or not g_path.exists():
             summary["errors"] += 1
             continue
 
         b_data = json.loads(b_path.read_text())
+        s_data = json.loads(s_path.read_text())
         g_data = json.loads(g_path.read_text())
 
-        if not b_data.get("success") or not g_data.get("success"):
+        if not b_data.get("success") or not s_data.get("success") or not g_data.get("success"):
             summary["errors"] += 1
             results.append({"case_id": case_id, "error": "execution_failed",
-                          "baseline_error": b_data.get("error"), "gitnexus_error": g_data.get("error")})
+                          "baseline_error": b_data.get("error"),
+                          "search_agent_error": s_data.get("error"),
+                          "gitnexus_error": g_data.get("error")})
             continue
 
         case = cases.get(case_id, {})
         ground_truth = case.get("ground_truth", {})
         diff = difficulty_scorer.score(case)
 
-        dr = dual_scorer.compare(
-            b_data.get("prediction", {}), g_data.get("prediction", {}),
+        tr = triple_scorer.compare(
+            b_data.get("prediction", {}), s_data.get("prediction", {}), g_data.get("prediction", {}),
             ground_truth, diff.level, case=case,
         )
 
+        # Tool compliance breakdown
+        baseline_tool_breakdown = breakdown_tool_calls(b_data.get("tool_sequence", []))
+        search_agent_tool_breakdown = breakdown_tool_calls(s_data.get("tool_sequence", []))
+        gitnexus_tool_breakdown = breakdown_tool_calls(g_data.get("tool_sequence", []))
+
         results.append({
             "case_id": case_id,
-            "difficulty": dr.difficulty.value,
+            "difficulty": tr.difficulty.value,
             "language": case.get("language", ""),
             "task_type": case.get("task_type", ""),
             "repo": case.get("repo", ""),
-            "is_significant": dr.is_significant,
-            # Composite
-            "baseline_impact": dr.baseline_impact,
-            "gitnexus_impact": dr.gitnexus_impact,
-            "delta_impact": dr.delta_impact,
+            "is_significant": tr.is_significant,
+            # Composite 3-arm
+            "baseline_impact": tr.baseline_impact,
+            "search_agent_impact": tr.search_agent_impact,
+            "gitnexus_impact": tr.gitnexus_impact,
+            "delta_tool": tr.delta_tool,
+            "delta_workflow": tr.delta_workflow,
+            "delta_total": tr.delta_total,
             # Per-dimension
-            "baseline_file": _serialize_prf(dr.baseline_file_prf),
-            "gitnexus_file": _serialize_prf(dr.gitnexus_file_prf),
-            "baseline_symbol": _serialize_prf(dr.baseline_symbol_prf),
-            "gitnexus_symbol": _serialize_prf(dr.gitnexus_symbol_prf),
-            "baseline_chain": dr.baseline_chain_score,
-            "gitnexus_chain": dr.gitnexus_chain_score,
-            "baseline_data_flow": _serialize_df(dr.baseline_data_flow),
-            "gitnexus_data_flow": _serialize_df(dr.gitnexus_data_flow),
+            "baseline_file": _serialize_prf(tr.baseline_file_prf),
+            "search_agent_file": _serialize_prf(tr.search_agent_file_prf),
+            "gitnexus_file": _serialize_prf(tr.gitnexus_file_prf),
+            "baseline_symbol": _serialize_prf(tr.baseline_symbol_prf),
+            "search_agent_symbol": _serialize_prf(tr.search_agent_symbol_prf),
+            "gitnexus_symbol": _serialize_prf(tr.gitnexus_symbol_prf),
+            "baseline_chain": tr.baseline_chain_score,
+            "search_agent_chain": tr.search_agent_chain_score,
+            "gitnexus_chain": tr.gitnexus_chain_score,
+            "baseline_data_flow": _serialize_df(tr.baseline_data_flow),
+            "search_agent_data_flow": _serialize_df(tr.search_agent_data_flow),
+            "gitnexus_data_flow": _serialize_df(tr.gitnexus_data_flow),
             # MRR
-            "baseline_mrr": dr.baseline_mrr,
-            "gitnexus_mrr": dr.gitnexus_mrr,
+            "baseline_mrr": tr.baseline_mrr,
+            "search_agent_mrr": tr.search_agent_mrr,
+            "gitnexus_mrr": tr.gitnexus_mrr,
             # Symbol match types
-            "baseline_symbol_types": dr.baseline_symbol_match_types,
-            "gitnexus_symbol_types": dr.gitnexus_symbol_match_types,
+            "baseline_symbol_types": tr.baseline_symbol_match_types,
+            "search_agent_symbol_types": tr.search_agent_symbol_match_types,
+            "gitnexus_symbol_types": tr.gitnexus_symbol_match_types,
             # FN/FP
-            "baseline_fn_files": dr.baseline_file_prf.fn_count,
-            "gitnexus_fn_files": dr.gitnexus_file_prf.fn_count,
-            "baseline_fp_files": dr.baseline_file_prf.fp_count,
-            "gitnexus_fp_files": dr.gitnexus_file_prf.fp_count,
+            "baseline_fn_files": tr.baseline_file_prf.fn_count,
+            "search_agent_fn_files": tr.search_agent_file_prf.fn_count,
+            "gitnexus_fn_files": tr.gitnexus_file_prf.fn_count,
+            "baseline_fp_files": tr.baseline_file_prf.fp_count,
+            "search_agent_fp_files": tr.search_agent_file_prf.fp_count,
+            "gitnexus_fp_files": tr.gitnexus_file_prf.fp_count,
             # Timing
             "baseline_duration_s": b_data.get("duration_s", 0),
+            "search_agent_duration_s": s_data.get("duration_s", 0),
             "gitnexus_duration_s": g_data.get("duration_s", 0),
             "baseline_tool_calls": b_data.get("tool_calls", 0),
+            "search_agent_tool_calls": s_data.get("tool_calls", 0),
             "gitnexus_tool_calls": g_data.get("tool_calls", 0),
+            # Tool compliance
+            "baseline_tool_breakdown": baseline_tool_breakdown,
+            "search_agent_tool_breakdown": search_agent_tool_breakdown,
+            "gitnexus_tool_breakdown": gitnexus_tool_breakdown,
             # Legacy
-            "baseline_f1": dr.baseline_f1,
-            "gitnexus_f1": dr.gitnexus_f1,
-            "delta_f1": dr.delta_f1,
+            "baseline_f1": tr.baseline_f1,
+            "search_agent_f1": tr.search_agent_f1,
+            "gitnexus_f1": tr.gitnexus_f1,
+            "delta_f1": tr.delta_f1,
         })
         summary["scored"] += 1
-        print(f"  Done: impact={dr.baseline_impact:.2f} vs {dr.gitnexus_impact:.2f} (delta={dr.delta_impact:+.2f})")
+        print(f"  Done: {tr.baseline_impact:.2f} vs {tr.search_agent_impact:.2f} vs {tr.gitnexus_impact:.2f} (tool={tr.delta_tool:+.2f}, wf={tr.delta_workflow:+.2f})")
 
     # Summary stats
     scored = [r for r in results if "error" not in r]
     if scored:
         n = len(scored)
         summary["avg_baseline_impact"] = sum(r["baseline_impact"] for r in scored) / n
+        summary["avg_search_agent_impact"] = sum(r["search_agent_impact"] for r in scored) / n
         summary["avg_gitnexus_impact"] = sum(r["gitnexus_impact"] for r in scored) / n
-        summary["avg_delta_impact"] = sum(r["delta_impact"] for r in scored) / n
+        summary["avg_delta_tool"] = sum(r["delta_tool"] for r in scored) / n
+        summary["avg_delta_workflow"] = sum(r["delta_workflow"] for r in scored) / n
+        summary["avg_delta_total"] = sum(r["delta_total"] for r in scored) / n
         summary["avg_baseline_mrr"] = sum(r["baseline_mrr"] for r in scored) / n
+        summary["avg_search_agent_mrr"] = sum(r["search_agent_mrr"] for r in scored) / n
         summary["avg_gitnexus_mrr"] = sum(r["gitnexus_mrr"] for r in scored) / n
         summary["total_baseline_fn"] = sum(r["baseline_fn_files"] for r in scored)
+        summary["total_search_agent_fn"] = sum(r["search_agent_fn_files"] for r in scored)
         summary["total_gitnexus_fn"] = sum(r["gitnexus_fn_files"] for r in scored)
         summary["total_baseline_fp"] = sum(r["baseline_fp_files"] for r in scored)
+        summary["total_search_agent_fp"] = sum(r["search_agent_fp_files"] for r in scored)
         summary["total_gitnexus_fp"] = sum(r["gitnexus_fp_files"] for r in scored)
-        summary["gitnexus_win_rate"] = sum(1 for r in scored if r["delta_impact"] > 0) / n
-        summary["baseline_win_rate"] = sum(1 for r in scored if r["delta_impact"] < 0) / n
-        summary["tie_rate"] = sum(1 for r in scored if r["delta_impact"] == 0) / n
+        summary["gitnexus_win_rate"] = sum(1 for r in scored if r["delta_total"] > 0) / n
+        summary["search_agent_win_rate"] = sum(1 for r in scored if r["delta_workflow"] > 0) / n
+        summary["baseline_win_rate"] = sum(1 for r in scored if r["delta_total"] < 0) / n
+        summary["tie_rate"] = sum(1 for r in scored if r["delta_total"] == 0) / n
         # File recall averages
         summary["avg_baseline_file_recall"] = sum(r["baseline_file"]["recall"] for r in scored) / n
+        summary["avg_search_agent_file_recall"] = sum(r["search_agent_file"]["recall"] for r in scored) / n
         summary["avg_gitnexus_file_recall"] = sum(r["gitnexus_file"]["recall"] for r in scored) / n
         # Legacy
         summary["avg_baseline_f1"] = sum(r["baseline_f1"] for r in scored) / n
+        summary["avg_search_agent_f1"] = sum(r["search_agent_f1"] for r in scored) / n
         summary["avg_gitnexus_f1"] = sum(r["gitnexus_f1"] for r in scored) / n
 
-        # Statistical significance
+        # Statistical significance (using delta_total)
         if n >= 3:
-            deltas = [r["delta_impact"] for r in scored]
+            deltas = [r["delta_total"] for r in scored]
             ci_low, ci_high = bootstrap_ci(deltas)
             wilcoxon = wilcoxon_signed_rank_test(deltas)
             effect = cohen_d(deltas)
