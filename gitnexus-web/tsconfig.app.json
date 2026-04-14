@@ -17,10 +17,10 @@
     "baseUrl": "./",
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/*": ["../shared/*"]
+      "@shared/*": ["../gitnexus-shared/src/*"]
     },
     "types": ["vite/client"]
   },
-  "include": ["src", "../shared"],
+  "include": ["src", "../gitnexus-shared/src"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

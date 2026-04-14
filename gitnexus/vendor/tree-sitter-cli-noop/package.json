@@ -1,0 +1,5 @@
+{
+  "name": "tree-sitter-cli",
+  "version": "0.23.2",
+  "description": "No-op stub: tree-sitter-cli binary is not needed at runtime. Only required for parser development (tree-sitter build --wasm)."
+}
