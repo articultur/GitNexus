@@ -34,6 +34,33 @@ CACHE_DIR = SCRIPT_DIR / ".cache" / "refs"
 SNAPSHOTS_DIR = SCRIPT_DIR / "snapshots"
 
 
+# ─── Path Mapping ───────────────────────────────────────────────────────────────
+
+
+def repo_to_bare_name(repo: str) -> str:
+    """'owner/repo' -> 'owner__repo.git'"""
+    return f"{repo.replace('/', '__')}.git"
+
+
+def repo_to_bare_path(repo: str, snapshots_dir: Path) -> Path:
+    """Return bare repo path for a given repo."""
+    return snapshots_dir / repo_to_bare_name(repo)
+
+
+def case_to_worktree_path(repo: str, case_id: str, snapshots_dir: Path) -> Path:
+    """Return worktree path for a given case."""
+    return snapshots_dir / repo_to_bare_name(repo) / "worktrees" / case_id
+
+
+def bare_repo_clone_url(repo: str) -> str:
+    """Build GitHub clone URL with optional token."""
+    clone_url = f"https://github.com/{repo}.git"
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if token:
+        clone_url = f"https://{token}@github.com/{repo}.git"
+    return clone_url
+
+
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
 
