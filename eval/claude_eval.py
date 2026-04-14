@@ -169,6 +169,7 @@ def run_execution(dataset_path: str, run_dir: str):
                 "error": result.error,
                 "tool_calls": result.tool_calls,
                 "tool_sequence": result.tool_sequence,
+                "tool_call_records": result.tool_call_records,
                 "failure_bucket": result.failure_bucket,
             }, indent=2))
 
@@ -270,10 +271,10 @@ def run_scoring(run_dir: str, results_dir: str, cleanup: bool = False):
             ground_truth, diff.level, case=case,
         )
 
-        # Tool compliance breakdown
-        baseline_tool_breakdown = breakdown_tool_calls(b_data.get("tool_sequence", []))
-        search_agent_tool_breakdown = breakdown_tool_calls(s_data.get("tool_sequence", []))
-        gitnexus_tool_breakdown = breakdown_tool_calls(g_data.get("tool_sequence", []))
+        # Tool compliance breakdown (use tool_call_records for full arg info)
+        baseline_tool_breakdown = breakdown_tool_calls(b_data.get("tool_call_records", b_data.get("tool_sequence", [])))
+        search_agent_tool_breakdown = breakdown_tool_calls(s_data.get("tool_call_records", s_data.get("tool_sequence", [])))
+        gitnexus_tool_breakdown = breakdown_tool_calls(g_data.get("tool_call_records", g_data.get("tool_sequence", [])))
 
         results.append({
             "case_id": case_id,

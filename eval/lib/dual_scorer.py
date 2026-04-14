@@ -544,10 +544,18 @@ class DualScorer:
 # ─── Tool compliance helper ──────────────────────────────────────────────────
 
 def breakdown_tool_calls(records: list) -> dict:
-    """Count tool usage from execution records."""
+    """Count tool usage from execution records.
+
+    Accepts either:
+    - tool_call_records: list of {"tool": "Name", "args": {...}} dicts
+    - tool_sequence: list of tool name strings
+    """
     counts = {}
     for r in records:
-        tool = r.get("tool", "unknown")
+        if isinstance(r, dict):
+            tool = r.get("tool", "unknown")
+        else:
+            tool = str(r) if r else "unknown"
         counts[tool] = counts.get(tool, 0) + 1
     return counts
 
