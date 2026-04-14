@@ -189,11 +189,26 @@ class AgentExecutor:
                                 if name.startswith("mcp__gitnexus__"):
                                     name = "gitnexus_" + name[len("mcp__gitnexus__"):]
                                 inp = item.get("input", {})
-                                tool_records.append({"tool": name, "args": inp})
+                                tool_id = item.get("id", "")
+                                tool_records.append({"id": tool_id, "tool": name, "args": inp})
                                 tool_sequence.append(name)
 
                 elif t == "result":
                     final_result = obj.get("result", "")
+
+                # Capture tool results (output from tool calls)
+                elif t == "user":
+                    content = obj.get("message", {}).get("content", [])
+                    if isinstance(content, list):
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "tool_result":
+                                tool_id = item.get("tool_use_id", "")
+                                result_content = item.get("content", "")
+                                # Attach result to matching tool record
+                                for rec in tool_records:
+                                    if rec.get("id") == tool_id:
+                                        rec["result"] = result_content
+                                        break
 
             # Read remaining stderr
             stderr_output = proc.stderr.read()
