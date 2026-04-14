@@ -60,14 +60,13 @@ class AgentExecutor:
 
     def _build_command(self, prompt: str, group: str) -> list:
         if group == "baseline":
-            # Baseline: bare mode, no gitnexus tools
             base = ["claude", "-p", "--bare", "--dangerously-skip-permissions",
+                    "--verbose", "--output-format", "stream-json",
                     "--disallowed-tools", ",".join(GITNEXUS_TOOLS),
                     "--disable-slash-commands"]
         else:
-            # GitNexus: full system prompt (loads MCP tool descriptions), allow all tools
-            base = ["claude", "-p", "--dangerously-skip-permissions"]
-
+            base = ["claude", "-p", "--dangerously-skip-permissions",
+                    "--verbose", "--output-format", "stream-json"]
         base.append(prompt)
         return base
 
@@ -148,49 +147,84 @@ class AgentExecutor:
 
         try:
             import subprocess
-            result = subprocess.run(
-                cmd,
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout
+            # Redirect stderr to capture alongside stdout; read stderr separately
+            proc = subprocess.Popen(
+                cmd, cwd=worktree_path,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1
             )
 
-            output = result.stdout + result.stderr
-            duration = time.time() - start
-            tokens = len(output) // 4
+            tool_records = []  # [{tool, args}, ...]
+            tool_sequence = []  # ["Bash", "Read", ...]
+            final_result = ""
+            stderr_output = ""
 
-            prediction = self._parse_json_output(output)
-            tool_calls, tool_sequence, tool_records = self._extract_tool_calls(output)
+            # Read stream line by line
+            import json as json_mod
+            while True:
+                line = proc.stdout.readline()
+                if not line and proc.poll() is not None:
+                    break
+                if not line.strip():
+                    continue
+
+                try:
+                    obj = json_mod.loads(line.strip())
+                except json_mod.JSONDecodeError:
+                    continue
+
+                t = obj.get("type", "")
+
+                # Filter hook noise
+                if t == "system" and str(obj.get("subtype", "")).startswith("hook_"):
+                    continue
+
+                if t == "assistant":
+                    content = obj.get("message", {}).get("content", [])
+                    if isinstance(content, list):
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "tool_use":
+                                name = item.get("name", "?")
+                                # Normalize MCP tool names: mcp__gitnexus__query -> gitnexus_query
+                                if name.startswith("mcp__gitnexus__"):
+                                    name = "gitnexus_" + name[len("mcp__gitnexus__"):]
+                                inp = item.get("input", {})
+                                tool_records.append({"tool": name, "args": inp})
+                                tool_sequence.append(name)
+
+                elif t == "result":
+                    final_result = obj.get("result", "")
+
+            # Read remaining stderr
+            stderr_output = proc.stderr.read()
+            proc.wait()
+
+            duration = time.time() - start
+            combined_output = final_result + "\n" + stderr_output
+            tokens = len(combined_output) // 4
+
+            prediction = self._parse_json_output(final_result)
 
             agent_result = AgentResult(
                 prediction=prediction,
-                raw_output=output,
+                raw_output=combined_output,
                 duration_s=duration,
                 tokens=tokens,
                 success=True,
-                tool_calls=tool_calls,
+                tool_calls=len(tool_records),
                 tool_sequence=tool_sequence,
                 tool_call_records=tool_records,
             )
-
             agent_result.failure_bucket = classify_failure(agent_result)
-
-            # Check for no_tool_call in gitnexus group
-            if group == "gitnexus" and tool_calls == 0:
+            if group == "gitnexus" and len(tool_records) == 0:
                 agent_result.failure_bucket = FAILURE_NO_TOOL_CALL
-
             return agent_result
 
         except subprocess.TimeoutExpired:
-            return AgentResult(
-                prediction={}, raw_output="", duration_s=self.timeout,
-                tokens=0, success=False, error="timeout",
-                failure_bucket=FAILURE_TIMEOUT,
-            )
+            proc.kill()
+            proc.wait()
+            return AgentResult(prediction={}, raw_output="", duration_s=self.timeout,
+                              tokens=0, success=False, error="timeout", failure_bucket=FAILURE_TIMEOUT)
         except Exception as e:
-            return AgentResult(
-                prediction={}, raw_output="", duration_s=time.time() - start,
-                tokens=0, success=False, error=str(e),
-                failure_bucket=FAILURE_API_ERROR,
-            )
+            return AgentResult(prediction={}, raw_output="", duration_s=time.time() - start,
+                              tokens=0, success=False, error=str(e), failure_bucket=FAILURE_API_ERROR)
