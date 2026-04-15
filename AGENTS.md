@@ -1,4 +1,4 @@
-<!-- version: 1.2.0 -->
+<!-- version: 1.4.0 -->
 <!--
   Metadata: version, last reviewed, scope, model policy, reference docs, changelog.
   Last updated: 2026-03-22
@@ -54,7 +54,9 @@ Generic “core standards” playbooks are often long and stack-specific. For th
 
 | Date | Version | Change |
 |------|---------|--------|
+| 2026-04-16 | 1.4.0 | Added GitNexus + Serena routing principles (5 rules). |
 | 2026-03-24 | 1.2.0 | Fixed gitnexus:start block duplication (was inlined in Reference Docs bullet). |
+| 2026-04-16 | 1.3.0 | Added Serena + GitNexus collaboration rules and tool routing. |
 | 2026-03-23 | 1.1.0 | Updated agent instructions (sections, references, Cursor layout). |
 | 2026-03-22 | 1.0.0 | Added structured agent header and changelog. |
 
@@ -63,7 +65,7 @@ Generic “core standards” playbooks are often long and stack-specific. For th
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **GitNexus** (5642 symbols, 12601 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **GitNexus** (13714 symbols, 34845 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -87,6 +89,16 @@ This project is indexed by GitNexus as **GitNexus** (5642 symbols, 12601 relatio
 - **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
 - **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
 - After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
+
+## When Analyzing Remote Code (Commit / PR Review)
+
+When asked to review a commit, PR, or any non-local change — NEVER analyze without fetching actual changes first:
+
+1. **Retrieve** — Use available remote code tools to fetch the diff, changed files list, and commit metadata.
+2. **Extract key symbols** — From the diff, identify: modified functions/methods, changed class definitions, exported API changes, and altered imports.
+3. **Query each symbol** — `gitnexus_context({name: "symbolName"})` for callers/callees; `gitnexus_query({query: "symbolName"})` for related execution flows.
+4. **Assess blast radius** — `gitnexus_impact({target: "symbolName", direction: "upstream"})` for each changed public API. Report risk level and list d=1 (WILL BREAK) dependents.
+5. **Report** — Summary of changes, affected symbols with risk level, and recommendations.
 
 ## Never Do
 
@@ -161,6 +173,98 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+<!-- gitnexus-serena:start -->
+## GitNexus + Serena 协作路由
+
+### 路由原则（按优先级）
+
+1. **影响评估 → GitNexus 独占**
+   impact / test_impact / api_impact 只有 GitNexus 能做。
+   任何编辑前必须先 `gitnexus_impact`。
+
+2. **精确编辑 → Serena 独占**
+   replace_symbol_body / insert_after / insert_before / safe_delete 只有 Serena 能做。
+   优先使用 Serena 编辑而非 Claude 内置 Edit。
+
+3. **符号读取 → 按需选择**
+   - 关系和上下文 → `gitnexus_context`（360 度视图 + 执行流）
+   - 精确代码体 → `serena_find_symbol(include_body:true)`（AST 精确）
+
+4. **搜索发现 → 按场景选择**
+   - 概念搜索 / 执行流 → `gitnexus_query`（语义 + 图）
+   - 精确符号定位 → `serena_find_symbol`（LSP 索引）
+
+5. **重命名 → 双工具协同**
+   先 `gitnexus_rename(dry_run:true)` 预览 → 再 `serena_rename_symbol` 执行
+<!-- gitnexus-serena:end -->
+
+---
+
+## Serena + GitNexus 协作
+
+此项目同时配置了 **GitNexus**(知识图谱) 和 **Serena**(LSP语义编辑) 两个 MCP server。两者正交互补，按以下规则协同工作。
+
+### 职责划分
+
+| 维度 | GitNexus (战略层) | Serena (战术层) |
+|------|-------------------|-----------------|
+| 数据源 | 预计算图索引 | 实时 LSP |
+| 精度 | 函数/类级别 | AST/表达式级别 |
+| 时效性 | 需 re-analyze | 始终反映磁盘当前状态 |
+| 跨仓库 | 支持 (group) | 单仓库 |
+| 编辑能力 | 仅 rename (dry_run) | 全面 (替换/插入/删除) |
+| 影响评估 | 风险分级 (LOW→CRITICAL) | 仅引用计数 |
+
+### 工具选择优先级
+
+按意图自动选择正确的工具：
+
+| 意图 | 首选工具 | 理由 |
+|------|----------|------|
+| "改了这个会影响什么" | `gitnexus_impact` | 唯一提供风险分级 |
+| "帮我找到X的实现" | `serena_find_symbol` | LSP 精确、实时 |
+| "理解X和其他代码的关系" | `gitnexus_context` | 图谱360度视图+执行流 |
+| "重命名X" | `gitnexus_rename`(dry_run) → `serena_rename_symbol` | 先预览再执行 |
+| "在X后面加一段代码" | `serena_insert_after_symbol` | LSP 精确位置 |
+| "替换X的实现" | `serena_replace_symbol_body` | LSP 原子编辑 |
+| "删掉这个函数" | `serena_safe_delete_symbol` | 自动检查引用 |
+| "这个API谁在用" | `gitnexus_api_impact` | 路由映射+消费者追踪 |
+| "运行什么测试" | `gitnexus_test_impact` | 图谱追踪测试覆盖 |
+| "commit前检查" | `gitnexus_detect_changes` | 受影响执行流分析 |
+| "记住这个设计决策" | `serena_write_memory` | 项目级持久记忆 |
+
+### 编辑前必查清单
+
+执行任何 `serena_replace_symbol_body` / `serena_insert_after` / `serena_insert_before` 之前：
+
+1. `gitnexus_impact({target, direction:"upstream"})` → 确认风险等级
+2. 如果风险 HIGH/CRITICAL → **必须告知用户并确认**
+3. 执行 Serena 编辑
+4. `gitnexus_detect_changes({scope:"unstaged"})` → 验证变更范围符合预期
+
+### 重命名协同流程
+
+重命名必须走两步：
+
+1. **预览**: `gitnexus_rename({symbol_name, new_name, dry_run: true})` → 获取所有引用点 + 置信度
+2. **执行**: `serena_rename_symbol({name_path, relative_path, new_name})` → LSP 精确重命名
+3. **验证**: `gitnexus_detect_changes({scope:"all"})` → 确认无遗漏
+
+禁止只用 `gitnexus_rename(dry_run: false)` 或只用 `serena_rename_symbol` 跳过任一步骤。
+
+### 禁止事项
+
+- 禁止在未运行 `gitnexus_impact` 的情况下执行 Serena 编辑操作
+- 禁止用 Serena 做跨文件重构（那是 `gitnexus_rename` + `serena_rename_symbol` 协同的领域）
+- 禁止忽略 GitNexus 返回的 HIGH/CRITICAL 风险警告
+- 禁止对无 LSP 支持的语言（如 COBOL）使用 Serena 符号工具，回退到 GitNexus
+
+### 首次使用 Serena
+
+首次会话时执行 `serena_check_onboarding_performed`，如未完成则运行 `serena_onboarding`。
+
+---
 
 ## Cursor Cloud specific instructions
 
