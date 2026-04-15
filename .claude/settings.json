@@ -1,0 +1,17 @@
+{
+  "enabledPlugins": {},
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|mcp__serena__replace_symbol_body|mcp__serena__insert_after_symbol|mcp__serena__insert_before_symbol|mcp__serena__safe_delete_symbol",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-edit-guard.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
