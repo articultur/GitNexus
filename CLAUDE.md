@@ -1,4 +1,4 @@
-<!-- version: 1.2.0 -->
+<!-- version: 1.3.0 -->
 <!--
   Metadata: version, last reviewed, scope, model policy, reference docs, changelog.
   Last updated: 2026-03-22
@@ -41,7 +41,8 @@ If always-on instructions grow, load deep conventions via conditional reads (e.g
 
 | Date | Version | Change |
 |------|---------|--------|
-| 2026-03-24 | 1.2.0 | Removed duplicated gitnexus:start block and scope table; replaced with pointers to AGENTS.md. |
+| 2026-04-16 | 1.4.0 | Synced GitNexus + Serena routing principles with AGENTS.md. |
+| 2026-04-16 | 1.3.0 | Added Serena + GitNexus collaboration routing rules. |
 | 2026-03-23 | 1.1.0 | Updated agent instructions to match AGENTS.md. |
 | 2026-03-22 | 1.0.0 | Added structured header and changelog. |
 
@@ -52,7 +53,7 @@ If always-on instructions grow, load deep conventions via conditional reads (e.g
 GitNexus MCP rules are in the `<!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **GitNexus** (5642 symbols, 12601 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **GitNexus** (13714 symbols, 34845 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -76,6 +77,16 @@ This project is indexed by GitNexus as **GitNexus** (5642 symbols, 12601 relatio
 - **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
 - **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
 - After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
+
+## When Analyzing Remote Code (Commit / PR Review)
+
+When asked to review a commit, PR, or any non-local change — NEVER analyze without fetching actual changes first:
+
+1. **Retrieve** — Use available remote code tools to fetch the diff, changed files list, and commit metadata.
+2. **Extract key symbols** — From the diff, identify: modified functions/methods, changed class definitions, exported API changes, and altered imports.
+3. **Query each symbol** — `gitnexus_context({name: "symbolName"})` for callers/callees; `gitnexus_query({query: "symbolName"})` for related execution flows.
+4. **Assess blast radius** — `gitnexus_impact({target: "symbolName", direction: "upstream"})` for each changed public API. Report risk level and list d=1 (WILL BREAK) dependents.
+5. **Report** — Summary of changes, affected symbols with risk level, and recommendations.
 
 ## Never Do
 
@@ -252,3 +263,51 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+---
+
+## Serena + GitNexus 协作 (Claude Code)
+
+**AGENTS.md** 包含完整的工具选择规则和编辑前检查清单。本节补充 Claude Code 特有的集成配置。
+
+### MCP 配置
+
+两个 MCP server 均在 `.mcp.json` 中配置，通过 `enableAllProjectMcpServers: true` 自动启用：
+
+| Server | 命令 | 用途 |
+|--------|------|------|
+| `gitnexus` | `gitnexus mcp` | 知识图谱查询、影响分析、变更检测 |
+| `serena` | `uvx --from serena-agent serena mcp` | LSP 符号编辑、引用查找、项目记忆 |
+
+### 路由原则
+
+完整路由规则见 [AGENTS.md](AGENTS.md) `gitnexus-serena` 区块。核心原则：
+
+1. **影响评估** → GitNexus 独占 (`impact`, `test_impact`, `api_impact`)
+2. **精确编辑** → Serena 独占 (`replace_symbol_body`, `insert_*`, `safe_delete`)
+3. **符号读取** → 关系用 `gitnexus_context`，代码体用 `serena_find_symbol`
+4. **搜索发现** → 概念用 `gitnexus_query`，精确定位用 `serena_find_symbol`
+5. **重命名** → 先 `gitnexus_rename(dry_run)` 预览，再 `serena_rename_symbol` 执行
+
+### Hook 集成
+
+建议的 Hook 路由（需在 `.claude/settings.json` 中配置）：
+
+- **PreToolUse** `Edit|Write|mcp__serena__replace_symbol_body|mcp__serena__insert_after_symbol|mcp__serena__insert_before_symbol` → 提醒运行 `gitnexus_impact`
+- **PostToolUse** `mcp__serena__replace_symbol_body|mcp__serena__rename_symbol|...` → 自动运行 `gitnexus_detect_changes --scope unstaged`
+
+### Serena 首次设置
+
+新会话中首次使用 Serena 时：
+1. `serena_check_onboarding_performed()` → 检查是否已初始化
+2. 若未初始化 → `serena_onboarding()` → 按引导完成项目配置
+
+### 记忆系统分工
+
+| 系统 | 用途 | 位置 |
+|------|------|------|
+| Claude Code 原生记忆 | 用户偏好、流程经验 | `~/.claude/projects/.../memory/` |
+| Serena 记忆 | 技术架构、代码模式、设计决策 | `.serena/memories/` |
+| GitNexus 记忆 | 图谱状态、索引元数据 | `.gitnexus/meta.json` |
+
+避免在 Serena 记忆中存储用户偏好，避免在 Claude 记忆中存储代码架构细节。
