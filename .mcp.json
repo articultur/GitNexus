@@ -4,6 +4,20 @@
       "type": "stdio",
       "command": "gitnexus",
       "args": ["mcp"]
+    },
+    "minimax": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["minimax-coding-plan-mcp"],
+      "env": {
+        "MINIMAX_API_KEY": "${MINIMAX_API_KEY}",
+        "MINIMAX_API_HOST": "https://api.minimax.chat/"
+      }
+    },
+    "serena": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "serena-agent", "serena", "mcp"]
     }
   }
 }

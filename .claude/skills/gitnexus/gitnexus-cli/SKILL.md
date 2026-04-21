@@ -1,6 +1,6 @@
 ---
 name: gitnexus-cli
-description: "Use when the user needs to run GitNexus CLI commands like analyze/index a repo, check status, clean the index, generate a wiki, or list indexed repos. Examples: \"Index this repo\", \"Reanalyze the codebase\", \"Generate a wiki\""
+description: "Use when the user needs to run GitNexus CLI commands like analyze/index a repo, pull/push/use remote indexes, check status, clean the index, generate a wiki, or list indexed repos. Examples: \"Index this repo\", \"Reanalyze the codebase\", \"Generate a wiki\", \"Pull a pre-built index\""
 ---
 
 # GitNexus CLI Commands
@@ -35,10 +35,10 @@ Shows whether the current repo has a GitNexus index, when it was last updated, a
 ### clean — Delete the index
 
 ```bash
-npx gitnexus clean
+npx gitnexus clean [name]
 ```
 
-Deletes the `.gitnexus/` directory and unregisters the repo from the global registry. Use before re-indexing if the index is corrupt or after removing GitNexus from a project.
+Deletes the index and unregisters the repo from the global registry. Accepts an optional `[name]` to target a specific index (including ones pulled from remote). Prompts for selection when multiple candidates exist.
 
 | Flag      | Effect                                            |
 | --------- | ------------------------------------------------- |
@@ -69,6 +69,41 @@ npx gitnexus list
 ```
 
 Lists all repositories registered in `~/.gitnexus/registry.json`. The MCP `list_repos` tool provides the same information.
+
+## Working without source code (remote-pulled indexes)
+
+Users who don't have the source code can download a pre-built index shared by a maintainer:
+
+```bash
+# 1. Download the index from a git remote
+npx gitnexus pull <name> <git-url>
+
+# 2. Set it as the default (optional, for multi-repo setups)
+npx gitnexus use <name>
+
+# 3. Use MCP tools normally — query/context/impact/cypher/get_code all work without source
+```
+
+Limitations without source code:
+- `detect_changes` is unavailable (requires local git)
+- `rename` with `dry_run: false` is unavailable (requires local file writes)
+- `rename` with `dry_run: true` returns graph-based edits only (text_search skipped)
+
+### Remote management commands
+
+```bash
+# Add a named remote
+npx gitnexus remote add <name> <url>
+
+# List configured remotes
+npx gitnexus remote list
+
+# Push local index to a remote
+npx gitnexus push [--force]
+
+# Pull index from a remote
+npx gitnexus pull <name> <url> [--force]
+```
 
 ## After Indexing
 

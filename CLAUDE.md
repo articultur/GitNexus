@@ -1,10 +1,6 @@
-<!-- version: 1.3.0 -->
-<!--
-  Metadata: version, last reviewed, scope, model policy, reference docs, changelog.
-  Last updated: 2026-03-22
--->
+<!-- version: 1.5.0 -->
 
-Last reviewed: 2026-03-24
+Last reviewed: 2026-04-17
 
 **Project:** GitNexus · **Environment:** dev · **Maintainer:** repository maintainers (see GitHub)
 
@@ -12,35 +8,44 @@ Follow **AGENTS.md** for the canonical rules; this file adds Claude Code–speci
 
 ## Scope
 
-See the **Scope** table in [AGENTS.md](AGENTS.md) for read/write/execute/off-limits boundaries. Cursor-specific workflow notes also live only in AGENTS.md.
+See the **Scope** table in [AGENTS.md](AGENTS.md) for read/write/execute/off-limits boundaries.
 
 ## Model Configuration
 
-- **Primary:** Pin per **Claude Code** / Anthropic org policy (explicit model id). Do not rely on an unversioned `latest` alias for governed workflows.
+- **Primary:** Pin per **Claude Code** / Anthropic org policy (explicit model id).
 - **Fallback:** As configured in Claude Code (organization default or user override).
 - **Notes:** The GitNexus CLI analyzer does not call an LLM.
 
 ## Execution Sequence (complex tasks)
 
-Same discipline as [AGENTS.md](AGENTS.md): before large multi-step work, state which **AGENTS.md** / **GUARDRAILS.md** rules apply, current **Scope**, and planned validation commands (`npm test`, `tsc`, etc.). When pausing, summarize progress in the chat or a **local** scratch file (do not add `HANDOFF.md` to the repo), then `/clear` and resume with that summary.
+Same discipline as [AGENTS.md](AGENTS.md): before large multi-step work, state which **AGENTS.md** / **GUARDRAILS.md** rules apply, current **Scope**, and planned validation commands (`npm test`, `tsc`, etc.).
 
 ## Claude Code hooks
 
-Prefer **PreToolUse** hooks for hard gates (e.g. tests before `git_commit`). Adapt hook commands to `gitnexus/` npm scripts.
+Hooks configured in `.claude/settings.json`:
+
+| Hook | Matcher | Purpose |
+|------|---------|---------|
+| PreToolUse | Edit/Write/Serena edits | Remind to run `gitnexus_impact` before editing |
+| PreToolUse | GitNexus read tools | Suggest Serena complement for code body inspection |
+| PreToolUse | `gitnexus_query` | Detect name-vs-concept misrouting, suggest `serena_find_symbol` |
+| PostToolUse | GitNexus + Serena tools | Warn if 5+ consecutive single-server usage |
 
 ## Context budget
 
-If always-on instructions grow, load deep conventions via conditional reads (e.g. *“When writing new code, read STANDARDS.md”*) instead of pasting long blocks here. In Cursor, prefer `.cursor/index.mdc` plus optional `.cursor/rules/*.mdc` globs (see [AGENTS.md](AGENTS.md) § Context budget).
+If always-on instructions grow, load deep conventions via conditional reads instead of pasting long blocks here.
 
 ## Reference Documentation
 
-- **This repository:** [AGENTS.md](AGENTS.md) (Cursor + monorepo notes), [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), [GUARDRAILS.md](GUARDRAILS.md).
-- **GitNexus:** `.claude/skills/gitnexus/`; MCP and indexed-repo rules live only in [AGENTS.md](AGENTS.md) (`gitnexus:start` … `gitnexus:end`). See **GitNexus rules** below.
+- **This repository:** [AGENTS.md](AGENTS.md), [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), [GUARDRAILS.md](GUARDRAILS.md).
+- **GitNexus rules:** Defined in [AGENTS.md](AGENTS.md) `<!-- gitnexus:start -->` block. Do NOT duplicate here.
+- **Routing rules:** See `.claude/skills/gitnexus/gitnexus-routing/SKILL.md` for the single authoritative GitNexus + Serena routing decision tree.
 
 ## Changelog
 
 | Date | Version | Change |
 |------|---------|--------|
+| 2026-04-17 | 1.5.0 | Deduplicated GitNexus rules (removed duplicate block), added read-path hooks, cross-server tracking, routing skill. |
 | 2026-04-16 | 1.4.0 | Synced GitNexus + Serena routing principles with AGENTS.md. |
 | 2026-04-16 | 1.3.0 | Added Serena + GitNexus collaboration routing rules. |
 | 2026-03-23 | 1.1.0 | Updated agent instructions to match AGENTS.md. |
@@ -48,266 +53,63 @@ If always-on instructions grow, load deep conventions via conditional reads (e.g
 
 ---
 
-## GitNexus rules
+## GitNexus + Serena Routing
 
-GitNexus MCP rules are in the `<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
+**Single authoritative source:** `.claude/skills/gitnexus/gitnexus-routing/SKILL.md`
 
-This project is indexed by GitNexus as **GitNexus** (13714 symbols, 34845 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+That file contains the complete routing decision tree. Summary:
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+| Operation | Primary Tool | Complement Tool |
+|-----------|-------------|-----------------|
+| Impact/Blast radius | GitNexus `impact` | — |
+| Code body reading | Serena `find_symbol` | GitNexus `context` |
+| Relationship discovery | GitNexus `context/query` | Serena `find_symbol` |
+| Search by concept | GitNexus `query` | — |
+| Search by name | Serena `find_symbol` | — |
+| Rename (preview) | GitNexus `rename(dry_run)` | — |
+| Rename (execute) | — | Serena `rename_symbol` |
+| Precise edits | Serena `replace/insert` | GitNexus `detect_changes` |
+| Code review | GitNexus `cypher/query` | Serena `get_symbols_overview` |
 
-## Always Do
+**Mandatory rule:** Never run an entire analysis session using only one server.
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+### Anti-patterns (routing failures to avoid)
 
-## When Debugging
+| Signal | WRONG tool | RIGHT tool | Why |
+|--------|-----------|------------|-----|
+| "找到 X 类/函数" (exact name known) | `gitnexus_query` | `serena_find_symbol` | query is for concepts, not names |
+| "影响哪些接口/API" | `gitnexus_query` only | `gitnexus_api_impact` + `gitnexus_impact` | api_impact traces public API consumers |
+| "改成 SSE 会有什么影响" | `gitnexus_context` only | `gitnexus_impact` + `gitnexus_route_map` | impact is mandatory for change analysis |
+| "看看代码怎么写的" (want body) | `gitnexus_context` only | `serena_find_symbol(include_body=true)` | context shows relationships, not code |
+| Any edit task | skip `gitnexus_impact` | impact BEFORE edit, detect_changes AFTER | mandatory safety pipeline |
 
-1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
-2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/GitNexus/process/{processName}` — trace the full execution flow step by step
-4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
+**Decision shortcut:** If the user gives you a **specific class/function name**, reach for `serena_find_symbol` first. If they describe a **concept or behavior**, use `gitnexus_query`.
 
-## When Refactoring
+### Edit Pipeline (mandatory completion)
 
-- **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
-- **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
-- After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
+When the task involves editing code, you MUST complete the full pipeline — do NOT stop after analysis:
+1. `gitnexus_impact` → assess risk
+2. `serena_find_symbol` → read current code
+3. `serena_replace_symbol_body` / `serena_insert_after_symbol` / `serena_insert_before_symbol` → **perform the actual edit**
+4. `gitnexus_detect_changes` → verify scope
 
-## When Analyzing Remote Code (Commit / PR Review)
+Do NOT skip step 3. "Show the plan and wait for confirmation" is only for interactive sessions. In non-interactive mode, execute all steps.
 
-When asked to review a commit, PR, or any non-local change — NEVER analyze without fetching actual changes first:
+## Serena Integration (Claude Code)
 
-1. **Retrieve** — Use available remote code tools to fetch the diff, changed files list, and commit metadata.
-2. **Extract key symbols** — From the diff, identify: modified functions/methods, changed class definitions, exported API changes, and altered imports.
-3. **Query each symbol** — `gitnexus_context({name: "symbolName"})` for callers/callees; `gitnexus_query({query: "symbolName"})` for related execution flows.
-4. **Assess blast radius** — `gitnexus_impact({target: "symbolName", direction: "upstream"})` for each changed public API. Report risk level and list d=1 (WILL BREAK) dependents.
-5. **Report** — Summary of changes, affected symbols with risk level, and recommendations.
+### MCP Configuration
 
-## Never Do
+Both MCP servers configured in `.mcp.json`, auto-enabled via `enableAllProjectMcpServers: true`.
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+### First-Time Setup
 
-## Tools Quick Reference
+1. `serena_check_onboarding_performed()` → check initialization
+2. If not initialized → `serena_onboarding()` → follow guided setup
 
-| Tool | When to use | Command |
-|------|-------------|---------|
-| `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
-| `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
-| `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
-| `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
-| `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |
+### Memory System Separation
 
-## Impact Risk Levels
-
-| Depth | Meaning | Action |
-|-------|---------|--------|
-| d=1 | WILL BREAK — direct callers/importers | MUST update these |
-| d=2 | LIKELY AFFECTED — indirect deps | Should test |
-| d=3 | MAY NEED TESTING — transitive | Test if critical path |
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/GitNexus/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/GitNexus/clusters` | All functional areas |
-| `gitnexus://repo/GitNexus/processes` | All execution flows |
-| `gitnexus://repo/GitNexus/process/{name}` | Step-by-step execution trace |
-
-## Self-Check Before Finishing
-
-Before completing any code modification task, verify:
-1. `gitnexus_impact` was run for all modified symbols
-2. No HIGH/CRITICAL risk warnings were ignored
-3. `gitnexus_detect_changes()` confirms changes match expected scope
-4. All d=1 (WILL BREAK) dependents were updated
-
-## Keeping the Index Fresh
-
-After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
-
-```bash
-npx gitnexus analyze
-```
-
-If the index previously included embeddings, preserve them by adding `--embeddings`:
-
-```bash
-npx gitnexus analyze --embeddings
-```
-
-To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
-
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->`  block in **[AGENTS.md](AGENTS.md)** — load that section when working with MCP tools or the graph index.
-
-<!-- gitnexus:start -->
-# GitNexus — Code Intelligence
-
-This project is indexed by GitNexus as **GitNexus** (4343 symbols, 10259 relationships, 342 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
-
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
-
-## Always Do
-
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
-
-## When Debugging
-
-1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
-2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/GitNexus/process/{processName}` — trace the full execution flow step by step
-4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
-
-## When Refactoring
-
-- **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
-- **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
-- After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Tools Quick Reference
-
-| Tool | When to use | Command |
-|------|-------------|---------|
-| `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
-| `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
-| `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
-| `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
-| `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |
-
-## Impact Risk Levels
-
-| Depth | Meaning | Action |
-|-------|---------|--------|
-| d=1 | WILL BREAK — direct callers/importers | MUST update these |
-| d=2 | LIKELY AFFECTED — indirect deps | Should test |
-| d=3 | MAY NEED TESTING — transitive | Test if critical path |
-
-## Resources
-
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/GitNexus/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/GitNexus/clusters` | All functional areas |
-| `gitnexus://repo/GitNexus/processes` | All execution flows |
-| `gitnexus://repo/GitNexus/process/{name}` | Step-by-step execution trace |
-
-## Self-Check Before Finishing
-
-Before completing any code modification task, verify:
-1. `gitnexus_impact` was run for all modified symbols
-2. No HIGH/CRITICAL risk warnings were ignored
-3. `gitnexus_detect_changes()` confirms changes match expected scope
-4. All d=1 (WILL BREAK) dependents were updated
-
-## Keeping the Index Fresh
-
-After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
-
-```bash
-npx gitnexus analyze
-```
-
-If the index previously included embeddings, preserve them by adding `--embeddings`:
-
-```bash
-npx gitnexus analyze --embeddings
-```
-
-To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
-
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
-
-## CLI
-
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->
-
----
-
-## Serena + GitNexus 协作 (Claude Code)
-
-**AGENTS.md** 包含完整的工具选择规则和编辑前检查清单。本节补充 Claude Code 特有的集成配置。
-
-### MCP 配置
-
-两个 MCP server 均在 `.mcp.json` 中配置，通过 `enableAllProjectMcpServers: true` 自动启用：
-
-| Server | 命令 | 用途 |
-|--------|------|------|
-| `gitnexus` | `gitnexus mcp` | 知识图谱查询、影响分析、变更检测 |
-| `serena` | `uvx --from serena-agent serena mcp` | LSP 符号编辑、引用查找、项目记忆 |
-
-### 路由原则
-
-完整路由规则见 [AGENTS.md](AGENTS.md) `gitnexus-serena` 区块。核心原则：
-
-1. **影响评估** → GitNexus 独占 (`impact`, `test_impact`, `api_impact`)
-2. **精确编辑** → Serena 独占 (`replace_symbol_body`, `insert_*`, `safe_delete`)
-3. **符号读取** → 关系用 `gitnexus_context`，代码体用 `serena_find_symbol`
-4. **搜索发现** → 概念用 `gitnexus_query`，精确定位用 `serena_find_symbol`
-5. **重命名** → 先 `gitnexus_rename(dry_run)` 预览，再 `serena_rename_symbol` 执行
-
-### Hook 集成
-
-建议的 Hook 路由（需在 `.claude/settings.json` 中配置）：
-
-- **PreToolUse** `Edit|Write|mcp__serena__replace_symbol_body|mcp__serena__insert_after_symbol|mcp__serena__insert_before_symbol` → 提醒运行 `gitnexus_impact`
-- **PostToolUse** `mcp__serena__replace_symbol_body|mcp__serena__rename_symbol|...` → 自动运行 `gitnexus_detect_changes --scope unstaged`
-
-### Serena 首次设置
-
-新会话中首次使用 Serena 时：
-1. `serena_check_onboarding_performed()` → 检查是否已初始化
-2. 若未初始化 → `serena_onboarding()` → 按引导完成项目配置
-
-### 记忆系统分工
-
-| 系统 | 用途 | 位置 |
-|------|------|------|
-| Claude Code 原生记忆 | 用户偏好、流程经验 | `~/.claude/projects/.../memory/` |
-| Serena 记忆 | 技术架构、代码模式、设计决策 | `.serena/memories/` |
-| GitNexus 记忆 | 图谱状态、索引元数据 | `.gitnexus/meta.json` |
-
-避免在 Serena 记忆中存储用户偏好，避免在 Claude 记忆中存储代码架构细节。
+| System | Purpose | Location |
+|--------|---------|----------|
+| Claude Code memory | User preferences, process experience | `~/.claude/projects/.../memory/` |
+| Serena memory | Technical architecture, design decisions | `.serena/memories/` |
+| GitNexus memory | Graph state, index metadata | `.gitnexus/meta.json` |

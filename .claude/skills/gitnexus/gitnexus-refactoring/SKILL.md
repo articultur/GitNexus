@@ -24,6 +24,8 @@ description: "Use when the user wants to rename, extract, split, move, or restru
 
 > If "Index is stale" → run `npx gitnexus analyze` in terminal.
 
+> **Remote-pulled indexes (no local source):** `gitnexus_rename(dry_run: false)` and `gitnexus_detect_changes()` require local files/git and will return an error. Use `dry_run: true` to preview graph-based edits only, then apply manually.
+
 ## Checklists
 
 ### Rename Symbol
@@ -31,8 +33,8 @@ description: "Use when the user wants to rename, extract, split, move, or restru
 ```
 - [ ] gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true}) — preview all edits
 - [ ] Review graph edits (high confidence) and ast_search edits (review carefully)
-- [ ] If satisfied: gitnexus_rename({..., dry_run: false}) — apply edits
-- [ ] gitnexus_detect_changes() — verify only expected files changed
+- [ ] If satisfied: gitnexus_rename({..., dry_run: false}) — apply edits  (requires local source)
+- [ ] gitnexus_detect_changes() — verify only expected files changed  (requires local git)
 - [ ] Run tests for affected processes
 ```
 

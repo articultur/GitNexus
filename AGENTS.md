@@ -197,6 +197,15 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 
 5. **重命名 → 双工具协同**
    先 `gitnexus_rename(dry_run:true)` 预览 → 再 `serena_rename_symbol` 执行
+
+### 反模式（必须避免）
+
+| 信号 | 错误工具 | 正确工具 | 原因 |
+|------|---------|---------|------|
+| 用户给出了精确的类/函数名 | `gitnexus_query` | `serena_find_symbol` | query 用于概念搜索，不用于已知符号名 |
+| "影响哪些接口/API" | 仅 `gitnexus_query` | `gitnexus_api_impact` + `gitnexus_impact` | api_impact 追踪外部消费者 |
+| 任何编辑操作 | 跳过 `gitnexus_impact` | impact 在编辑前，detect_changes 在编辑后 | 强制安全流程 |
+| "看看代码怎么写的" | 仅 `gitnexus_context` | `serena_find_symbol(include_body=true)` | context 显示关系，不是代码 |
 <!-- gitnexus-serena:end -->
 
 ---

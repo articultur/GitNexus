@@ -43,6 +43,8 @@ serena_find_symbol({name_path_pattern: "符号名", include_body: true})
 
 获取 AST 精确的完整代码体。
 
+**交替提醒**: 如果已经连续使用同一个服务器超过 5 次（例如连续多次 `serena_find_symbol`），必须切换回另一个服务器获取全局视角（用 `gitnexus_context` 看关系，或用 `gitnexus_query` 搜索相关执行流）。
+
 ### Step 4: 深入细节（可选）
 
 根据需要选择:
