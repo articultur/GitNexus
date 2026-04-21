@@ -300,26 +300,38 @@ function formatToolResult(toolName: string, result: any): string {
 // Guide the agent to the logical next tool call.
 // Critical for tool chaining: query → context → impact → fix.
 
-function getNextStepHint(toolName: string): string {
+function getNextActionHint2(toolName: string): string {
+  let hint: string;
   switch (toolName) {
     case 'query':
-      return '\n---\nNext: Pick a symbol above and run gitnexus-context "<name>" to see all its callers, callees, and execution flows.';
+      hint =
+        '\n---\nNext: Pick a symbol above and run gitnexus-context "<name>" to see all its callers, callees, and execution flows.';
+      break;
 
     case 'context':
-      return '\n---\nNext: To check what breaks if you change this, run gitnexus-impact "<name>" upstream';
+      hint =
+        '\n---\nNext: To check what breaks if you change this, run gitnexus-impact "<name>" upstream';
+      break;
 
     case 'impact':
-      return '\n---\nNext: Review d=1 items first (WILL BREAK). Read the source with cat to understand the code, then make your fix.';
+      hint =
+        '\n---\nNext: Review d=1 items first (WILL BREAK). Read the source with cat to understand the code, then make your fix.';
+      break;
 
     case 'cypher':
-      return '\n---\nNext: To explore a result symbol in depth, run gitnexus-context "<name>"';
+      hint = '\n---\nNext: To explore a result symbol in depth, run gitnexus-context "<name>"';
+      break;
 
     case 'detect_changes':
-      return '\n---\nNext: Run gitnexus-context "<symbol>" on high-risk changed symbols to check their callers.';
+      hint =
+        '\n---\nNext: Run gitnexus-context "<symbol>" on high-risk changed symbols to check their callers.';
+      break;
 
     default:
-      return '';
+      hint = '';
   }
+
+  return hint || 'No suggestion available';
 }
 
 // ─── Server ───────────────────────────────────────────────────────────
@@ -399,7 +411,7 @@ export async function evalServerCommand(options?: EvalServerOptions): Promise<vo
         // Call tool, format result as text, append next-step hint
         const result = await backend.callTool(toolName, args);
         const formatted = formatToolResult(toolName, result);
-        const hint = getNextStepHint(toolName);
+        const hint = getNextActionHint2(toolName);
 
         res.setHeader('Content-Type', 'text/plain');
         res.writeHead(200);

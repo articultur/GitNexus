@@ -24,6 +24,7 @@ export async function queryTool(
     max_symbols?: number;
     include_content?: boolean;
     method?: string;
+    relevance_threshold?: number;
   },
   ensureInitialized: (id: string) => Promise<void>,
 ): Promise<any> {
@@ -38,6 +39,7 @@ export async function queryTool(
   const includeContent = params.include_content ?? false;
   const searchQuery = params.query.trim();
   const method = params.method ?? 'hybrid';
+  const relevanceThreshold = params.relevance_threshold ?? 0;
 
   // Step 1: Run search based on method
   const searchLimit = processLimit * maxSymbolsPerProcess; // fetch enough raw results
@@ -101,6 +103,10 @@ export async function queryTool(
     })
     .slice(0, searchLimit);
 
+  // Filter by relevance threshold
+  const thresholded =
+    relevanceThreshold > 0 ? merged.filter(([, val]) => val.score >= relevanceThreshold) : merged;
+
   // Step 2: For each match with a nodeId, trace to process(es)
   const processMap = new Map<
     string,
@@ -117,7 +123,7 @@ export async function queryTool(
   >();
   const definitions: any[] = []; // standalone symbols not in any process
 
-  for (const [_, item] of merged) {
+  for (const [_, item] of thresholded) {
     const sym = item.data;
     if (!sym.nodeId) {
       // File-level results go to definitions

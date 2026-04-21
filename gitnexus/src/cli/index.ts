@@ -253,13 +253,14 @@ program
   .option('-g, --goal <text>', 'What you want to find')
   .option('-l, --limit <n>', 'Max processes to return (default: 5)')
   .option('--content', 'Include full symbol source code')
+  .option('-t, --threshold <n>', 'Minimum RRF score (0-1) to filter low-relevance results')
   .addHelpText(
     'after',
     `
 Examples:
   $ gitnexus query "user authentication"
   $ gitnexus query "API endpoint" --goal "find handler functions"
-  $ gitnexus query "payment" --limit 10 --content
+  $ gitnexus query "payment" --limit 10 --content --threshold 0.02
 
 Results are ranked by relevance using hybrid search (BM25 + semantic).
 Each result is an execution flow with its participating symbols.

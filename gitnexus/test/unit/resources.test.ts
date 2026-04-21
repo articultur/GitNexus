@@ -17,7 +17,7 @@ import {
 
 // ─── Minimal mock backend ──────────────────────────────────────────
 
-function createMockBackend(overrides: Partial<Record<string, any>> = {}): any {
+function createTestBackend(overrides: Partial<Record<string, any>> = {}): any {
   return {
     listRepos: vi.fn().mockResolvedValue(overrides.repos ?? []),
     resolveRepo: vi.fn().mockResolvedValue(
@@ -103,7 +103,7 @@ describe('getResourceTemplates', () => {
 
 describe('readResource', () => {
   it('routes gitnexus://repos to listRepos', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       repos: [
         {
           name: 'my-project',
@@ -121,13 +121,13 @@ describe('readResource', () => {
   });
 
   it('returns empty message when no repos', async () => {
-    const backend = createMockBackend({ repos: [] });
+    const backend = createTestBackend({ repos: [] });
     const result = await readResource('gitnexus://repos', backend);
     expect(result).toContain('No repositories indexed');
   });
 
   it('routes gitnexus://setup to setup resource', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       repos: [
         {
           name: 'proj',
@@ -144,13 +144,13 @@ describe('readResource', () => {
   });
 
   it('returns fallback when setup has no repos', async () => {
-    const backend = createMockBackend({ repos: [] });
+    const backend = createTestBackend({ repos: [] });
     const result = await readResource('gitnexus://setup', backend);
     expect(result).toContain('No repositories indexed');
   });
 
   it('routes gitnexus://repo/{name}/context correctly', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       context: {
         projectName: 'test-project',
         stats: { fileCount: 10, functionCount: 50, communityCount: 3, processCount: 5 },
@@ -164,13 +164,13 @@ describe('readResource', () => {
   });
 
   it('returns error when context has no codebase loaded', async () => {
-    const backend = createMockBackend({ context: null });
+    const backend = createTestBackend({ context: null });
     const result = await readResource('gitnexus://repo/test-project/context', backend);
     expect(result).toContain('error');
   });
 
   it('routes gitnexus://repo/{name}/schema to static schema', async () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     const result = await readResource('gitnexus://repo/any/schema', backend);
     expect(result).toContain('GitNexus Graph Schema');
     expect(result).toContain('CALLS');
@@ -178,7 +178,7 @@ describe('readResource', () => {
   });
 
   it('routes gitnexus://repo/{name}/clusters correctly', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       clusters: {
         clusters: [{ heuristicLabel: 'Auth', symbolCount: 10, cohesion: 0.9 }],
       },
@@ -189,20 +189,20 @@ describe('readResource', () => {
   });
 
   it('returns empty modules when no clusters', async () => {
-    const backend = createMockBackend({ clusters: { clusters: [] } });
+    const backend = createTestBackend({ clusters: { clusters: [] } });
     const result = await readResource('gitnexus://repo/test/clusters', backend);
     expect(result).toContain('modules: []');
   });
 
   it('handles cluster query error gracefully', async () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     backend.queryClusters = vi.fn().mockRejectedValue(new Error('DB locked'));
     const result = await readResource('gitnexus://repo/test/clusters', backend);
     expect(result).toContain('DB locked');
   });
 
   it('routes gitnexus://repo/{name}/processes correctly', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       processes: {
         processes: [{ heuristicLabel: 'LoginFlow', processType: 'intra_community', stepCount: 3 }],
       },
@@ -213,14 +213,14 @@ describe('readResource', () => {
   });
 
   it('handles process query error gracefully', async () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     backend.queryProcesses = vi.fn().mockRejectedValue(new Error('timeout'));
     const result = await readResource('gitnexus://repo/test/processes', backend);
     expect(result).toContain('timeout');
   });
 
   it('routes gitnexus://repo/{name}/cluster/{clusterName} correctly', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       clusterDetail: {
         cluster: { heuristicLabel: 'Auth', symbolCount: 5, cohesion: 0.85 },
         members: [{ name: 'login', type: 'Function', filePath: 'src/auth.ts' }],
@@ -233,7 +233,7 @@ describe('readResource', () => {
   });
 
   it('handles cluster detail error', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       clusterDetail: { error: 'Cluster not found' },
     });
     const result = await readResource('gitnexus://repo/test/cluster/Missing', backend);
@@ -241,7 +241,7 @@ describe('readResource', () => {
   });
 
   it('routes gitnexus://repo/{name}/process/{processName} correctly', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       processDetail: {
         process: { heuristicLabel: 'LoginFlow', processType: 'intra_community', stepCount: 3 },
         steps: [
@@ -258,7 +258,7 @@ describe('readResource', () => {
   });
 
   it('handles process detail error', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       processDetail: { error: 'Process not found' },
     });
     const result = await readResource('gitnexus://repo/test/process/Missing', backend);
@@ -266,27 +266,27 @@ describe('readResource', () => {
   });
 
   it('throws for unknown resource URI', async () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     await expect(readResource('gitnexus://unknown', backend)).rejects.toThrow(
       'Unknown resource URI',
     );
   });
 
   it('throws for unknown repo-scoped resource type', async () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     await expect(readResource('gitnexus://repo/test/nonexistent', backend)).rejects.toThrow(
       'Unknown resource',
     );
   });
 
   it('decodes URI-encoded repo names', async () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     await readResource('gitnexus://repo/my%20project/schema', backend);
     // Should not throw — the schema resource is static
   });
 
   it('decodes URI-encoded cluster names', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       clusterDetail: {
         cluster: { heuristicLabel: 'Auth Module', symbolCount: 5 },
         members: [],
@@ -297,7 +297,7 @@ describe('readResource', () => {
   });
 
   it('repos resource shows multi-repo hint for multiple repos', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       repos: [
         { name: 'proj-a', path: '/a', indexedAt: '2024-01-01', lastCommit: 'abc' },
         { name: 'proj-b', path: '/b', indexedAt: '2024-01-02', lastCommit: 'def' },

@@ -64,6 +64,7 @@ export async function queryCommand(
     goal?: string;
     limit?: string;
     content?: boolean;
+    threshold?: string;
   },
 ): Promise<void> {
   if (!queryText?.trim()) {
@@ -78,6 +79,7 @@ export async function queryCommand(
     goal: options?.goal,
     limit: options?.limit ? parseInt(options.limit) : undefined,
     include_content: options?.content ?? false,
+    relevance_threshold: options?.threshold ? parseFloat(options.threshold) : undefined,
     repo: options?.repo,
   });
   output(result);

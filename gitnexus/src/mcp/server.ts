@@ -37,47 +37,61 @@ import { getResourceDefinitions, getResourceTemplates, readResource } from './re
  * Design: Each hint is a short, actionable instruction (not a suggestion).
  * The hint references the specific tool/resource to use next.
  */
-function getNextStepHint(toolName: string, args: Record<string, any> | undefined): string {
+function getNextActionHint2(toolName: string, args: Record<string, any> | undefined): string {
   const repo = args?.repo;
   const repoParam = repo ? `, repo: "${repo}"` : '';
   const repoPath = repo || '{name}';
 
+  let hint: string;
   switch (toolName) {
     case 'list_repos':
-      return `\n\n---\n**Next:** READ gitnexus://repo/{name}/context for any repo above to get its overview and check staleness.`;
+      hint = `\n\n---\n**Next:** READ gitnexus://repo/{name}/context for any repo above to get its overview and check staleness.`;
+      break;
 
     case 'query':
-      return `\n\n---\n**Next:** To understand a specific symbol in depth, use context({name: "<symbol_name>"${repoParam}}) to see categorized refs and process participation.`;
+      hint = `\n\n---\n**Next:** To understand a specific symbol in depth, use context({name: "<symbol_name>"${repoParam}}) to see categorized refs and process participation.`;
+      break;
 
     case 'context':
-      return `\n\n---\n**Next:** If planning changes, use impact({target: "${args?.name || '<name>'}", direction: "upstream"${repoParam}}) to check blast radius. To see execution flows, READ gitnexus://repo/${repoPath}/processes.`;
+      hint = `\n\n---\n**Next:** If planning changes, use impact({target: "${args?.name || '<name>'}", direction: "upstream"${repoParam}}) to check blast radius. To see execution flows, READ gitnexus://repo/${repoPath}/processes.`;
+      break;
 
     case 'impact':
-      return `\n\n---\n**Next:** Review d=1 items first (WILL BREAK). To check affected execution flows, READ gitnexus://repo/${repoPath}/processes.`;
+      hint = `\n\n---\n**Next:** Review d=1 items first (WILL BREAK). To check affected execution flows, READ gitnexus://repo/${repoPath}/processes.`;
+      break;
 
     case 'test_impact':
-      return `\n\n---\n**Next:** Run the returned test files with your test runner. For full blast-radius analysis, use impact({target: "<symbol>", direction: "upstream"${repoParam}}).`;
+      hint = `\n\n---\n**Next:** Run the returned test files with your test runner. For full blast-radius analysis, use impact({target: "<symbol>", direction: "upstream"${repoParam}}).`;
+      break;
 
     case 'detect_changes':
-      return `\n\n---\n**Next:** Review affected processes. Use context() on high-risk changed symbols. READ gitnexus://repo/${repoPath}/process/{name} for full execution traces.`;
+      hint = `\n\n---\n**Next:** Review affected processes. Use context() on high-risk changed symbols. READ gitnexus://repo/${repoPath}/process/{name} for full execution traces.`;
+      break;
 
     case 'rename':
-      return `\n\n---\n**Next:** Run detect_changes(${repoParam ? `{repo: "${repo}"}` : ''}) to verify no unexpected side effects from the rename.`;
+      hint = `\n\n---\n**Next:** Run detect_changes(${repoParam ? `{repo: "${repo}"}` : ''}) to verify no unexpected side effects from the rename.`;
+      break;
 
     case 'cypher':
-      return `\n\n---\n**Next:** To explore a result symbol, use context({name: "<name>"${repoParam}}). For schema reference, READ gitnexus://repo/${repoPath}/schema.`;
+      hint = `\n\n---\n**Next:** To explore a result symbol, use context({name: "<name>"${repoParam}}). For schema reference, READ gitnexus://repo/${repoPath}/schema.`;
+      break;
 
     // Legacy tool names — still return useful hints
     case 'search':
-      return `\n\n---\n**Next:** To understand a result in context, use context({name: "<symbol_name>"${repoParam}}).`;
+      hint = `\n\n---\n**Next:** To understand a result in context, use context({name: "<symbol_name>"${repoParam}}).`;
+      break;
     case 'explore':
-      return `\n\n---\n**Next:** If planning changes, use impact({target: "<name>", direction: "upstream"${repoParam}}).`;
+      hint = `\n\n---\n**Next:** If planning changes, use impact({target: "<name>", direction: "upstream"${repoParam}}).`;
+      break;
     case 'overview':
-      return `\n\n---\n**Next:** To drill into an area, READ gitnexus://repo/${repoPath}/cluster/{name}. To see execution flows, READ gitnexus://repo/${repoPath}/processes.`;
+      hint = `\n\n---\n**Next:** To drill into an area, READ gitnexus://repo/${repoPath}/cluster/{name}. To see execution flows, READ gitnexus://repo/${repoPath}/processes.`;
+      break;
 
     default:
-      return '';
+      hint = '';
   }
+
+  return hint || 'No suggestion available';
 }
 
 /**
@@ -171,7 +185,7 @@ export function createMCPServer(backend: LocalBackend): Server {
     try {
       const result = await backend.callTool(name, args);
       const resultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-      const hint = getNextStepHint(name, args as Record<string, any> | undefined);
+      const hint = getNextActionHint2(name, args as Record<string, any> | undefined);
 
       return {
         content: [
@@ -337,3 +351,17 @@ export async function startMCPServer(backend: LocalBackend): Promise<void> {
   process.stdin.on('error', () => shutdown());
   process.stdout.on('error', () => shutdown());
 }
+
+// TEMP_REVIEW_MARKER: eval review test
+
+// TEMP_REVIEW_MARKER: eval review test
+
+// TEMP_REVIEW_MARKER: eval review test
+
+// TEMP_REVIEW_MARKER: eval review test
+
+// TEMP_REVIEW_MARKER: eval review test
+
+// TEMP_REVIEW_MARKER: eval review test
+
+// TEMP_REVIEW_MARKER: eval review test

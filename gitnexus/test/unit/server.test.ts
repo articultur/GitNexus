@@ -17,7 +17,7 @@ import { createMCPServer } from '../../src/mcp/server.js';
 
 // ─── Mock backend ──────────────────────────────────────────────────
 
-function createMockBackend(overrides: Record<string, any> = {}): any {
+function createTestBackend(overrides: Record<string, any> = {}): any {
   return {
     callTool: vi.fn().mockResolvedValue({ result: 'ok' }),
     listRepos: vi.fn().mockResolvedValue([]),
@@ -38,7 +38,7 @@ function createMockBackend(overrides: Record<string, any> = {}): any {
 
 describe('createMCPServer', () => {
   it('returns a Server instance with expected shape', () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     const server = createMCPServer(backend);
     expect(server).toBeDefined();
     // Server should have connect/close methods
@@ -47,22 +47,22 @@ describe('createMCPServer', () => {
   });
 
   it('server has setRequestHandler method', () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     const server = createMCPServer(backend);
     // The server has registered handlers — verify it was created without errors
     expect(server).toBeTruthy();
   });
 });
 
-// ─── getNextStepHint (tested indirectly via server tool handler) ──────
+// ─── getNextActionHint (tested indirectly via server tool handler) ──────
 
-describe('getNextStepHint (via tool call response)', () => {
+describe('getNextActionHint (via tool call response)', () => {
   // We test hints by calling the server's tool handler indirectly.
   // Since createMCPServer registers handlers on the Server, we verify
   // hints are appended by checking the tool response format.
 
   it('query tool response includes hint about context', async () => {
-    const backend = createMockBackend({
+    const backend = createTestBackend({
       callTool: vi.fn().mockResolvedValue({ processes: [], definitions: [] }),
     });
     const server = createMCPServer(backend);
@@ -78,12 +78,12 @@ describe('getNextStepHint (via tool call response)', () => {
 
 describe('server error handling', () => {
   it('createMCPServer does not throw for valid backend', () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     expect(() => createMCPServer(backend)).not.toThrow();
   });
 
   it('createMCPServer reads version from package.json', () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     const server = createMCPServer(backend);
     // Server was created with version from package.json — no crash
     expect(server).toBeDefined();
@@ -94,7 +94,7 @@ describe('server error handling', () => {
 
 describe('prompt registration', () => {
   it('server registers detect_impact and generate_map prompts', () => {
-    const backend = createMockBackend();
+    const backend = createTestBackend();
     // Creating the server registers all handlers including prompts
     const server = createMCPServer(backend);
     expect(server).toBeDefined();

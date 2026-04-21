@@ -93,6 +93,14 @@ export class FilePathIndex {
   }
 
   /**
+   * 清空索引数据
+   */
+  clearIndex(): void {
+    this.index.clear();
+    this.built = false;
+  }
+
+  /**
    * 查找文件内的所有符号
    * O(1) 查找，不再需要遍历全图
    */
@@ -448,6 +456,15 @@ export class LocalBackend {
 
   // ─── Tool Dispatch ───────────────────────────────────────────────
 
+  private async validateParams(params: any): Promise<{
+    repo: RepoHandle;
+    init: (repoId: string) => Promise<void>;
+  }> {
+    const repo = await this.resolveRepo(params?.repo);
+    const init = this.ensureInitialized.bind(this);
+    return { repo, init };
+  }
+
   async callTool(method: string, params: any): Promise<any> {
     if (method === 'list_repos') {
       return this.listRepos();
@@ -473,9 +490,7 @@ export class LocalBackend {
       }
     }
 
-    // Resolve repo from optional param (re-reads registry on miss)
-    const repo = await this.resolveRepo(params?.repo);
-    const init = this.ensureInitialized.bind(this);
+    const { repo, init } = await this.validateParams(params);
 
     switch (method) {
       case 'query':

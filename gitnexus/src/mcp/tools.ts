@@ -87,6 +87,12 @@ Hybrid ranking: BM25 keyword + semantic vector search, ranked by Reciprocal Rank
           enum: ['hybrid', 'fulltext', 'vector', 'semantic'],
           default: 'hybrid',
         },
+        relevance_threshold: {
+          type: 'number',
+          description:
+            'Minimum RRF score for results (0-1). Results below this threshold are filtered out before process tracing. Default: 0 (no filtering). Typical values: 0.01-0.05.',
+          default: 0,
+        },
         repo: {
           type: 'string',
           description: 'Repository name or path. Omit if only one repo is indexed.',
