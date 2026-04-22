@@ -116,7 +116,6 @@ export type RelationshipType =
   | 'ENTRY_POINT_OF'
   | 'WRAPS'
   | 'QUERIES'
-  // Dataflow edge types (layered, not mixed with CALLS)
   | 'DATA_FLOW'
   | 'PROPAGATES'
   | 'RETURNS'
@@ -124,7 +123,6 @@ export type RelationshipType =
   | 'SANITIZES'
   | 'SINK_REACHABLE'
   | 'ALIASES'
-  // Control flow edge type
   | 'CFG_EDGE';
 
 export interface GraphNode {
@@ -141,4 +139,20 @@ export interface GraphRelationship {
   confidence: number;
   reason: string;
   step?: number;
+  /**
+   * Per-signal evidence trace for edges emitted by the scope-based
+   * resolution pipeline (RFC #909 Ring 2 PKG #925). Populated by
+   * `emit-references.ts` when draining `ReferenceIndex` into the graph
+   * so downstream query / audit tools can inspect *why* a given edge
+   * was emitted with its confidence value.
+   *
+   * Optional and additive — every existing edge emitter ignores this
+   * field, and every existing query continues to work whether or not
+   * an edge carries it.
+   */
+  evidence?: readonly {
+    readonly kind: string;
+    readonly weight: number;
+    readonly note?: string;
+  }[];
 }

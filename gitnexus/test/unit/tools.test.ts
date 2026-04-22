@@ -2,7 +2,7 @@
  * Unit Tests: MCP Tool Definitions
  *
  * Tests: GITNEXUS_TOOLS from tools.ts
- * - All 16 tools are defined (per-repo + group_*)
+ * - All 13 tools are defined (per-repo + group_list/group_sync)
  * - Each tool has valid name, description, inputSchema
  * - Required fields are correct
  * - Optional repo parameter is present on tools that need it
@@ -10,17 +10,11 @@
 import { describe, it, expect } from 'vitest';
 import { GITNEXUS_TOOLS } from '../../src/mcp/tools.js';
 
-const GROUP_TOOLS = new Set([
-  'group_list',
-  'group_sync',
-  'group_contracts',
-  'group_query',
-  'group_status',
-]);
+const GROUP_TOOLS = new Set(['group_list', 'group_sync']);
 
 describe('GITNEXUS_TOOLS', () => {
-  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 5 group + 3 new + 1 test_impact)', () => {
-    expect(GITNEXUS_TOOLS).toHaveLength(20);
+  it('exports all tools (7 base + 3 route/tool/shape + 1 api_impact + 2 group)', () => {
+    expect(GITNEXUS_TOOLS).toHaveLength(13);
   });
 
   it('contains all expected tool names', () => {
@@ -101,23 +95,29 @@ describe('GITNEXUS_TOOLS', () => {
     }
   });
 
-  it('group_contracts has optional repo filter', () => {
-    const groupContracts = GITNEXUS_TOOLS.find((t) => t.name === 'group_contracts')!;
-    expect(groupContracts.inputSchema.properties).toHaveProperty('repo');
-    expect(groupContracts.inputSchema.required).not.toContain('repo');
-  });
-
   it('group tools without backend repo param omit repo property', () => {
-    for (const name of ['group_list', 'group_status', 'group_sync', 'group_query'] as const) {
+    for (const name of ['group_list', 'group_sync'] as const) {
       const tool = GITNEXUS_TOOLS.find((t) => t.name === name)!;
       expect(tool.inputSchema.properties).not.toHaveProperty('repo');
     }
   });
 
-  it('group_query requires name and query', () => {
-    const groupQuery = GITNEXUS_TOOLS.find((t) => t.name === 'group_query')!;
-    expect(groupQuery.inputSchema.required).toContain('name');
-    expect(groupQuery.inputSchema.required).toContain('query');
+  it('impact, query, and context expose optional service with minLength', () => {
+    for (const n of ['impact', 'query', 'context'] as const) {
+      const tool = GITNEXUS_TOOLS.find((t) => t.name === n)!;
+      const svc = tool.inputSchema.properties.service;
+      expect(svc, n).toBeDefined();
+      expect(svc!.minLength).toBe(1);
+    }
+  });
+
+  it('impact schema bounds match cross-impact validation ranges', () => {
+    const impact = GITNEXUS_TOOLS.find((t) => t.name === 'impact')!;
+    expect(impact.inputSchema.properties.maxDepth.minimum).toBe(1);
+    expect(impact.inputSchema.properties.maxDepth.maximum).toBe(32);
+    expect(impact.inputSchema.properties.minConfidence.minimum).toBe(0);
+    expect(impact.inputSchema.properties.minConfidence.maximum).toBe(1);
+    expect(impact.inputSchema.properties.timeoutMs.maximum).toBe(3600000);
   });
 
   it('detect_changes scope has correct enum values', () => {
@@ -152,26 +152,5 @@ describe('GITNEXUS_TOOLS', () => {
     const shapeCheckTool = GITNEXUS_TOOLS.find((t) => t.name === 'shape_check')!;
     expect(shapeCheckTool.description).toContain('api_impact');
     expect(shapeCheckTool.description).toContain('pre-change analysis');
-  });
-
-  it('test_impact tool has no required parameters', () => {
-    const tool = GITNEXUS_TOOLS.find((t) => t.name === 'test_impact')!;
-    expect(tool).toBeDefined();
-    expect(tool.inputSchema.required).toEqual([]);
-    expect(tool.inputSchema.properties.target).toBeDefined();
-    expect(tool.inputSchema.properties.changes).toBeDefined();
-    expect(tool.inputSchema.properties.scope).toBeDefined();
-    expect(tool.inputSchema.properties.maxDepth).toBeDefined();
-    expect(tool.inputSchema.properties.repo).toBeDefined();
-  });
-
-  it('test_impact scope has valid enum values', () => {
-    const tool = GITNEXUS_TOOLS.find((t) => t.name === 'test_impact')!;
-    expect(tool.inputSchema.properties.scope.enum).toEqual([
-      'unstaged',
-      'staged',
-      'all',
-      'compare',
-    ]);
   });
 });

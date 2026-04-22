@@ -15,9 +15,12 @@ export interface ToolDefinition {
       {
         type: string;
         description?: string;
-        default?: any;
+        default?: unknown;
         items?: { type: string };
         enum?: string[];
+        minimum?: number;
+        maximum?: number;
+        minLength?: number;
       }
     >;
     required: string[];
@@ -55,7 +58,11 @@ Returns results grouped by process (execution flow):
 - process_symbols: all symbols in those flows with file locations and module (functional area)
 - definitions: standalone types/interfaces not in any process
 
-Hybrid ranking: BM25 keyword + semantic vector search, ranked by Reciprocal Rank Fusion.`,
+Hybrid ranking: BM25 keyword + semantic vector search, ranked by Reciprocal Rank Fusion.
+
+GROUP MODE: set "repo" to "@<groupName>" to search all member repos in that group (merged via RRF), or "@<groupName>/<groupRepoPath>" to run against a single member (same path keys as in group.yaml). If you use "@<groupName>" only, the member repo defaults to the lexicographically first key in group.yaml "repos". Prefer resources for contracts/status (see migration from legacy group_* tools).
+
+SERVICE: optional monorepo path prefix (POSIX-style, case-sensitive segments). When "repo" starts with "@", only processes whose symbols fall under that prefix are included. For a normal indexed repo name (no leading @), this field is currently ignored by the server.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -69,104 +76,38 @@ Hybrid ranking: BM25 keyword + semantic vector search, ranked by Reciprocal Rank
           description:
             'What you want to find (e.g., "existing auth validation logic"). Helps ranking.',
         },
-        limit: { type: 'number', description: 'Max processes to return (default: 5)', default: 5 },
+        limit: {
+          type: 'number',
+          description: 'Max processes to return (default: 5)',
+          default: 5,
+          minimum: 1,
+          maximum: 100,
+        },
         max_symbols: {
           type: 'number',
           description: 'Max symbols per process (default: 10)',
           default: 10,
+          minimum: 1,
+          maximum: 200,
         },
         include_content: {
           type: 'boolean',
           description: 'Include full symbol source code (default: false)',
           default: false,
         },
-        method: {
-          type: 'string',
-          description:
-            'Search method: "hybrid" (default, BM25+vector RRF), "fulltext" (BM25 only), "vector" (semantic only), "semantic" (alias for vector)',
-          enum: ['hybrid', 'fulltext', 'vector', 'semantic'],
-          default: 'hybrid',
-        },
-        relevance_threshold: {
-          type: 'number',
-          description:
-            'Minimum RRF score for results (0-1). Results below this threshold are filtered out before process tracing. Default: 0 (no filtering). Typical values: 0.01-0.05.',
-          default: 0,
-        },
         repo: {
           type: 'string',
-          description: 'Repository name or path. Omit if only one repo is indexed.',
+          description:
+            'Indexed repository name or path, or group mode "@<groupName>" / "@<groupName>/<memberPath>" (member path keys from group.yaml). Omit when only one indexed repo exists.',
+        },
+        service: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Optional monorepo service root (relative path, "/" separators). In group mode (@repo), prefix-matches symbol file paths; ignored for a normal repo name. Empty string is rejected server-side.',
         },
       },
       required: ['query'],
-    },
-  },
-  {
-    name: 'shortest_path',
-    description: `Find the shortest path between two graph nodes using BFS on edges.
-Returns the node path array with edge types connecting source to target.
-
-WHEN TO USE: Understanding indirect relationships between symbols, tracing dependencies across multiple hops, or finding connection paths in the code graph.
-
-Returns: { nodes: [{uid, name, kind, filePath, startLine, endLine}, ...], edges: [{sourceId, targetId, type, confidence}, ...], hop_count: number }`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        source_id: {
-          type: 'string',
-          description: 'Source node UID (e.g. "Function:abc123")',
-        },
-        target_id: {
-          type: 'string',
-          description: 'Target node UID (e.g. "Class:def456")',
-        },
-        max_hops: {
-          type: 'number',
-          description: 'Maximum hops to traverse (default: 5)',
-          default: 5,
-        },
-        relation_types: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Edge types to traverse (default: common usage edges)',
-        },
-        repo: {
-          type: 'string',
-          description: 'Repository name or path. Omit if only one repo is indexed.',
-        },
-      },
-      required: ['source_id', 'target_id'],
-    },
-  },
-  {
-    name: 'get_code',
-    description: `Retrieve source code for a specific node from its file span.
-
-WHEN TO USE: Getting the actual source code content for a symbol (function, class, method, etc.) when you already have its node UID or name+file_path from prior tool results.
-AFTER THIS: Use the code directly for analysis, refactoring, or review.
-
-Returns: { uid, name, kind, filePath, startLine, endLine, content }`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        uid: {
-          type: 'string',
-          description: 'Node UID from prior tool results (zero-ambiguity lookup)',
-        },
-        name: {
-          type: 'string',
-          description: 'Symbol name (alternative to uid)',
-        },
-        file_path: {
-          type: 'string',
-          description: 'File path to disambiguate common names (use with name)',
-        },
-        repo: {
-          type: 'string',
-          description: 'Repository name or path. Omit if only one repo is indexed.',
-        },
-      },
-      required: [],
     },
   },
   {
@@ -180,7 +121,7 @@ SCHEMA:
 - Nodes: File, Folder, Function, Class, Interface, Method, CodeElement, Community, Process, Route, Tool
 - Multi-language nodes (use backticks): \`Struct\`, \`Enum\`, \`Trait\`, \`Impl\`, etc.
 - All edges via single CodeRelation table with 'type' property
-- Edge types: CONTAINS, DEFINES, CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, ACCESSES, OVERRIDES, METHOD_OVERRIDES, METHOD_IMPLEMENTS, MEMBER_OF, STEP_IN_PROCESS, HANDLES_ROUTE, FETCHES, HANDLES_TOOL, ENTRY_POINT_OF, CFG_EDGE
+- Edge types: CONTAINS, DEFINES, CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, ACCESSES, METHOD_OVERRIDES, METHOD_IMPLEMENTS, MEMBER_OF, STEP_IN_PROCESS, HANDLES_ROUTE, FETCHES, HANDLES_TOOL, ENTRY_POINT_OF
 - Edge properties: type (STRING), confidence (DOUBLE), reason (STRING), step (INT32)
 
 EXAMPLES:
@@ -235,9 +176,13 @@ Shows categorized incoming/outgoing references (calls, imports, extends, impleme
 WHEN TO USE: After query() to understand a specific symbol in depth. When you need to know all callers, callees, and what execution flows a symbol participates in.
 AFTER THIS: Use impact() if planning changes, or READ gitnexus://repo/{name}/process/{processName} for full execution trace.
 
-Handles disambiguation: if multiple symbols share the same name, returns candidates for you to pick from. Use uid param for zero-ambiguity lookup from prior results.
+Handles disambiguation: if multiple symbols share the same name, returns ranked candidates (each with a relevance score) for you to pick from. Use uid for zero-ambiguity lookup, or narrow the search with file_path and/or kind hints.
 
-NOTE: ACCESSES edges (field read/write tracking) are included in context results with reason 'read' or 'write'. CALLS edges resolve through field access chains and method-call chains (e.g., user.address.getCity().save() produces CALLS edges at each step).`,
+NOTE: ACCESSES edges (field read/write tracking) are included in context results with reason 'read' or 'write'. CALLS edges resolve through field access chains and method-call chains (e.g., user.address.getCity().save() produces CALLS edges at each step).
+
+GROUP MODE: set "repo" to "@<groupName>" to run context in each member repo (aggregated list), or "@<groupName>/<groupRepoPath>" for one member. If you use "@<groupName>" only, the member defaults to the lexicographically first key in group.yaml "repos".
+
+SERVICE: optional monorepo path prefix (case-sensitive path segments). When "repo" starts with "@", prefix-matches resolved symbol file paths; when a hit is outside the prefix, that member returns an empty payload for the symbol. Ignored for a normal indexed repo name.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -247,6 +192,11 @@ NOTE: ACCESSES edges (field read/write tracking) are included in context results
           description: 'Direct symbol UID from prior tool results (zero-ambiguity lookup)',
         },
         file_path: { type: 'string', description: 'File path to disambiguate common names' },
+        kind: {
+          type: 'string',
+          description:
+            "Kind filter to disambiguate common names (e.g. 'Function', 'Class', 'Method', 'Interface', 'Constructor')",
+        },
         include_content: {
           type: 'boolean',
           description: 'Include full symbol source code (default: false)',
@@ -254,7 +204,14 @@ NOTE: ACCESSES edges (field read/write tracking) are included in context results
         },
         repo: {
           type: 'string',
-          description: 'Repository name or path. Omit if only one repo is indexed.',
+          description:
+            'Indexed repository name or path, or group mode "@<groupName>" / "@<groupName>/<memberPath>". Omit if only one repo is indexed.',
+        },
+        service: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Optional monorepo service root (relative path). Applies in group mode (@repo) only; ignored for a normal repo name. Empty string is rejected server-side.',
         },
       },
       required: [],
@@ -262,69 +219,29 @@ NOTE: ACCESSES edges (field read/write tracking) are included in context results
   },
   {
     name: 'detect_changes',
-    description: `Analyze git changes and find affected execution flows.
+    description: `Analyze uncommitted git changes and find affected execution flows.
 Maps git diff hunks to indexed symbols, then traces which processes are impacted.
 
-PREREQUISITES: Requires a local git repository at the indexed repo path.
-Not available for remotely-pulled indexes (no local source). Returns an error if git is unavailable.
-
-WHEN TO USE:
-- Before committing: understand what your current changes affect (scope: "unstaged"/"staged")
-- Evaluate a specific commit's risk: scope: "commit", base_ref: "<commit-hash>"
-- Compare branch vs base: scope: "compare", base_ref: "main"
-
+WHEN TO USE: Before committing — to understand what your changes affect. Pre-commit review, PR preparation.
 AFTER THIS: Review affected processes. Use context() on high-risk symbols. READ gitnexus://repo/{name}/process/{name} for full traces.
 
-SCOPE OPTIONS:
-- "unstaged" (default): uncommitted working tree changes
-- "staged": changes staged for commit
-- "all": all local changes vs HEAD
-- "compare": current HEAD vs a branch/ref (base_ref required)
-- "commit": analyze what a specific commit introduced (base_ref = commit hash). Handles merge commits automatically by diffing against first parent.
-
-DEGRADATION BEHAVIOR:
-When diff exceeds buffer limits (ENOBUFS), returns a degraded response with reduced precision:
-- normal (≤512KB): Full line-level precision with exact hunks
-- symbol-level (512KB-2MB): File-level changes + all symbols in each file (may include unchanged symbols)
-- file-level (>2MB): Only file paths, use drill_down commands for deeper analysis
-
-Degraded responses include:
-- truncated: true (signals degraded mode)
-- precision: "symbol-level" | "file-level"
-- stats: { total_files, total_symbols, diff_size_bytes, diff_size_human }
-- files[].drill_down: Commands to get more precise analysis for each file
-- suggestion: User guidance for next steps
-- alternative_commands: CLI commands for follow-up analysis
-
-Use the "file" parameter to drill down into a specific file with symbol-level precision.`,
+Returns: changed symbols, affected processes, and a risk summary.`,
     inputSchema: {
       type: 'object',
       properties: {
         scope: {
           type: 'string',
-          description:
-            'What to analyze: "unstaged" (default), "staged", "all", "compare", or "commit" (analyze a specific commit — set base_ref to the commit hash)',
-          enum: ['unstaged', 'staged', 'all', 'compare', 'commit'],
+          description: 'What to analyze: "unstaged" (default), "staged", "all", or "compare"',
+          enum: ['unstaged', 'staged', 'all', 'compare'],
           default: 'unstaged',
         },
         base_ref: {
           type: 'string',
-          description:
-            'For "compare" scope: branch/ref to compare against (e.g., "main"). For "commit" scope: the commit hash to analyze.',
-        },
-        file: {
-          type: 'string',
-          description:
-            'Analyze a single file (drill-down from degraded response). Returns symbol-level precision for that file.',
+          description: 'Branch/commit for "compare" scope (e.g., "main")',
         },
         repo: {
           type: 'string',
           description: 'Repository name or path. Omit if only one repo is indexed.',
-        },
-        enable_detection: {
-          type: 'boolean',
-          description: 'Run bug detection rules on changed symbols (off by default)',
-          default: false,
         },
       },
       required: [],
@@ -337,10 +254,6 @@ Finds all references via graph (high confidence) and regex text search (lower co
 
 WHEN TO USE: Renaming a function, class, method, or variable across the codebase. Safer than find-and-replace.
 AFTER THIS: Run detect_changes() to verify no unexpected side effects.
-
-PREREQUISITES: Requires local source files.
-- dry_run=true (default): graph-based edits work without source; text_search edits require local files and will be skipped if unavailable.
-- dry_run=false: reads and writes local source files — requires full local source access. Not usable with remotely-pulled indexes.
 
 Each edit is tagged with confidence:
 - "graph": found via knowledge graph relationships (high confidence, safe to accept)
@@ -388,38 +301,96 @@ Depth groups:
 - d=2: LIKELY AFFECTED (indirect)
 - d=3: MAY NEED TESTING (transitive)
 
-TIP: Default traversal uses CALLS/IMPORTS/EXTENDS/IMPLEMENTS. For class members, include HAS_METHOD and HAS_PROPERTY in relationTypes. For field access analysis, include ACCESSES in relationTypes. For data-flow analysis (requires --dataflow during indexing), include TAINTED, SINK_REACHABLE, or DATA_FLOW in relationTypes to trace value propagation through variables.
+TIP: Default traversal uses CALLS/IMPORTS/EXTENDS/IMPLEMENTS. For class members, include HAS_METHOD and HAS_PROPERTY in relationTypes. For field access analysis, include ACCESSES in relationTypes.
 
-EdgeType: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, OVERRIDES, METHOD_OVERRIDES, METHOD_IMPLEMENTS, ACCESSES, DATA_FLOW, TAINTED, SINK_REACHABLE, PROPAGATES, RETURNS, SANITIZES, ALIASES, CFG_EDGE
-Confidence: 1.0 = certain, <0.8 = fuzzy match`,
+Handles disambiguation: when multiple symbols share the target name, returns ranked candidates (each with a relevance score) instead of silently picking one. Use target_uid for zero-ambiguity lookup, or narrow with file_path and/or kind hints.
+
+EdgeType: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, METHOD_OVERRIDES, METHOD_IMPLEMENTS, ACCESSES
+Confidence: 1.0 = certain, <0.8 = fuzzy match
+
+GROUP MODE: set "repo" to "@<groupName>" for cross-repo impact anchored at the default member (lexicographically first key in group.yaml "repos"), or "@<groupName>/<groupRepoPath>" to choose the member (same path keys as in group.yaml). Phase-1 walk runs in that member; cross-boundary fan-out uses the group bridge.
+
+SERVICE: optional monorepo path prefix (case-sensitive path segments). When "repo" starts with "@", scopes the local impact walk and cross-repo symbol paths to files under that prefix; ignored for a normal indexed repo name.`,
     inputSchema: {
       type: 'object',
       properties: {
         target: { type: 'string', description: 'Name of function, class, or file to analyze' },
+        target_uid: {
+          type: 'string',
+          description:
+            'Direct symbol UID from prior tool results (zero-ambiguity lookup, skips target resolution)',
+        },
         direction: {
           type: 'string',
           description: 'upstream (what depends on this) or downstream (what this depends on)',
         },
+        file_path: {
+          type: 'string',
+          description: 'File path hint to disambiguate common names',
+        },
+        kind: {
+          type: 'string',
+          description:
+            "Kind filter to disambiguate common names (e.g. 'Function', 'Class', 'Method', 'Interface', 'Constructor')",
+        },
         maxDepth: {
           type: 'number',
-          description: 'Max relationship depth (default: 3)',
+          description: 'Max relationship depth (default: 3, server clamps to 1–32)',
           default: 3,
+          minimum: 1,
+          maximum: 32,
+        },
+        crossDepth: {
+          type: 'number',
+          description:
+            'Cross-repository hop depth via contract bridge (default: 1; values above server maximum are clamped)',
+          default: 1,
+          minimum: 1,
+          maximum: 32,
         },
         relationTypes: {
           type: 'array',
           items: { type: 'string' },
           description:
-            'Filter: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, OVERRIDES, METHOD_OVERRIDES, METHOD_IMPLEMENTS, ACCESSES, DATA_FLOW (default: usage-based, ACCESSES and DATA_FLOW excluded by default)',
+            'Filter: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, METHOD_OVERRIDES, METHOD_IMPLEMENTS, ACCESSES (default: usage-based, ACCESSES excluded by default)',
         },
         includeTests: { type: 'boolean', description: 'Include test files (default: false)' },
-        minConfidence: { type: 'number', description: 'Minimum confidence 0-1 (default: 0.7)' },
+        minConfidence: {
+          type: 'number',
+          description:
+            'Minimum edge confidence 0–1 (default: 0 when omitted; server clamps to 0–1)',
+          default: 0,
+          minimum: 0,
+          maximum: 1,
+        },
         repo: {
           type: 'string',
-          description: 'Repository name or path. Omit if only one repo is indexed.',
+          description:
+            'Indexed repository name or path, or group mode "@<groupName>" / "@<groupName>/<memberPath>". Omit if only one repo is indexed.',
         },
-        file_path: {
+        service: {
           type: 'string',
-          description: 'File path to filter impact results to a specific file.',
+          minLength: 1,
+          description:
+            'Optional monorepo service root (relative path). Applies when "repo" is group mode (@…); ignored for a normal repo name. Empty string is rejected server-side.',
+        },
+        subgroup: {
+          type: 'string',
+          description:
+            'Optional group subgroup prefix (member repo paths) limiting which repos participate in cross fan-out.',
+        },
+        timeoutMs: {
+          type: 'number',
+          description:
+            'Wall-clock budget in milliseconds for the Phase-1 local impact leg (default 30000)',
+          minimum: 1,
+          maximum: 3600000,
+        },
+        timeout: {
+          type: 'number',
+          description: 'Alias of timeoutMs (milliseconds) when timeoutMs is omitted',
+          minimum: 1,
+          maximum: 3600000,
         },
       },
       required: ['target', 'direction'],
@@ -535,133 +506,6 @@ WHEN TO USE: After changing group.yaml or re-indexing member repos.`,
         exactOnly: { type: 'boolean', description: 'Exact match only in cascade' },
       },
       required: ['name'],
-    },
-  },
-  {
-    name: 'group_contracts',
-    description: `Inspect contracts and cross-links from the group's contracts.json.
-
-WHEN TO USE: Debug cross-repo links after group_sync.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Group name' },
-        type: { type: 'string', description: 'Filter by contract type (http, topic, …)' },
-        repo: { type: 'string', description: 'Filter by group repo path (e.g. app/backend)' },
-        unmatchedOnly: { type: 'boolean', description: 'Only contracts with no cross-link' },
-      },
-      required: ['name'],
-    },
-  },
-  {
-    name: 'group_query',
-    description: `Run the query tool across all repos in a group and merge process results via reciprocal rank fusion.
-
-WHEN TO USE: Semantic / hybrid search across a whole product group.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Group name' },
-        query: { type: 'string', description: 'Search query' },
-        subgroup: { type: 'string', description: 'Limit to repo paths under this prefix' },
-        limit: { type: 'number', description: 'Max merged results (default 5)' },
-      },
-      required: ['name', 'query'],
-    },
-  },
-  {
-    name: 'group_status',
-    description: `Report index staleness (commit vs HEAD) and Contract Registry staleness (indexedAt) for each repo in a group.
-
-WHEN TO USE: Before group_sync or when agents should refresh indexes.`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Group name' },
-      },
-      required: ['name'],
-    },
-  },
-  {
-    name: 'test_impact',
-    description: `Find test files that cover a changed symbol or set of changed files.
-Traverses the call/import graph upstream from the given symbols to discover which test functions (and test files) transitively call them.
-
-WHEN TO USE: Before or after making code changes — quickly find the minimal set of test files that exercise the changed code, avoiding full test-suite runs.
-AFTER THIS: Run the returned test files with your test runner. For deeper risk assessment, use impact({target: "<symbol>", direction: "upstream"}).
-
-Input (one of):
-- target: a single symbol name or file path fragment
-- changes: array of symbol names
-- scope: git diff scope ("unstaged" | "staged" | "all" | "compare") — mirrors detect_changes
-
-Output:
-- test_files: sorted list of test files (by proximity, then hit count)
-- seed_symbols: the resolved input symbols
-- summary: human-readable result`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        target: {
-          type: 'string',
-          description: 'Symbol name or file path fragment to use as the change origin.',
-        },
-        changes: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Array of symbol names to use as change origins.',
-        },
-        scope: {
-          type: 'string',
-          description:
-            'Git diff scope: "unstaged" (default), "staged", "all", "compare". Mirrors detect_changes.',
-          enum: ['unstaged', 'staged', 'all', 'compare'],
-        },
-        base_ref: {
-          type: 'string',
-          description: 'Branch or commit to compare against (required when scope="compare").',
-        },
-        maxDepth: {
-          type: 'number',
-          description: 'Maximum BFS traversal depth (default: 5).',
-          default: 5,
-        },
-        minConfidence: {
-          type: 'number',
-          description: 'Minimum edge confidence 0-1 (default: 0).',
-          default: 0,
-        },
-        repo: {
-          type: 'string',
-          description: 'Repository name or path. Omit if only one repo is indexed.',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'explain_dataflow',
-    description: `Explain a data flow security vulnerability in plain English using an LLM.
-
-WHEN TO USE: After running an impact analysis that returns a TaintPath (source→sink propagation). Converts technical graph data into a human-readable security explanation.
-
-Takes a taint_path JSON string (source node, sink node, propagation steps, sanitizers, confidence) and returns a plain English explanation of the vulnerability, attack scenario, and recommended fix.
-
-Low cost: ~0.001 per call (uses a fast, small model).`,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        taint_path: {
-          type: 'string',
-          description:
-            'JSON string of the TaintPath object: { source: {nodeId, variable, kind, description}, sink: {nodeId, variable, kind, description}, path: [{from, to, operation}], sanitizers: [{nodeId, variable, description}], confidence: number }',
-        },
-        repo: {
-          type: 'string',
-          description: 'Repository name or path. Omit if only one repo is indexed.',
-        },
-      },
-      required: ['taint_path'],
     },
   },
 ];

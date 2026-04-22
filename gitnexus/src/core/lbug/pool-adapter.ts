@@ -36,6 +36,30 @@ interface PoolEntry {
 const pool = new Map<string, PoolEntry>();
 
 /**
+ * Listeners notified when a pool entry is torn down (LRU eviction, idle
+ * timeout, explicit close). Used by upper layers (e.g. the BM25 search
+ * module) to invalidate per-repo caches that must not outlive the pool
+ * entry that produced them.
+ *
+ * Listeners run synchronously inside `closeOne` after the pool entry has
+ * been removed; throwing listeners are isolated so one bad listener does
+ * not prevent others from firing or break teardown.
+ */
+type PoolCloseListener = (repoId: string) => void;
+const poolCloseListeners = new Set<PoolCloseListener>();
+
+/**
+ * Subscribe to pool-close events. Returns a disposer that removes the
+ * listener (handy for tests).
+ */
+export function addPoolCloseListener(listener: PoolCloseListener): () => void {
+  poolCloseListeners.add(listener);
+  return () => {
+    poolCloseListeners.delete(listener);
+  };
+}
+
+/**
  * Shared Database cache keyed by resolved dbPath.
  * Multiple repoIds pointing to the same path share one native Database
  * object to avoid exhausting the buffer manager's mmap budget.
@@ -44,6 +68,7 @@ interface SharedDB {
   db: lbug.Database;
   refCount: number;
   ftsLoaded: boolean;
+  vectorLoaded: boolean;
   /** When true, closeOne skips db.close() — the Database is owned externally. */
   external?: boolean;
 }
@@ -148,6 +173,8 @@ function closeOne(repoId: string): void {
         // or remove from cache.  Keep the entry so future initLbug() calls
         // for the same dbPath reuse it instead of hitting a file lock.
         shared.refCount = 0;
+        shared.ftsLoaded = false;
+        shared.vectorLoaded = false;
       } else {
         shared.db.close().catch(() => {});
         dbCache.delete(entry.dbPath);
@@ -156,6 +183,16 @@ function closeOne(repoId: string): void {
   }
 
   pool.delete(repoId);
+
+  // Notify listeners AFTER the pool entry is gone so any cache-invalidation
+  // they perform is consistent with `isLbugReady(repoId) === false`.
+  for (const listener of poolCloseListeners) {
+    try {
+      listener(repoId);
+    } catch {
+      // Isolate listener failures — teardown must complete.
+    }
+  }
 }
 
 /**
@@ -276,7 +313,7 @@ async function doInitLbug(repoId: string, dbPath: string): Promise<void> {
           true, // readOnly
         );
         restoreStdout();
-        shared = { db, refCount: 0, ftsLoaded: false };
+        shared = { db, refCount: 0, ftsLoaded: false, vectorLoaded: false };
         dbCache.set(dbPath, shared);
         break;
       } catch (err: any) {
@@ -325,6 +362,17 @@ async function doInitLbug(repoId: string, dbPath: string): Promise<void> {
     }
   }
 
+  // Load VECTOR extension once per shared Database for semantic search support.
+  if (!shared.vectorLoaded) {
+    try {
+      await available[0].query('INSTALL VECTOR');
+      await available[0].query('LOAD EXTENSION VECTOR');
+      shared.vectorLoaded = true;
+    } catch {
+      // VECTOR extension may not be available
+    }
+  }
+
   // Register pool entry only after all connections are pre-warmed and FTS is
   // loaded.  Concurrent executeQuery calls see either "not initialized"
   // (and throw cleanly) or a fully ready pool — never a half-built one.
@@ -368,7 +416,7 @@ export async function initLbugWithDb(
   // closeOne() respects the external flag and skips db.close().
   let shared = dbCache.get(dbPath);
   if (!shared) {
-    shared = { db: existingDb, refCount: 0, ftsLoaded: false, external: true };
+    shared = { db: existingDb, refCount: 0, ftsLoaded: false, vectorLoaded: false, external: true };
     dbCache.set(dbPath, shared);
   }
   shared.refCount++;
@@ -384,10 +432,24 @@ export async function initLbugWithDb(
   }
 
   // Load FTS extension if not already loaded on this Database
-  try {
-    await available[0].query('LOAD EXTENSION fts');
-  } catch {
-    // Extension may already be loaded or not installed
+  if (!shared.ftsLoaded) {
+    try {
+      await available[0].query('LOAD EXTENSION fts');
+      shared.ftsLoaded = true;
+    } catch {
+      // Extension may already be loaded or not installed
+    }
+  }
+
+  // Load VECTOR extension for semantic search support
+  if (!shared.vectorLoaded) {
+    try {
+      await available[0].query('INSTALL VECTOR');
+      await available[0].query('LOAD EXTENSION VECTOR');
+      shared.vectorLoaded = true;
+    } catch {
+      // VECTOR extension may not be available
+    }
   }
 
   pool.set(repoId, {

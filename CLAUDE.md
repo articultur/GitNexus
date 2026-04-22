@@ -1,4 +1,4 @@
-<!-- version: 1.6.0 -->
+<!-- version: 1.7.0 -->
 
 Last reviewed: 2026-04-22
 
@@ -27,12 +27,22 @@ If always-on instructions grow, load deep conventions via conditional reads inst
 ## Reference Documentation
 
 - **This repository:** [AGENTS.md](AGENTS.md), [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), [GUARDRAILS.md](GUARDRAILS.md).
+- **Call-resolution DAG:** See ARCHITECTURE.md § Call-Resolution DAG. Shared pipeline code in `gitnexus/src/core/ingestion/` must not name languages — use `LanguageProvider` hooks instead (see AGENTS.md).
 - **GitNexus rules:** Defined in [AGENTS.md](AGENTS.md) `<!-- gitnexus:start -->` block. Do NOT duplicate here.
 
 ## Changelog
 
 | Date | Version | Change |
 |------|---------|--------|
+| 2026-04-22 | 1.7.0 | Merged upstream fork/main (RFC #909, cross-repo impact, CLI enhancements). |
 | 2026-04-22 | 1.6.0 | Removed Serena integration harness (hooks, skills, MCP, routing rules). |
+| 2026-04-13 | 1.3.0 | Updated GitNexus index stats after DAG refactor. |
+| 2026-03-24 | 1.2.0 | Removed duplicated gitnexus:start block and scope table; replaced with pointers to AGENTS.md. |
 | 2026-03-23 | 1.1.0 | Updated agent instructions to match AGENTS.md. |
 | 2026-03-22 | 1.0.0 | Added structured header and changelog. |
+
+---
+
+## GitNexus rules
+
+See the `<!-- gitnexus:start --> … <!-- gitnexus:end -->` block in **[AGENTS.md](AGENTS.md)** for the canonical MCP tools, impact analysis rules, and index instructions.

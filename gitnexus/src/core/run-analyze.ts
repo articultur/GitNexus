@@ -19,7 +19,6 @@ import {
   executeQuery,
   executeWithReusedStatement,
   closeLbug,
-  createFTSIndex,
   loadCachedEmbeddings,
 } from './lbug/lbug-adapter.js';
 import {
@@ -30,9 +29,11 @@ import {
   registerRepo,
   cleanupOldKuzuFiles,
 } from '../storage/repo-manager.js';
-import { getCurrentCommit, hasGitDir } from '../storage/git.js';
+import { getCurrentCommit, getRemoteUrl, hasGitDir, getInferredRepoName } from '../storage/git.js';
+import type { CachedEmbedding } from './embeddings/types.js';
 import { generateAIContextFiles } from '../cli/ai-context.js';
-import { CURRENT_SCHEMA_VERSION } from './lbug/schema-version.js';
+import { EMBEDDING_TABLE_NAME } from './lbug/schema.js';
+import { STALE_HASH_SENTINEL } from './lbug/schema.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -44,11 +45,34 @@ export interface AnalyzeCallbacks {
 }
 
 export interface AnalyzeOptions {
+  /**
+   * Force a full re-index of the pipeline. Callers may OR this with
+   * other flags that imply re-analysis (e.g. `--skills`), so the value
+   * here is the PIPELINE-force signal, NOT the registry-collision
+   * bypass. See `allowDuplicateName` below.
+   */
   force?: boolean;
   embeddings?: boolean;
   skipGit?: boolean;
   /** Skip AGENTS.md and CLAUDE.md gitnexus block updates. */
   skipAgentsMd?: boolean;
+  /** Omit volatile symbol/relationship counts from AGENTS.md and CLAUDE.md. */
+  noStats?: boolean;
+  /**
+   * User-provided alias for the registry `name` (#829). When set,
+   * forwarded to `registerRepo` so the indexed repo is stored under
+   * this alias instead of the path-derived basename.
+   */
+  registryName?: string;
+  /**
+   * Bypass the `RegistryNameCollisionError` guard and allow two paths
+   * to register under the same `name` (#829). Controlled by the
+   * dedicated `--allow-duplicate-name` CLI flag, intentionally
+   * independent from `--force` — users who hit the collision guard
+   * should be able to accept the duplicate without paying the cost
+   * of a pipeline re-index.
+   */
+  allowDuplicateName?: boolean;
 }
 
 export interface AnalyzeResult {
@@ -68,7 +92,7 @@ export interface AnalyzeResult {
 }
 
 /** Threshold: auto-skip embeddings for repos with more nodes than this */
-const EMBEDDING_NODE_LIMIT = 500_000;
+const EMBEDDING_NODE_LIMIT = 50_000;
 
 export const PHASE_LABELS: Record<string, string> = {
   extracting: 'Scanning files',
@@ -127,7 +151,7 @@ export async function runFullAnalysis(
     // Non-git folders have currentCommit = '' — always rebuild since we can't detect changes
     if (currentCommit !== '') {
       return {
-        repoName: path.basename(repoPath),
+        repoName: options.registryName ?? getInferredRepoName(repoPath) ?? path.basename(repoPath),
         repoPath,
         stats: existingMeta.stats ?? {},
         alreadyUpToDate: true,
@@ -137,7 +161,7 @@ export async function runFullAnalysis(
 
   // ── Cache embeddings from existing index before rebuild ────────────
   let cachedEmbeddingNodeIds = new Set<string>();
-  let cachedEmbeddings: Array<{ nodeId: string; embedding: number[] }> = [];
+  let cachedEmbeddings: CachedEmbedding[] = [];
 
   if (options.embeddings && existingMeta && !options.force) {
     try {
@@ -190,29 +214,12 @@ export async function runFullAnalysis(
     });
 
     // ── Phase 3: FTS (85–90%) ─────────────────────────────────────────
-    progress('fts', 85, 'Creating search indexes...');
-
-    try {
-      await createFTSIndex('File', 'file_fts', ['name', 'content']);
-      await createFTSIndex('Function', 'function_fts', [
-        'name',
-        'content',
-        'parameterNames',
-        'returnType',
-        'qualifier',
-      ]);
-      await createFTSIndex('Class', 'class_fts', ['name', 'content']);
-      await createFTSIndex('Method', 'method_fts', [
-        'name',
-        'content',
-        'parameterNames',
-        'returnType',
-        'qualifier',
-      ]);
-      await createFTSIndex('Interface', 'interface_fts', ['name', 'content']);
-    } catch {
-      // Non-fatal — FTS is best-effort
-    }
+    // FTS indexes are created lazily on first `query`/`context` call instead
+    // of eagerly here. On small repos / CI runners the LadybugDB
+    // CREATE_FTS_INDEX cost is ~440 ms × 5 (≈2 s) regardless of table size,
+    // which dominated `analyze` runtime and pushed Windows CI past its
+    // 30 s test budget. Lazy creation is implemented in
+    // `core/search/bm25-index.ts` via `ensureFTSIndex`.
 
     // ── Phase 3.5: Re-insert cached embeddings ────────────────────────
     if (cachedEmbeddings.length > 0) {
@@ -227,15 +234,14 @@ export async function runFullAnalysis(
         cachedEmbeddingNodeIds = new Set();
       } else {
         progress('embeddings', 88, `Restoring ${cachedEmbeddings.length} cached embeddings...`);
+        const { batchInsertEmbeddings: batchInsert } =
+          await import('./embeddings/embedding-pipeline.js');
         const EMBED_BATCH = 200;
         for (let i = 0; i < cachedEmbeddings.length; i += EMBED_BATCH) {
           const batch = cachedEmbeddings.slice(i, i + EMBED_BATCH);
-          const paramsList = batch.map((e) => ({ nodeId: e.nodeId, embedding: e.embedding }));
+
           try {
-            await executeWithReusedStatement(
-              `CREATE (e:CodeEmbedding {nodeId: $nodeId, embedding: $embedding})`,
-              paramsList,
-            );
+            await batchInsert(executeWithReusedStatement, batch);
           } catch {
             /* some may fail if node was removed, that's fine */
           }
@@ -262,6 +268,18 @@ export async function runFullAnalysis(
         httpMode ? 'Connecting to embedding endpoint...' : 'Loading embedding model...',
       );
       const { runEmbeddingPipeline } = await import('./embeddings/embedding-pipeline.js');
+      // Build a Map<nodeId, contentHash> from cached embeddings for incremental mode
+      let existingEmbeddings: Map<string, string> | undefined;
+      if (cachedEmbeddingNodeIds.size > 0) {
+        existingEmbeddings = new Map<string, string>();
+        for (const e of cachedEmbeddings) {
+          existingEmbeddings.set(e.nodeId, e.contentHash ?? STALE_HASH_SENTINEL);
+        }
+      }
+
+      const { readServerMapping } = await import('./embeddings/server-mapping.js');
+      const projectName = path.basename(repoPath);
+      const serverName = await readServerMapping(projectName);
       await runEmbeddingPipeline(
         executeQuery,
         executeWithReusedStatement,
@@ -277,6 +295,8 @@ export async function runFullAnalysis(
         },
         {},
         cachedEmbeddingNodeIds.size > 0 ? cachedEmbeddingNodeIds : undefined,
+        { repoName: projectName, serverName },
+        existingEmbeddings,
       );
     }
 
@@ -286,7 +306,9 @@ export async function runFullAnalysis(
     // Count embeddings in the index (cached + newly generated)
     let embeddingCount = 0;
     try {
-      const embResult = await executeQuery(`MATCH (e:CodeEmbedding) RETURN count(e) AS cnt`);
+      const embResult = await executeQuery(
+        `MATCH (e:${EMBEDDING_TABLE_NAME}) RETURN count(e) AS cnt`,
+      );
       embeddingCount = embResult?.[0]?.cnt ?? 0;
     } catch {
       /* table may not exist if embeddings never ran */
@@ -296,7 +318,13 @@ export async function runFullAnalysis(
       repoPath,
       lastCommit: currentCommit,
       indexedAt: new Date().toISOString(),
-      schemaVersion: CURRENT_SCHEMA_VERSION,
+      // Captured here (not at registration) so it travels with the
+      // on-disk meta.json — sibling-clone fingerprinting works for
+      // out-of-tree consumers (group-status, future tooling) without
+      // a second git shellout. `undefined` when the repo has no
+      // origin remote, which is fine: paths-only repos behave as
+      // before.
+      remoteUrl: hasGitDir(repoPath) ? getRemoteUrl(repoPath) : undefined,
       stats: {
         files: pipelineResult.totalFileCount,
         nodes: stats.nodes,
@@ -307,14 +335,24 @@ export async function runFullAnalysis(
       },
     };
     await saveMeta(storagePath, meta);
-    await registerRepo(repoPath, meta);
+    // Forward the --name alias and the registry-collision bypass bit.
+    // `allowDuplicateName` is its own concern — independent from the
+    // pipeline `force` above. The CLI maps it from
+    // `--allow-duplicate-name` only; `--force` and `--skills` both
+    // trigger pipeline re-run but never bypass the registry guard.
+    // The returned name is the one actually written to the registry
+    // (after applying the precedence chain in registerRepo) — reuse it
+    // so AGENTS.md / skill files reference the same name MCP clients
+    // will look up (#979).
+    const projectName = await registerRepo(repoPath, meta, {
+      name: options.registryName,
+      allowDuplicateName: options.allowDuplicateName,
+    });
 
     // Only attempt to update .gitignore when a .git directory is present.
     if (hasGitDir(repoPath)) {
       await addToGitignore(repoPath);
     }
-
-    const projectName = path.basename(repoPath);
 
     // ── Generate AI context files (best-effort) ───────────────────────
     let aggregatedClusterCount = 0;
@@ -341,7 +379,7 @@ export async function runFullAnalysis(
           processes: pipelineResult.processResult?.stats.totalProcesses,
         },
         undefined,
-        { skipAgentsMd: options.skipAgentsMd },
+        { skipAgentsMd: options.skipAgentsMd, noStats: options.noStats },
       );
     } catch {
       // Best-effort — don't fail the entire analysis for context file issues
