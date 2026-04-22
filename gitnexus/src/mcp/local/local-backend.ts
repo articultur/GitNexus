@@ -111,6 +111,13 @@ export const VALID_RELATION_TYPES = new Set([
   'HANDLES_TOOL',
   'ENTRY_POINT_OF',
   'WRAPS',
+  'DATA_FLOW',
+  'TAINTED',
+  'SINK_REACHABLE',
+  'PROPAGATES',
+  'RETURNS',
+  'SANITIZES',
+  'ALIASES',
 ]);
 
 /**
