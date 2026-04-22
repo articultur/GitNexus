@@ -6,7 +6,7 @@
 
 GitNexus 是一个**本地代码智能引擎**，通过 Tree-sitter 解析 + Neo4j 图数据库索引代码结构，为 AI 编码助手提供零服务端调用的代码理解能力。核心能力包括：代码符号查询、影响分析、数据流追溯、安全检测、跨仓库 Group 管理。
 
-**核心技术栈**: TypeScript (CLI + MCP + Web) | Python (Eval + Serena) | Neo4j | Tree-sitter
+**核心技术栈**: TypeScript (CLI + MCP + Web) | Python (Eval) | Neo4j | Tree-sitter
 
 **支持语言**: TypeScript/JavaScript, Python, Java, Kotlin, Go, Rust, C/C++, C#, Swift, Objective-C, PHP, Ruby, Dart, COBOL, Vue, ArkTS 等 20+ 种语言
 
@@ -22,11 +22,9 @@ GitNexus/                          # Monorepo 根目录
 ├── gitnexus-claude-plugin/        # Claude Code 插件 skills
 ├── gitnexus-cursor-integration/   # Cursor 编辑器集成 skills
 ├── gitnexus-test-setup/           # 测试辅助配置
-├── serena/                        # [Python] Serena — LSP 驱动的语义编码工具 (git submodule)
 ├── eval/                          # [Python] 评估框架 — 3-arm 对比评估系统
 ├── docs/                          # 项目文档
 ├── .claude/                       # Claude Code skills 和配置
-├── .serena/                       # Serena 项目配置
 ├── .omc/                          # OMC 工作流状态
 └── .gitnexus/                     # GitNexus 索引元数据
 ```
@@ -355,47 +353,7 @@ eval/
 
 ---
 
-### 3.5 serena/ — Serena 语义编码工具 (Python 子模块)
-
-Serena 是一个独立的 LSP 驱动编码助手，通过 git submodule 集成到项目中。
-
-#### 核心模块 (src/serena/)
-| 文件 | 大小 | 功能 |
-|------|------|------|
-| `agent.py` | 48KB | Agent 编排引擎 |
-| `cli.py` | 54KB | CLI 入口 |
-| `symbol.py` | 46KB | 符号管理 (查找、读取、编辑、重命名) |
-| `mcp.py` | 16KB | MCP 服务器实现 |
-| `project.py` | 33KB | 项目管理 (加载、配置、索引) |
-| `code_editor.py` | 20KB | 代码编辑器 (插入、替换、删除符号) |
-| `hooks.py` | 19KB | Hook 系统 |
-| `dashboard.py` | 38KB | Web Dashboard |
-| `ls_manager.py` | 11KB | Language Server 管理器 |
-| `task_executor.py` | 10KB | 任务执行器 |
-
-#### 工具集 (src/serena/tools/)
-| 文件 | 功能 |
-|------|------|
-| `symbol_tools.py` | 符号操作工具 (查找、引用、重命名) |
-| `file_tools.py` | 文件操作工具 |
-| `memory_tools.py` | 项目记忆工具 |
-| `config_tools.py` | 配置工具 |
-| `cmd_tools.py` | 命令执行工具 |
-| `workflow_tools.py` | 工作流工具 |
-| `jetbrains_tools.py` | JetBrains IDE 集成 |
-| `query_project_tools.py` | 跨项目查询 |
-| `tools_base.py` | 工具基类 |
-
-#### SolidLSP (src/solidlsp/)
-统一的 Language Server Protocol 客户端库，内置 **58 个语言服务器** 适配器:
-- TypeScript, Python, Java, Go, Rust, C#, C++, Kotlin, Swift, Ruby, PHP, Dart, Scala, Haskell, Elixir, Erlang, Lua, Fortran, MATLAB, Solidity 等
-
-#### Interprompt (src/interprompt/)
-提示词工程库 — Jinja 模板、多语言 prompt 管理
-
----
-
-### 3.6 集成层
+### 3.5 集成层
 
 #### gitnexus-claude-plugin/ — Claude Code 插件
 Skills 定义:
@@ -533,7 +491,7 @@ Stats + Report ─── 统计对比 + 生成报告
 |------|----------|------|
 | Claude Code | MCP stdio (`gitnexus mcp`) | 代码查询、影响分析、变更检测 |
 | Cursor | Skill 文件 | 代码探索、调试、重构 |
-| Serena | MCP stdio (`uvx serena mcp`) | LSP 级符号编辑、引用查找 |
+
 | Web UI | HTTP (`gitnexus serve`) | 图谱可视化、交互式分析 |
 | Neo4j | Bolt 协议 | 图数据库 |
 | Anthropic API | HTTPS | 评估框架调用 Claude |
@@ -561,9 +519,8 @@ Stats + Report ─── 统计对比 + 生成报告
 
 | 文件 | 功能 |
 |------|------|
-| `.mcp.json` | MCP 服务器配置 (gitnexus + serena) |
+| `.mcp.json` | MCP 服务器配置 (gitnexus) |
 | `.gitnexus/meta.json` | GitNexus 索引元数据 |
-| `.serena/` | Serena 项目配置 |
 | `.claude/` | Claude Code skills 和设置 |
 | `CLAUDE.md` | Claude Code 项目指令 |
 | `AGENTS.md` | Agent 行为规范 |
