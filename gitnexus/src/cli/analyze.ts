@@ -9,153 +9,42 @@
  */
 
 import path from 'path';
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync } from 'child_process';
 import v8 from 'v8';
 import cliProgress from 'cli-progress';
 import { closeLbug } from '../core/lbug/lbug-adapter.js';
-import { getStoragePaths, getGlobalRegistryPath } from '../storage/repo-manager.js';
+import {
+  getStoragePaths,
+  getGlobalRegistryPath,
+  RegistryNameCollisionError,
+} from '../storage/repo-manager.js';
 import { getGitRoot, hasGitDir } from '../storage/git.js';
 import { runFullAnalysis } from '../core/run-analyze.js';
 import fs from 'fs/promises';
 
-const OLLAMA_DEFAULT_URL = 'http://localhost:11434';
-const OLLAMA_DEFAULT_MODEL = 'snowflake-arctic-embed:xs';
-const OLLAMA_EMBEDDING_DIMS = 384;
-
-/**
- * Check if Ollama binary is installed (exists in PATH).
- */
-function isOllamaInstalled(): boolean {
-  try {
-    execFileSync('ollama', ['--version'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if Ollama server is running and has a compatible embedding model.
- */
-async function checkOllamaRunning(): Promise<boolean> {
-  // If user already configured HTTP embedding, respect their choice
-  if (process.env.GITNEXUS_EMBEDDING_URL) return false;
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    const resp = await fetch(`${OLLAMA_DEFAULT_URL}/api/tags`, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (!resp.ok) return false;
-
-    // Check if the embedding model is available
-    const data = (await resp.json()) as { models?: Array<{ name?: string }> };
-    const models = data.models ?? [];
-    return models.some((m) => m.name?.startsWith('snowflake-arctic-embed'));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Attempt to start Ollama server in the background.
- * Returns true if startup appears successful (server responds within 5s).
- */
-async function tryStartOllama(): Promise<boolean> {
-  if (!isOllamaInstalled()) return false;
-
-  try {
-    spawn('ollama', ['serve'], {
-      stdio: 'ignore',
-      detached: true,
-      shell: true,
-    }).unref();
-
-    // Wait up to 5s for server to come up
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      try {
-        const resp = await fetch(`${OLLAMA_DEFAULT_URL}/api/tags`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        if (resp.ok) return true;
-      } catch {
-        // not ready yet
-      }
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Ensure Ollama is running with the embedding model.
- * If installed but not running, tries to start it automatically.
- * Returns true if Ollama is ready.
- */
-async function ensureOllamaAvailable(): Promise<boolean> {
-  if (await checkOllamaRunning()) return true;
-
-  if (isOllamaInstalled()) {
-    console.log('  🔄 Ollama not running, starting it...\n');
-    const started = await tryStartOllama();
-    if (started) {
-      console.log('  ✅ Ollama started successfully\n');
-      return await checkOllamaRunning();
-    }
-    console.log('  ⚠️  Failed to start Ollama automatically\n');
-  }
-
-  return false;
-}
-
-/**
- * Configure Ollama as the embedding backend.
- */
-function configureOllamaEmbedding(): void {
-  // Use the OpenAI-compatible /v1 endpoint so that the http-client's
-  // `${baseUrl}/embeddings` resolves to /v1/embeddings (accepts `input`
-  // array, returns `{ data: [{ embedding }] }`).  The legacy /api/embeddings
-  // only accepts a single `prompt` string and returns a different schema.
-  process.env.GITNEXUS_EMBEDDING_URL = `${OLLAMA_DEFAULT_URL}/v1`;
-  process.env.GITNEXUS_EMBEDDING_MODEL = OLLAMA_DEFAULT_MODEL;
-  process.env.GITNEXUS_EMBEDDING_DIMS = String(OLLAMA_EMBEDDING_DIMS);
-  console.log('  🔄 Using Ollama for embeddings\n');
-}
-
 const HEAP_MB = 8192;
 const HEAP_FLAG = `--max-old-space-size=${HEAP_MB}`;
-const STACK_SIZE_KB = 16384; // 16MB stack size for deep repositories
-const STACK_FLAG = `--stack-size=${STACK_SIZE_KB}`;
+/** Increase default stack size (KB) to prevent stack overflow on deep class hierarchies. */
+const STACK_KB = 4096;
+const STACK_FLAG = `--stack-size=${STACK_KB}`;
 
-/**
- * --stack-size was removed as a V8 flag in Node.js v22+.
- * Injecting it on newer runtimes causes an immediate exit with code 9.
- */
-const NODE_MAJOR = parseInt(process.versions.node.split('.')[0], 10);
-const STACK_FLAG_SUPPORTED = NODE_MAJOR < 22;
-
-/** Re-exec the process with an 8GB heap and increased stack size if we're currently below that. */
+/** Re-exec the process with an 8GB heap and larger stack if we're currently below that. */
 function ensureHeap(): boolean {
   const nodeOpts = process.env.NODE_OPTIONS || '';
-  const hasHeapOption = /--max-old-space-size(=|\s)/.test(nodeOpts);
-  const hasStackOption = /--stack-size(=|\s)/.test(nodeOpts);
+  if (nodeOpts.includes('--max-old-space-size')) return false;
 
   const v8Heap = v8.getHeapStatistics().heap_size_limit;
-  const heapAlreadyLarge = v8Heap >= HEAP_MB * 1024 * 1024 * 0.9;
+  if (v8Heap >= HEAP_MB * 1024 * 1024 * 0.9) return false;
 
-  const nodeFlagsToAdd: string[] = [];
-  if (!heapAlreadyLarge && !hasHeapOption) nodeFlagsToAdd.push(HEAP_FLAG);
-  if (STACK_FLAG_SUPPORTED && !hasStackOption) nodeFlagsToAdd.push(STACK_FLAG);
-  if (nodeFlagsToAdd.length === 0) return false;
+  // --stack-size is a V8 flag not allowed in NODE_OPTIONS on Node 24+,
+  // so pass it only as a direct CLI argument, not via the environment.
+  const cliFlags = [HEAP_FLAG];
+  if (!nodeOpts.includes('--stack-size')) cliFlags.push(STACK_FLAG);
 
   try {
-    const childArgs = nodeFlagsToAdd.concat(process.argv.slice(1));
-    const mergedNodeOpts = `${nodeOpts} ${nodeFlagsToAdd.join(' ')}`.trim();
-    execFileSync(process.execPath, childArgs, {
+    execFileSync(process.execPath, [...cliFlags, ...process.argv.slice(1)], {
       stdio: 'inherit',
-      env: { ...process.env, NODE_OPTIONS: mergedNodeOpts },
+      env: { ...process.env, NODE_OPTIONS: `${nodeOpts} ${HEAP_FLAG}`.trim() },
     });
   } catch (e: any) {
     process.exitCode = e.status ?? 1;
@@ -170,8 +59,25 @@ export interface AnalyzeOptions {
   verbose?: boolean;
   /** Skip AGENTS.md and CLAUDE.md gitnexus block updates. */
   skipAgentsMd?: boolean;
+  /** Omit volatile symbol/relationship counts from AGENTS.md and CLAUDE.md. */
+  noStats?: boolean;
   /** Index the folder even when no .git directory is present. */
   skipGit?: boolean;
+  /**
+   * Override the default basename-derived registry `name` with a
+   * user-supplied alias (#829). Disambiguates repos whose paths share a
+   * basename. Persisted — subsequent re-analyses of the same path without
+   * `--name` preserve the alias.
+   */
+  name?: string;
+  /**
+   * Allow registration even when another path already uses the same
+   * `--name` alias (#829). Intentionally a distinct flag from `--force`
+   * because the user may want to coexist under the same name WITHOUT
+   * paying the cost of a pipeline re-index. Maps to registerRepo's
+   * `allowDuplicateName` option end-to-end.
+   */
+  allowDuplicateName?: boolean;
 }
 
 export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOptions) => {
@@ -260,9 +166,11 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   const origLog = console.log.bind(console);
   const origWarn = console.warn.bind(console);
   const origError = console.error.bind(console);
+  let barCurrentValue = 0;
   const barLog = (...args: any[]) => {
     process.stdout.write('\x1b[2K\r');
     origLog(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
+    bar.update(barCurrentValue);
   };
   console.log = barLog;
   console.warn = barLog;
@@ -273,6 +181,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   let phaseStart = Date.now();
 
   const updateBar = (value: number, phaseLabel: string) => {
+    barCurrentValue = value;
     if (phaseLabel !== lastPhaseLabel) {
       lastPhaseLabel = phaseLabel;
       phaseStart = Date.now();
@@ -291,77 +200,33 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
 
   const t0 = Date.now();
 
-  // ── Ollama fallback for embeddings ───────────────────────────────
-  const ollamaAvailable = await ensureOllamaAvailable();
-
-  if (options?.embeddings && !ollamaAvailable) {
-    // Show install guide, but still attempt ONNX local model first
-    barLog(
-      '  ℹ️  Ollama not found — will try local ONNX model (snowflake-arctic-embed-xs)\n' +
-        '  To use Ollama instead:\n\n' +
-        '    1. curl -fsSL https://ollama.com/install.sh | sh\n' +
-        '    2. ollama pull snowflake-arctic-embed:xs\n' +
-        '    3. (optional) ollama serve  # auto-started if not running\n' +
-        '    4. gitnexus analyze --embeddings\n',
-    );
-  }
-
-  // If Ollama is running, prefer it over local ONNX (CPU) for embedding.
-  // On Apple Silicon, Ollama uses Metal GPU and is faster than onnxruntime-node CPU.
-  // Skip this when the user already set a custom embedding URL or HF mirror
-  // (HF_ENDPOINT means they want ONNX from a mirror).
-  if (
-    options?.embeddings &&
-    ollamaAvailable &&
-    !process.env.HF_ENDPOINT &&
-    !process.env.GITNEXUS_EMBEDDING_URL
-  ) {
-    configureOllamaEmbedding();
-  }
-
   // ── Run shared analysis orchestrator ───────────────────────────────
-  let ollamaFallbackAttempted = false;
-
-  const runWithFallback = async (): Promise<any> => {
-    try {
-      return await runFullAnalysis(
-        repoPath,
-        {
-          force: options?.force || options?.skills,
-          embeddings: options?.embeddings,
-          skipGit: options?.skipGit,
-          skipAgentsMd: options?.skipAgentsMd,
-        },
-        {
-          onProgress: (_phase, percent, message) => {
-            updateBar(percent, message);
-          },
-          onLog: barLog,
-        },
-      );
-    } catch (err: any) {
-      const isNetworkError =
-        options?.embeddings &&
-        (err.message?.includes('fetch failed') ||
-          err.message?.includes('ENOTFOUND') ||
-          err.message?.includes('ETIMEDOUT') ||
-          err.message?.includes('EPERM') ||
-          err.message?.includes('rate limit')) &&
-        ollamaAvailable &&
-        !ollamaFallbackAttempted;
-
-      if (isNetworkError) {
-        barLog('  🔄 ONNX model fetch failed — retrying with Ollama...\n');
-        configureOllamaEmbedding();
-        ollamaFallbackAttempted = true;
-        return runWithFallback();
-      }
-      throw err;
-    }
-  };
-
   try {
-    const result = await runWithFallback();
+    const result = await runFullAnalysis(
+      repoPath,
+      {
+        // Pipeline re-index — OR'd with --skills because skill generation
+        // needs a fresh pipelineResult. Has no bearing on the registry
+        // collision guard (see allowDuplicateName below).
+        force: options?.force || options?.skills,
+        embeddings: options?.embeddings,
+        skipGit: options?.skipGit,
+        skipAgentsMd: options?.skipAgentsMd,
+        noStats: options?.noStats,
+        registryName: options?.name,
+        // Registry-collision bypass — its own CLI flag, intentionally NOT
+        // overloading --force. A user who hits the collision guard should
+        // be able to accept the duplicate name without also paying the
+        // cost of a full pipeline re-index. See #829 review round 2.
+        allowDuplicateName: options?.allowDuplicateName,
+      },
+      {
+        onProgress: (_phase, percent, message) => {
+          updateBar(percent, message);
+        },
+        onLog: barLog,
+      },
+    );
 
     if (result.alreadyUpToDate) {
       clearInterval(elapsedTimer);
@@ -417,7 +282,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
               processes: s.processes,
             },
             skillResult.skills,
-            { skipAgentsMd: options?.skipAgentsMd },
+            { skipAgentsMd: options?.skipAgentsMd, noStats: options?.noStats },
           );
         }
       } catch {
@@ -459,7 +324,67 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     console.warn = origWarn;
     console.error = origError;
     bar.stop();
-    console.error(`\n  Analysis failed: ${err.message}\n`);
+
+    const msg = err.message || String(err);
+
+    // Registry name-collision from --name (#829) — surface as an
+    // actionable error rather than a generic stack-trace.
+    if (err instanceof RegistryNameCollisionError) {
+      console.error(`\n  Registry name collision:\n`);
+      console.error(`    "${err.registryName}" is already used by "${err.existingPath}".\n`);
+      console.error(`  Options:`);
+      console.error(`    • Pick a different alias:  gitnexus analyze --name <alias>`);
+      console.error(
+        `    • Allow the duplicate:     gitnexus analyze --allow-duplicate-name  (leaves "-r ${err.registryName}" ambiguous)`,
+      );
+      console.error('');
+      process.exitCode = 1;
+      return;
+    }
+
+    console.error(`\n  Analysis failed: ${msg}\n`);
+
+    // Provide helpful guidance for known failure modes
+    if (
+      msg.includes('Maximum call stack size exceeded') ||
+      msg.includes('call stack') ||
+      msg.includes('Map maximum size') ||
+      msg.includes('Invalid array length') ||
+      msg.includes('Invalid string length') ||
+      msg.includes('allocation failed') ||
+      msg.includes('heap out of memory') ||
+      msg.includes('JavaScript heap')
+    ) {
+      console.error('  This error typically occurs on very large repositories.');
+      console.error('  Suggestions:');
+      console.error('    1. Add large vendored/generated directories to .gitnexusignore');
+      console.error('    2. Increase Node.js heap: NODE_OPTIONS="--max-old-space-size=16384"');
+      console.error('    3. Increase stack size: NODE_OPTIONS="--stack-size=4096"');
+      console.error('');
+    } else if (msg.includes('ERESOLVE') || msg.includes('Could not resolve dependency')) {
+      // Note: the original arborist "Cannot destructure property 'package' of
+      // 'node.target'" crash happens inside npm *before* gitnexus code runs,
+      // so it can't be caught here.  This branch handles dependency-resolution
+      // errors that surface at runtime (e.g. dynamic require failures).
+      console.error('  This looks like an npm dependency resolution issue.');
+      console.error('  Suggestions:');
+      console.error('    1. Clear the npm cache:    npm cache clean --force');
+      console.error('    2. Update npm:             npm install -g npm@latest');
+      console.error('    3. Reinstall gitnexus:     npm install -g gitnexus@latest');
+      console.error('    4. Or try npx directly:    npx gitnexus@latest analyze');
+      console.error('');
+    } else if (
+      msg.includes('MODULE_NOT_FOUND') ||
+      msg.includes('Cannot find module') ||
+      msg.includes('ERR_MODULE_NOT_FOUND')
+    ) {
+      console.error('  A required module could not be loaded. The installation may be corrupt.');
+      console.error('  Suggestions:');
+      console.error('    1. Reinstall:   npm install -g gitnexus@latest');
+      console.error('    2. Clear cache: npm cache clean --force && npx gitnexus@latest analyze');
+      console.error('');
+    }
+
     process.exitCode = 1;
     return;
   }

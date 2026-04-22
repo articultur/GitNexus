@@ -11,7 +11,7 @@
  */
 
 import type { KnowledgeGraph } from '../../graph/types.js';
-import type { ResolutionContext } from '../resolution-context.js';
+import type { ResolutionContext } from '../model/resolution-context.js';
 import type { CommunityMembership } from '../community-processor.js';
 import { buildCFGFromStatements, cfgToResult, parseStatements } from './cfg-builder.js';
 import { buildCFGFromTSG, isTSGAvailable } from './cfg-from-tsg.js';

@@ -163,36 +163,18 @@ gitnexus status                  # Show index status for current repo
 gitnexus clean                   # Delete index for current repo
 gitnexus clean --all --force     # Delete all indexes
 gitnexus wiki [path]             # Generate LLM-powered docs from knowledge graph
-gitnexus wiki --model <model>    # Wiki with custom LLM model (default: minimax/minimax-m2.5)
+gitnexus wiki --model <model>    # Wiki with custom LLM model (default: gpt-4o-mini)
+
+# Repository groups (multi-repo / monorepo service tracking)
+gitnexus group create <name>                                   # Create a repository group
+gitnexus group add <group> <groupPath> <registryName>          # Add a repo to a group. <groupPath> is a hierarchy path (e.g. hr/hiring/backend); <registryName> is the repo's name from the registry (see `gitnexus list`)
+gitnexus group remove <group> <groupPath>                      # Remove a repo from a group by its hierarchy path
+gitnexus group list [name]                                     # List groups, or show one group's config
+gitnexus group sync <name>                                     # Extract contracts and match across repos/services
+gitnexus group contracts <name>  # Inspect extracted contracts and cross-links
+gitnexus group query <name> <q>  # Search execution flows across all repos in a group
+gitnexus group status <name>     # Check staleness of repos in a group
 ```
-
-## Dataflow Analysis
-
-Use dataflow modes during indexing to enable variable-level flow edges in the graph.
-
-```bash
-# Basic variable-level flow extraction (recommended default)
-gitnexus analyze --dataflow basic
-
-# Full mode for deepest flow extraction (slower)
-gitnexus analyze --dataflow full
-```
-
-Available modes:
-
-- `off` - disable dataflow analysis
-- `basic` - conservative variable-level propagation
-- `context` - adds context-aware propagation
-- `path` - tracks richer path information
-- `full` - maximum extraction depth and detail
-
-Once indexed with dataflow enabled, include flow edges in impact analysis:
-
-```bash
-gitnexus impact MySymbol --data-flow
-```
-
-If a repository was indexed without dataflow, rerun `analyze` with `--dataflow <mode>` to add `DATA_FLOW` edges.
 
 ## Remote Embeddings
 
@@ -214,14 +196,13 @@ GitNexus supports indexing multiple repositories. Each `gitnexus analyze` regist
 
 ## Supported Languages
 
-TypeScript, JavaScript, ArkTS (ETS), Python, Java, C, C++, C#, Go, Rust, PHP, Kotlin, Swift, Ruby
+TypeScript, JavaScript, Python, Java, C, C++, C#, Go, Rust, PHP, Kotlin, Swift, Ruby
 
 ### Language Feature Matrix
 
 | Language | Imports | Named Bindings | Exports | Heritage | Type Annotations | Constructor Inference | Config | Frameworks | Entry Points |
 |----------|---------|----------------|---------|----------|-----------------|---------------------|--------|------------|-------------|
 | TypeScript | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| ArkTS (ETS) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | △ | △ |
 | JavaScript | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ |
 | Python | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Java | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |
@@ -252,6 +233,79 @@ Installed automatically by both `gitnexus analyze` (per-repo) and `gitnexus setu
 
 - Node.js >= 18
 - Git repository (uses git for commit tracking)
+
+## Release candidates
+
+Stable releases publish to the default `latest` dist-tag. When a pull request
+with non-documentation changes merges into `main`, an automated workflow also
+publishes a prerelease build under the `rc` dist-tag, so early adopters can
+try in-flight fixes without waiting for the next stable cut. (Docs-only
+merges are skipped.)
+
+```bash
+# Try the latest release candidate (pre-stable — may change at any time)
+npm install -g gitnexus@rc
+# — or —
+npx gitnexus@rc analyze
+```
+
+Release-candidate versions follow the standard semver prerelease format
+`X.Y.Z-rc.N`, where `X.Y.Z` is the next stable target (bumped from the
+current `latest` by patch by default; `minor` or `major` when kicking off a
+bigger cycle) and `N` increments per published rc. Example sequence:
+`1.6.2-rc.1`, `1.6.2-rc.2`, …, then once `1.6.2` ships stable,
+`1.6.3-rc.1`. See the [Releases page](https://github.com/abhigyanpatwari/GitNexus/releases)
+for the full list; stable `latest` is unaffected.
+
+## Troubleshooting
+
+### `Cannot destructure property 'package' of 'node.target' as it is null`
+
+This crash was caused by a dependency URL format that is incompatible with
+certain npm/arborist versions ([npm/cli#8126](https://github.com/npm/cli/issues/8126)).
+It is fixed in **gitnexus v1.6.2+**. Upgrade to the latest version:
+
+```bash
+npx gitnexus@latest analyze          # always uses the newest release
+# — or —
+npm install -g gitnexus@latest       # upgrade a global install
+```
+
+If you still hit npm install issues after upgrading, these generic workarounds
+may help:
+
+```bash
+npm install -g npm@latest            # update npm itself
+npm cache clean --force              # clear a possibly corrupt cache
+```
+
+### Installation fails with native module errors
+
+Some optional language grammars (Dart, Kotlin, Swift) require native compilation. If they fail, GitNexus still works — those languages will be skipped.
+
+If `npm install -g gitnexus` fails on native modules:
+
+```bash
+# Ensure build tools are available (Linux/macOS)
+# Ubuntu/Debian: sudo apt install python3 make g++
+# macOS: xcode-select --install
+
+# Retry installation
+npm install -g gitnexus
+```
+
+### Analysis runs out of memory
+
+For very large repositories:
+
+```bash
+# Increase Node.js heap size
+NODE_OPTIONS="--max-old-space-size=16384" npx gitnexus analyze
+
+# Exclude large directories
+echo "vendor/" >> .gitnexusignore
+echo "dist/" >> .gitnexusignore
+```
 
 ## Privacy
 

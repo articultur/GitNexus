@@ -38,7 +38,18 @@ program
   .option('--embeddings', 'Enable embedding generation for semantic search (off by default)')
   .option('--skills', 'Generate repo-specific skill files from detected communities')
   .option('--skip-agents-md', 'Skip updating the gitnexus section in AGENTS.md and CLAUDE.md')
+  .option('--no-stats', 'Omit volatile file/symbol counts from AGENTS.md and CLAUDE.md')
   .option('--skip-git', 'Index a folder without requiring a .git directory')
+  .option(
+    '--name <alias>',
+    'Register this repo under a custom name in ~/.gitnexus/registry.json ' +
+      '(disambiguates repos whose paths share a basename, e.g. two different .../app folders)',
+  )
+  .option(
+    '--allow-duplicate-name',
+    'Register this repo even if another path already uses the same --name alias. ' +
+      'Leaves `-r <name>` ambiguous for the two paths; use -r <path> to disambiguate.',
+  )
   .option('-v, --verbose', 'Enable verbose ingestion warnings (default: false)')
   .addHelpText(
     'after',
@@ -149,6 +160,15 @@ This removes the .gitnexus/ folder and unregisters from global registry.
 `,
   )
   .action(createLazyAction(() => import('./clean.js'), 'cleanCommand'));
+
+program
+  .command('remove <target>')
+  .description(
+    'Delete the GitNexus index for a registered repo (by alias, name, or absolute path). ' +
+      'Unlike `clean`, does not require being inside the repo. Idempotent on unknown targets.',
+  )
+  .option('-f, --force', 'Skip confirmation prompt')
+  .action(createLazyAction(() => import('./remove.js'), 'removeCommand'));
 
 program
   .command('wiki [path]')
@@ -339,6 +359,15 @@ Edge types: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, etc.
 `,
   )
   .action(createLazyAction(() => import('./tool.js'), 'cypherCommand'));
+
+program
+  .command('detect-changes')
+  .alias('detect_changes')
+  .description('Map git diff hunks to indexed symbols and affected execution flows')
+  .option('-s, --scope <scope>', 'What to analyze: unstaged, staged, all, or compare', 'unstaged')
+  .option('-b, --base-ref <ref>', 'Branch/commit for compare scope (e.g. main)')
+  .option('-r, --repo <name>', 'Target repository')
+  .action(createLazyAction(() => import('./tool.js'), 'detectChangesCommand'));
 
 // ─── Eval Server (persistent daemon for SWE-bench) ─────────────────
 

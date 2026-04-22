@@ -19,6 +19,8 @@ Thumbs.db
 .env
 .env.local
 .env*.local
+.env.*.local
+docker/.env
 
 # Logs
 *.log
@@ -57,6 +59,10 @@ GitNexus.sln
 .worktrees/
 .gitnexus
 
+# Vendored tree-sitter grammar build artifacts
+gitnexus/vendor/**/build/
+gitnexus/vendor/**/node_modules/
+
 # Python
 /github/scripts/triage/__pycache__/
 
@@ -88,3 +94,7 @@ gitnexus/*.tgz
 # OMC
 .omc/
 .omc.bak/
+
+# Local agent scratch / review prompts (never commit)
+.tmp/
+.agents/

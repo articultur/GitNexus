@@ -64,7 +64,6 @@ export async function queryCommand(
     goal?: string;
     limit?: string;
     content?: boolean;
-    threshold?: string;
   },
 ): Promise<void> {
   if (!queryText?.trim()) {
@@ -79,7 +78,6 @@ export async function queryCommand(
     goal: options?.goal,
     limit: options?.limit ? parseInt(options.limit) : undefined,
     include_content: options?.content ?? false,
-    relevance_threshold: options?.threshold ? parseFloat(options.threshold) : undefined,
     repo: options?.repo,
   });
   output(result);
@@ -117,25 +115,11 @@ export async function impactCommand(
     repo?: string;
     depth?: string;
     includeTests?: boolean;
-    detail?: string;
-    snapshotId?: string;
-    page?: string;
   },
 ): Promise<void> {
   if (!target?.trim()) {
     console.error('Usage: gitnexus impact <symbol_name> [--direction upstream|downstream]');
     process.exit(1);
-  }
-
-  // Parse pagination JSON if provided
-  let pagination: { depth: number; offset?: number; limit?: number } | undefined;
-  if (options?.page) {
-    try {
-      pagination = JSON.parse(options.page);
-    } catch {
-      console.error('Invalid --page JSON. Example: \'{"depth":1,"offset":0,"limit":100}\'');
-      process.exit(1);
-    }
   }
 
   try {
@@ -146,10 +130,6 @@ export async function impactCommand(
       maxDepth: options?.depth ? parseInt(options.depth, 10) : undefined,
       includeTests: options?.includeTests ?? false,
       repo: options?.repo,
-      // New parameters for adaptive output
-      detail: options?.detail as 'auto' | 'summary' | 'full' | undefined,
-      snapshot_id: options?.snapshotId,
-      page: pagination,
     });
     output(result);
   } catch (err: unknown) {
@@ -185,43 +165,54 @@ export async function cypherCommand(
   output(result);
 }
 
+function formatDetectChangesResult(result: any): string {
+  if (result?.error) return `Error: ${result.error}`;
+
+  const summary = result?.summary || {};
+  if ((summary.changed_count || 0) === 0) {
+    return 'No changes detected.';
+  }
+
+  const lines: string[] = [];
+  lines.push(`Changes: ${summary.changed_files || 0} files, ${summary.changed_count || 0} symbols`);
+  lines.push(`Affected processes: ${summary.affected_count || 0}`);
+  lines.push(`Risk level: ${summary.risk_level || 'unknown'}`);
+  lines.push('');
+
+  const changed = result?.changed_symbols || [];
+  if (changed.length > 0) {
+    lines.push('Changed symbols:');
+    for (const symbol of changed.slice(0, 15)) {
+      lines.push(`  ${symbol.type} ${symbol.name} → ${symbol.filePath}`);
+    }
+    if (changed.length > 15) {
+      lines.push(`  ... and ${changed.length - 15} more`);
+    }
+    lines.push('');
+  }
+
+  const affected = result?.affected_processes || [];
+  if (affected.length > 0) {
+    lines.push('Affected execution flows:');
+    for (const processInfo of affected.slice(0, 10)) {
+      const steps = (processInfo.changed_steps || []).map((s: any) => s.symbol).join(', ');
+      lines.push(`  • ${processInfo.name} (${processInfo.step_count} steps) — changed: ${steps}`);
+    }
+  }
+
+  return lines.join('\n').trim();
+}
+
 export async function detectChangesCommand(options?: {
   scope?: string;
   baseRef?: string;
   repo?: string;
-  detection?: boolean;
-  /** Filter to a specific file path for drill-down analysis */
-  file?: string;
-  /** Force precision level (normal, symbol-level, file-level) */
-  precision?: string;
-  /** Custom normal mode threshold in bytes */
-  normalMax?: string;
-  /** Custom symbol-level threshold in bytes */
-  symbolMax?: string;
 }): Promise<void> {
-  // Build degradation config if custom thresholds provided
-  const degradationConfig =
-    options?.normalMax || options?.symbolMax
-      ? {
-          normalMaxBytes: options.normalMax ? parseInt(options.normalMax, 10) : undefined,
-          symbolLevelMaxBytes: options.symbolMax ? parseInt(options.symbolMax, 10) : undefined,
-        }
-      : undefined;
-
-  // Validate precision if provided
-  if (options?.precision && !['normal', 'symbol-level', 'file-level'].includes(options.precision)) {
-    console.error('Invalid --precision. Must be one of: normal, symbol-level, file-level');
-    process.exit(1);
-  }
-
   const backend = await getBackend();
   const result = await backend.callTool('detect_changes', {
     scope: options?.scope || 'unstaged',
     base_ref: options?.baseRef,
     repo: options?.repo,
-    enable_detection: options?.detection ?? false,
-    file: options?.file,
-    degradation_config: degradationConfig,
   });
-  output(result);
+  output(formatDetectChangesResult(result));
 }

@@ -61,6 +61,22 @@ export const TYPESCRIPT_QUERIES = `
       name: (identifier) @name
       value: (function_expression)))) @definition.function
 
+; Variable/constant declarations (non-function values).
+; Overlap with @definition.function patterns is handled by parse-worker dedup.
+(lexical_declaration
+  (variable_declarator
+    name: (identifier) @name)) @definition.const
+
+(export_statement
+  declaration: (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name))) @definition.const
+
+; var declarations (mutable, function-scoped)
+(variable_declaration
+  (variable_declarator
+    name: (identifier) @name)) @definition.variable
+
 (import_statement
   source: (string) @import.source) @import
 
@@ -74,6 +90,23 @@ export const TYPESCRIPT_QUERIES = `
 (call_expression
   function: (member_expression
     property: (property_identifier) @call.name)) @call
+
+; Generic awaited free call: await fn<T>(args)
+; tree-sitter-typescript parses "await fn<T>(args)" as a call_expression whose
+; "function" field is an await_expression (not a bare identifier), because the
+; grammar resolves the ambiguity between generics and comparisons by consuming
+; "await fn" as an expression before attaching <T> as type_arguments.
+(call_expression
+  function: (await_expression
+    (identifier) @call.name)
+  (type_arguments)) @call
+
+; Generic awaited member call: await obj.fn<T>(args)
+(call_expression
+  function: (await_expression
+    (member_expression
+      property: (property_identifier) @call.name))
+  (type_arguments)) @call
 
 ; Constructor calls: new Foo()
 (new_expression
@@ -186,6 +219,22 @@ export const JAVASCRIPT_QUERIES = `
       name: (identifier) @name
       value: (function_expression)))) @definition.function
 
+; Variable/constant declarations (non-function values).
+; Overlap with @definition.function patterns is handled by parse-worker dedup.
+(lexical_declaration
+  (variable_declarator
+    name: (identifier) @name)) @definition.const
+
+(export_statement
+  declaration: (lexical_declaration
+    (variable_declarator
+      name: (identifier) @name))) @definition.const
+
+; var declarations (mutable, function-scoped)
+(variable_declaration
+  (variable_declarator
+    name: (identifier) @name)) @definition.variable
+
 (import_statement
   source: (string) @import.source) @import
 
@@ -289,6 +338,12 @@ export const PYTHON_QUERIES = `
     left: (identifier) @name
     type: (type)) @definition.property)
 
+; Plain variable assignments without type annotation: x = 5, MAX_SIZE = 100
+; Overlap with @definition.property (typed) is handled by parse-worker dedup.
+(expression_statement
+  (assignment
+    left: (identifier) @name)) @definition.variable
+
 ; Heritage queries - Python class inheritance
 (class_definition
   name: (identifier) @heritage.class
@@ -354,6 +409,11 @@ export const JAVA_QUERIES = `
 ; Constructor calls: new Foo()
 (object_creation_expression type: (type_identifier) @call.name) @call
 
+; Local variable declarations inside method bodies
+(local_variable_declaration
+  declarator: (variable_declarator
+    name: (identifier) @name)) @definition.variable
+
 ; Heritage - extends class
 (class_declaration name: (identifier) @heritage.class
   (superclass (type_identifier) @heritage.extends)) @heritage
@@ -368,17 +428,6 @@ export const JAVA_QUERIES = `
     object: (_) @assignment.receiver
     field: (identifier) @assignment.property)
   right: (_)) @assignment
-
-; Spring route annotations with path argument: @GetMapping("/api/users")
-; tree-sitter-java: annotation  with annotation_argument_list
-(annotation
-  name: (identifier) @decorator.name
-  arguments: (annotation_argument_list
-    (string_literal (string_fragment) @decorator.arg)?)) @decorator
-
-; Spring route annotations without argument: @RestController, @RequestMapping on class
-(marker_annotation
-  name: (identifier) @decorator.name) @decorator
 `;
 
 // C queries - works with tree-sitter-c
@@ -410,6 +459,11 @@ export const C_QUERIES = `
 ; Calls
 (call_expression function: (identifier) @call.name) @call
 (call_expression function: (field_expression field: (field_identifier) @call.name)) @call
+
+; Variable declarations: int x = 5; or int x;
+(declaration
+  declarator: (init_declarator
+    declarator: (identifier) @name)) @definition.variable
 `;
 
 // Go queries - works with tree-sitter-go
@@ -444,6 +498,13 @@ export const GO_QUERIES = `
 (call_expression function: (identifier) @call.name) @call
 (call_expression function: (selector_expression field: (field_identifier) @call.name)) @call
 
+; Const/var declarations
+(const_declaration (const_spec name: (identifier) @name)) @definition.const
+(var_declaration (var_spec name: (identifier) @name)) @definition.variable
+
+; Short variable declaration: x := 5
+(short_var_declaration left: (expression_list (identifier) @name)) @definition.variable
+
 ; Struct literal construction: User{Name: "Alice"}
 (composite_literal type: (type_identifier) @call.name) @call
 
@@ -464,15 +525,6 @@ export const GO_QUERIES = `
   (selector_expression
     operand: (_) @assignment.receiver
     field: (field_identifier) @assignment.property)) @assignment
-
-; Gin / Echo / Fiber route registration: r.GET("/path", handler), e.POST("/path", fn)
-; Uses the same express_route capture names as the TypeScript handler so the
-; existing express_route dispatch in parse-worker works unchanged.
-(call_expression
-  function: (selector_expression
-    field: (field_identifier) @express_route.method)
-  arguments: (argument_list
-    (interpreted_string_literal) @express_route.path)) @express_route
 `;
 
 // C++ queries - works with tree-sitter-cpp
@@ -575,6 +627,11 @@ export const CPP_QUERIES = `
 ; Constructor calls: new User()
 (new_expression type: (type_identifier) @call.name) @call
 
+; Variable declarations: int x = 5; or auto x = 5;
+(declaration
+  declarator: (init_declarator
+    declarator: (identifier) @name)) @definition.variable
+
 ; Heritage
 (class_specifier name: (type_identifier) @heritage.class
   (base_class_clause (type_identifier) @heritage.extends)) @heritage
@@ -634,25 +691,27 @@ export const CSHARP_QUERIES = `
 ; Constructor calls: new Foo() and new Foo { Props }
 (object_creation_expression type: (identifier) @call.name) @call
 
-; Generic constructor calls: new List<int>(), new Dictionary<string, User>()
-(object_creation_expression type: (generic_name (identifier) @call.name)) @call
-
-; Namespace-qualified constructor calls: new System.Text.StringBuilder()
-(object_creation_expression type: (qualified_name name: (identifier) @call.name)) @call
-
-; Namespace-qualified generic constructor calls: new System.Collections.Generic.List<int>()
-(object_creation_expression type: (qualified_name name: (generic_name (identifier) @call.name))) @call
-
 ; Target-typed new (C# 9): User u = new("x", 5)
 (variable_declaration type: (identifier) @call.name (variable_declarator (implicit_object_creation_expression) @call))
 
-; Target-typed new with generic variable type: IList<User> users = new(...)
-(variable_declaration type: (generic_name (identifier) @call.name) (variable_declarator (implicit_object_creation_expression) @call))
+; Local variable declarations
+(local_declaration_statement
+  (variable_declaration
+    (variable_declarator
+      (identifier) @name))) @definition.variable
 
 ; Heritage
 (class_declaration name: (identifier) @heritage.class
   (base_list (identifier) @heritage.extends)) @heritage
 (class_declaration name: (identifier) @heritage.class
+  (base_list (generic_name (identifier) @heritage.extends))) @heritage
+
+; Interface inheritance: interface IFoo : IBar / interface IFoo : IBar, IBaz
+; Without these patterns, interface-to-interface relationships are never
+; captured, so transitive "class X implements IBar" chains are broken.
+(interface_declaration name: (identifier) @heritage.class
+  (base_list (identifier) @heritage.extends)) @heritage
+(interface_declaration name: (identifier) @heritage.class
   (base_list (generic_name (identifier) @heritage.extends))) @heritage
 
 ; Write access: obj.field = value
@@ -788,6 +847,11 @@ export const PHP_QUERIES = `
 ; Constructor call: new User()
 (object_creation_expression (name) @call.name) @call
 
+; Const declarations at class scope
+(const_declaration
+  (const_element
+    (name) @name)) @definition.const
+
 ; ── Heritage: extends ────────────────────────────────────────────────────────
 (class_declaration
   name: (name) @heritage.class
@@ -855,6 +919,10 @@ export const RUBY_QUERIES = `
 ; ── All calls (require, include, attr_*, and regular calls routed in JS) ─────
 (call
   method: (identifier) @call.name) @call
+
+; ── Constant assignment: MAX_SIZE = 100, ITEMS = [...] ───────────────────────
+(assignment
+  left: (constant) @name) @definition.const
 
 ; ── Bare calls without parens (identifiers at statement level are method calls) ─
 ; NOTE: This may over-capture variable reads as calls (e.g. 'result' at
@@ -979,14 +1047,6 @@ export const KOTLIN_QUERIES = `
     (navigation_suffix
       (simple_identifier) @assignment.property))
   (_)) @assignment
-
-; Spring / Ktor route annotations with path argument: @GetMapping("/api/users")
-; tree-sitter-kotlin (fwcd): annotation  with value_arguments
-(annotation
-  (user_type (type_identifier) @decorator.name)
-  (value_arguments
-    (value_argument
-      (string_literal (string_content) @decorator.arg))?)) @decorator
 
 `;
 
@@ -1138,6 +1198,12 @@ export const DART_QUERIES = `
   (setter_signature
     name: (identifier) @name)) @definition.property
 
+; ── Top-level variable declarations (const maxSize = 100, final x = 5, var y = 0) ──
+(declaration
+  (initialized_identifier_list
+    (initialized_identifier
+      (identifier) @name))) @definition.variable
+
 ; ── Imports ──────────────────────────────────────────────────────────────────
 (import_or_export
   (library_import
@@ -1171,6 +1237,58 @@ export const DART_QUERIES = `
   (selector
     (unconditional_assignable_selector
       (identifier) @call.name))
+  (selector (argument_part))) @call
+
+; ── Calls: await direct (await doSomething()) ────────────────────────────────
+(await_expression
+  (identifier) @call.name
+  .
+  (selector (argument_part))) @call
+
+; ── Calls: await method chain (await obj.method()) ───────────────────────────
+; Requires argument_part to distinguish method calls from field access (await obj.field)
+(await_expression
+  (selector
+    (unconditional_assignable_selector
+      (identifier) @call.name))
+  (selector (argument_part))) @call
+
+; ── Calls: named argument (foo(child: buildX())) ─────────────────────────────
+(named_argument
+  (identifier) @call.name
+  .
+  (selector (argument_part))) @call
+
+; ── Calls: inside list literals ([buildA(), buildB()]) ───────────────────────
+(list_literal
+  (identifier) @call.name
+  .
+  (selector (argument_part))) @call
+
+; ── Calls: cascade (obj..add(x)..sort()) ─────────────────────────────────────
+; Note: cascade_selector contains identifier directly (no unconditional_assignable_selector
+; wrapper in Dart grammar), so inferCallForm() classifies these as free calls rather than
+; member calls. Cross-file resolution still benefits from the call being recorded.
+(cascade_section
+  (cascade_selector (identifier) @call.name)
+  (argument_part)) @call
+
+; ── Calls: static final field initializers (static final _svc = MyService()) ──
+(static_final_declaration
+  (identifier) @call.name
+  .
+  (selector (argument_part))) @call
+
+; ── Calls: arrow function body (=> buildWidget()) ────────────────────────────
+(function_body "=>"
+  (identifier) @call.name
+  .
+  (selector (argument_part))) @call
+
+; ── Calls: lambda body (() => doSomething()) ─────────────────────────────────
+(function_expression_body
+  (identifier) @call.name
+  .
   (selector (argument_part))) @call
 
 ; ── Re-exports (export 'foo.dart') ───────────────────────────────────────────
@@ -1214,124 +1332,10 @@ export const DART_QUERIES = `
       (type_identifier) @heritage.trait))) @heritage
 `;
 
-// Objective-C queries - works with tree-sitter-objc
-export const OBJECTIVEC_QUERIES = `
-; ── Class Interface (@interface Foo) ──────────────────────────────────────────
-; Anchored on ':' token to distinguish from superclass identifier in @interface Foo : Bar
-(class_interface
-  (identifier) @name
-  (":") @colon) @definition.class
-
-; ── Class Interface without superclass (@interface Foo <Bar>) ──────────────────
-; No ':' → identifier is the class name
-(class_interface
-  (identifier) @name) @definition.class
-
-; ── Heritage: class extends (e.g., @interface Foo : Bar) ─────────────────────
-; Note: uses @heritage.class (not @name) so heritage-processor.js creates EXTENDS edge
-(class_interface
-  (identifier) @heritage.class
-  (":") @colon
-  (identifier) @heritage.extends) @heritage
-
-; ── Heritage: protocol conformance (e.g., @interface Foo : Bar <Baz>) ──────────
-; Also matches @interface Foo <Baz> (no superclass, just protocol)
-; Uses @heritage.implements so heritage-processor.js creates IMPLEMENTS edges
-(class_interface
-  (identifier) @heritage.class
-  (parameterized_arguments
-    (type_name
-      (type_identifier) @heritage.implements))) @heritage.proto
-
-; ── Class Implementation (@implementation Foo) ────────────────────────────────
-(class_implementation
-  (identifier) @name) @definition.class
-
-; ── Protocol (@protocol Foo) ────────────────────────────────────────────────
-(protocol_declaration
-  (identifier) @name) @definition.interface
-
-; ── Protocol Inheritance (e.g., @protocol Foo <Bar>) ──────────────────────────
-(protocol_declaration
-  (identifier) @name
-  (protocol_reference_list
-    (identifier) @heritage.extends)) @heritage
-
-; ── Instance Variables (inside @interface or @implementation body) ───────────
-; NSString *name;
-(instance_variable
-  (struct_declaration
-    (struct_declarator
-      (pointer_declarator
-        (identifier) @name)))) @definition.property
-
-; int age;
-(instance_variable
-  (struct_declaration
-    (struct_declarator
-      (identifier) @name))) @definition.property
-
-; ── Property Declaration (@property) ────────────────────────────────────────
-(property_declaration
-  (struct_declaration
-    (struct_declarator
-      (pointer_declarator
-        (identifier) @name)))) @definition.property
-
-(property_declaration
-  (struct_declaration
-    (struct_declarator
-      (identifier) @name))) @definition.property
-
-; ── OC Methods in @interface (declarations) ─────────────────────────────────
-; The identifier immediately after method_type is the first selector keyword.
-; For unary methods like - (void)alloc, it is the method name.
-; For multi-arg methods like - (CGSize)sizeOfView:css:, each identifier is captured.
-(method_declaration
-  (method_type)
-  (identifier) @name) @definition.method
-
-; ── OC Methods in @implementation (definitions with body) ─────────────────
-(method_definition
-  (method_type)
-  (identifier) @name) @definition.method
-
-; ── #import ─────────────────────────────────────────────────────────────────
-(preproc_include path: (_) @import.source) @import
-
-; ── Calls via message expression: [Foo bar] ────────────────────────────────
-(message_expression
-  receiver: (_) @call.receiver
-  method: (identifier) @call.name) @call
-
-; ── Calls via objc_msgSend ─────────────────────────────────────────────────
-(call_expression
-  function: (identifier) @call.name) @call
-`;
-
 import { SupportedLanguages } from 'gitnexus-shared';
-
-// ArkTS queries — superset of TypeScript queries with ArkUI-specific additions:
-//  1. Bare decorator capture: @Entry, @Component, @State, @Prop, @Link, @Builder, @Observed
-//     (TypeScript query only captures called-form decorators like @Component())
-//  2. @Watch decorator with a string argument (e.g. @Watch('count'))
-export const ARKTS_QUERIES =
-  TYPESCRIPT_QUERIES +
-  `
-; ArkTS bare decorators (without call parens): @Entry, @Component, @State, @Prop, etc.
-(decorator
-  (identifier) @decorator.name) @decorator
-
-; ArkTS @Watch('propName') — string-arg decorator with identifier
-(decorator
-  (call_expression
-    function: (identifier) @decorator.name
-    arguments: (arguments (string (string_fragment) @decorator.arg)?))) @decorator
-`;
 
 export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
   [SupportedLanguages.TypeScript]: TYPESCRIPT_QUERIES,
-  [SupportedLanguages.ArkTS]: ARKTS_QUERIES,
   [SupportedLanguages.JavaScript]: JAVASCRIPT_QUERIES,
   [SupportedLanguages.Python]: PYTHON_QUERIES,
   [SupportedLanguages.Java]: JAVA_QUERIES,
@@ -1345,7 +1349,8 @@ export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
   [SupportedLanguages.Ruby]: RUBY_QUERIES,
   [SupportedLanguages.Swift]: SWIFT_QUERIES,
   [SupportedLanguages.Dart]: DART_QUERIES,
+  [SupportedLanguages.ArkTS]: '', // Not yet implemented
+  [SupportedLanguages.ObjectiveC]: '', // Not yet implemented
+  [SupportedLanguages.Vue]: TYPESCRIPT_QUERIES, // Vue <script> blocks are parsed as TypeScript
   [SupportedLanguages.Cobol]: '', // Standalone regex processor — no tree-sitter queries
-  [SupportedLanguages.ObjectiveC]: OBJECTIVEC_QUERIES,
-  [SupportedLanguages.Vue]: TYPESCRIPT_QUERIES, // Vue SFCs are parsed as TypeScript
 };
