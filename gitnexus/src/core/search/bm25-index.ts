@@ -109,6 +109,11 @@ async function ensureFTSIndexViaExecutor(
     const msg = String(e?.message ?? '');
     if (msg.includes('already exists')) {
       ensuredPoolFTS.add(key);
+    } else if (msg.includes('read-only') || msg.includes('Cannot execute write')) {
+      // MCP pool adapter opens DB read-only — CREATE_FTS_INDEX requires a writable
+      // connection and will never succeed in this context. Treat as permanently unavailable
+      // for this session and stop retrying.
+      ensuredPoolFTS.add(key);
     } else {
       console.warn(
         `[gitnexus] FTS index ensure failed for repo "${repoId}" table "${table}" ` +
