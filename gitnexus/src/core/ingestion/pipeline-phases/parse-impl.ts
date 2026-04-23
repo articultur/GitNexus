@@ -68,11 +68,94 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDev } from '../utils/env.js';
 import { synthesizeWildcardImportBindings, needsSynthesis } from './wildcard-synthesis.js';
 import { extractORMQueriesInline } from './orm-extraction.js';
+import { isDjangoUrlFile, extractDjangoRoutes } from '../route-extractors/django.js';
+import { isRailsRouteFile, extractRailsRoutes } from '../route-extractors/rails.js';
+import { isSpringControllerFile, extractSpringRoutes } from '../route-extractors/spring.js';
+import { isFlaskFile, extractFlaskRoutes } from '../route-extractors/flask.js';
+import { isLaravelRouteFile, extractLaravelRoutes } from '../route-extractors/laravel.js';
+import { isEchoRouteFile, extractEchoRoutes } from '../route-extractors/echo.js';
+import { isFiberRouteFile, extractFiberRoutes } from '../route-extractors/fiber.js';
+import {
+  isFastAPIFile,
+  extractFastAPIRoutes,
+  isGinRouteFile,
+  extractGinRoutes,
+} from '../route-extractors/fastapi.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 /** Max bytes of source content to load per parse chunk. */
 const CHUNK_BYTE_BUDGET = 20 * 1024 * 1024; // 20MB
+
+// ── Framework route extraction helper ──────────────────────────────────────
+
+function extractFrameworkRoutes(
+  chunkFiles: readonly { path: string; content: string }[],
+  allDecoratorRoutes: ExtractedDecoratorRoute[],
+): void {
+  for (const file of chunkFiles) {
+    if (isDjangoUrlFile(file.path)) {
+      for (const r of extractDjangoRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'django-path' });
+      }
+    } else if (isRailsRouteFile(file.path)) {
+      for (const r of extractRailsRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'rails-route' });
+      }
+    } else if (isSpringControllerFile(file.content)) {
+      for (const r of extractSpringRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'spring-mapping' });
+      }
+    } else if (isFastAPIFile(file.content)) {
+      for (const r of extractFastAPIRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'fastapi-route' });
+      }
+    } else if (isFlaskFile(file.content)) {
+      for (const r of extractFlaskRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'flask-route' });
+      }
+    } else if (isLaravelRouteFile(file.content, file.path)) {
+      for (const r of extractLaravelRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'laravel-route' });
+      }
+    } else if (isGinRouteFile(file.content)) {
+      for (const r of extractGinRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'gin-route' });
+      }
+    } else if (isEchoRouteFile(file.content)) {
+      for (const r of extractEchoRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'echo-route' });
+      }
+    } else if (isFiberRouteFile(file.content)) {
+      for (const r of extractFiberRoutes(file.content, file.path)) {
+        allDecoratorRoutes.push({ ...r, decoratorName: 'fiber-route' });
+      }
+    }
+  }
+  // ArkTS HarmonyOS @Entry decorator routes
+  for (const file of chunkFiles) {
+    if (!file.content.includes('@Entry') || !file.path.endsWith('.ets')) continue;
+    const normalized = file.path.replace(/\\/g, '/');
+    let routePath: string | null = null;
+    if (normalized.startsWith('pages/')) {
+      routePath = normalized.slice(0, -4);
+    } else {
+      const pagesIndex = normalized.lastIndexOf('/pages/');
+      if (pagesIndex >= 0) routePath = normalized.slice(pagesIndex + 1, -4);
+    }
+    if (routePath) {
+      const lineIdx = file.content.indexOf('@Entry');
+      const lineNumber = file.content.substring(0, lineIdx).split('\n').length - 1;
+      allDecoratorRoutes.push({
+        filePath: file.path,
+        routePath,
+        httpMethod: 'GET',
+        decoratorName: 'Entry',
+        lineNumber,
+      });
+    }
+  }
+}
 
 // ── Main parse + resolve function ──────────────────────────────────────────
 
@@ -279,6 +362,8 @@ export async function runChunkedParseAndResolve(
       const chunkFiles = chunkPaths
         .filter((p) => chunkContents.has(p))
         .map((p) => ({ path: p, content: chunkContents.get(p)! }));
+
+      extractFrameworkRoutes(chunkFiles, allDecoratorRoutes);
 
       const chunkWorkerData = await processParsing(
         graph,
@@ -491,6 +576,7 @@ export async function runChunkedParseAndResolve(
       const chunkFiles = chunkPaths
         .filter((p) => chunkContents.has(p))
         .map((p) => ({ path: p, content: chunkContents.get(p)! }));
+      extractFrameworkRoutes(chunkFiles, allDecoratorRoutes);
       cachedSequentialChunkFiles.push(chunkFiles);
       astCache = createASTCache(chunkFiles.length);
       const sequentialHeritage = await extractExtractedHeritageFromFiles(chunkFiles, astCache);
