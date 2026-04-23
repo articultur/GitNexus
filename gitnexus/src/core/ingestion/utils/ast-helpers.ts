@@ -164,6 +164,14 @@ export const CONTAINER_TYPE_TO_LABEL: Record<string, string> = {
   singleton_class: 'Class', // Ruby: class << self inherits enclosing class name
   object_declaration: 'Class',
   companion_object: 'Class',
+  // Objective-C
+  class_interface: 'Class',
+  class_implementation: 'Class',
+  category_interface: 'Class',
+  category_implementation: 'Class',
+  class_interface_declaration: 'Class',
+  class_implementation_declaration: 'Class',
+  category_interface_declaration: 'Class',
 };
 
 /**
@@ -568,4 +576,28 @@ export function findNodeAtRange(
     }
   }
   return null;
+}
+
+export function isObjcInsideContainer(functionNode: SyntaxNode): boolean {
+  let ancestor: SyntaxNode | null = functionNode?.parent ?? null;
+  while (ancestor) {
+    if (
+      ancestor.type === 'class_interface' ||
+      ancestor.type === 'class_implementation' ||
+      ancestor.type === 'category_interface' ||
+      ancestor.type === 'category_implementation' ||
+      ancestor.type === 'class_interface_declaration' ||
+      ancestor.type === 'class_implementation_declaration' ||
+      ancestor.type === 'protocol_declaration' ||
+      ancestor.type === 'category_interface_declaration' ||
+      ancestor.type === 'class_interface_body' ||
+      ancestor.type === 'class_implementation_body' ||
+      ancestor.type === 'protocol_body' ||
+      ancestor.type === 'category_interface_body'
+    ) {
+      return true;
+    }
+    ancestor = ancestor.parent;
+  }
+  return false;
 }

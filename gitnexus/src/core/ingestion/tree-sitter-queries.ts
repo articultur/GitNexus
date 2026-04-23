@@ -1334,6 +1334,87 @@ export const DART_QUERIES = `
 
 import { SupportedLanguages } from 'gitnexus-shared';
 
+// Objective-C queries - works with tree-sitter-objc
+export const OBJECTIVEC_QUERIES = `
+; ── Class Interface (@interface Foo) ──────────────────────────────────────────
+(class_interface
+  (identifier) @name
+  (":") @colon) @definition.class
+
+; ── Class Interface without superclass (@interface Foo <Bar>) ──────────────────
+(class_interface
+  (identifier) @name) @definition.class
+
+; ── Heritage: class extends (e.g., @interface Foo : Bar) ─────────────────────
+(class_interface
+  (identifier) @heritage.class
+  (":") @colon
+  (identifier) @heritage.extends) @heritage
+
+; ── Heritage: protocol conformance (e.g., @interface Foo : Bar <Baz>) ──────────
+(class_interface
+  (identifier) @heritage.class
+  (parameterized_arguments
+    (type_name
+      (type_identifier) @heritage.implements))) @heritage.proto
+
+; ── Class Implementation (@implementation Foo) ────────────────────────────────
+(class_implementation
+  (identifier) @name) @definition.class
+
+; ── Protocol (@protocol Foo) ────────────────────────────────────────────────
+(protocol_declaration
+  (identifier) @name) @definition.interface
+
+; ── Protocol Inheritance (e.g., @protocol Foo <Bar>) ──────────────────────────
+(protocol_declaration
+  (identifier) @name
+  (protocol_reference_list
+    (identifier) @heritage.extends)) @heritage
+
+; ── Instance Variables ───────────────────────────────────────────────────────
+(instance_variable
+  (struct_declaration
+    (struct_declarator
+      (pointer_declarator
+        (identifier) @name)))) @definition.property
+
+(instance_variable
+  (struct_declaration
+    (struct_declarator
+      (identifier) @name))) @definition.property
+
+; ── Property Declaration (@property) ────────────────────────────────────────
+(property_declaration
+  (struct_declaration
+    (struct_declarator
+      (pointer_declarator
+        (identifier) @name)))) @definition.property
+
+(property_declaration
+  (struct_declaration
+    (struct_declarator
+      (identifier) @name))) @definition.property
+
+; ── OC Methods in @interface (declarations) ─────────────────────────────────
+(method_declaration
+  (method_type)
+  (identifier) @name) @definition.method
+
+; ── OC Methods in @implementation (definitions with body) ─────────────────
+(method_definition
+  (method_type)
+  (identifier) @name) @definition.method
+`;
+
+export const ARKTS_QUERIES =
+  TYPESCRIPT_QUERIES +
+  `
+; ArkTS bare decorators (without call parens): @Entry, @Component, @State, @Prop, etc.
+(decorator
+  (identifier) @decorator.name) @decorator
+`;
+
 export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
   [SupportedLanguages.TypeScript]: TYPESCRIPT_QUERIES,
   [SupportedLanguages.JavaScript]: JAVASCRIPT_QUERIES,
@@ -1349,8 +1430,8 @@ export const LANGUAGE_QUERIES: Record<SupportedLanguages, string> = {
   [SupportedLanguages.Ruby]: RUBY_QUERIES,
   [SupportedLanguages.Swift]: SWIFT_QUERIES,
   [SupportedLanguages.Dart]: DART_QUERIES,
-  [SupportedLanguages.ArkTS]: '', // Not yet implemented
-  [SupportedLanguages.ObjectiveC]: '', // Not yet implemented
+  [SupportedLanguages.ArkTS]: ARKTS_QUERIES,
+  [SupportedLanguages.ObjectiveC]: OBJECTIVEC_QUERIES,
   [SupportedLanguages.Vue]: TYPESCRIPT_QUERIES, // Vue <script> blocks are parsed as TypeScript
   [SupportedLanguages.Cobol]: '', // Standalone regex processor — no tree-sitter queries
 };
