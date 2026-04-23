@@ -168,8 +168,35 @@ export async function processDataflow(
   functionsToAnalyze =
     opts.mode === 'full' ? functionsToAnalyze.slice(0, maxFunctions) : functionsToAnalyze;
 
+  // Build mapping from CFG node ID to graph Function node ID
+  // CFG nodes are like "Function:/path:funcName:bb:0", graph nodes like "Function:/path:funcName"
+  // We map CFG node IDs to the parent Function node by stripping ":bb:N" suffix
+  const cfgToGraphNode = new Map<string, string>();
+  for (const func of functions) {
+    // CFG nodes are func.id + ":bb:N", map them back to func.id
+    cfgToGraphNode.set(func.id + ':bb:0', func.id);
+    cfgToGraphNode.set(func.id + ':bb:', func.id); // Will be used as prefix
+  }
+
   const allEdges: DataFlowEdge[] = [];
   const allTaintPaths: TaintPath[] = [];
+
+  function mapCfgNodeToGraphNode(cfgNodeId: string): string | null {
+    // First try exact match
+    if (cfgToGraphNode.has(cfgNodeId)) {
+      return cfgToGraphNode.get(cfgNodeId)!;
+    }
+    // Then try prefix match: check if any stored prefix matches the start of cfgNodeId
+    const colonBBIndex = cfgNodeId.lastIndexOf(':bb:');
+    if (colonBBIndex > 0) {
+      const funcId = cfgNodeId.substring(0, colonBBIndex);
+      // Check if this funcId has a prefix mapping
+      if (cfgToGraphNode.has(funcId + ':bb:')) {
+        return funcId;
+      }
+    }
+    return null;
+  }
 
   // Process functions in batches to avoid memory issues
   const BATCH_SIZE = 100;
@@ -205,10 +232,13 @@ export async function processDataflow(
             if (value === 'UNINIT' || value === 'NAC') continue;
             for (const predId of cfgNode.predecessors) {
               const predFacts = resultFacts.get(predId);
-              if (!predFacts || !predFacts.has(variable) || predFacts.get(variable) === 'UNINIT') {
+              // Create edge for data flow from predecessor to current node
+              const graphSourceId = mapCfgNodeToGraphNode(predId);
+              const graphTargetId = mapCfgNodeToGraphNode(nodeId);
+              if (graphSourceId && graphTargetId) {
                 allEdges.push({
-                  sourceId: predId,
-                  targetId: nodeId,
+                  sourceId: graphSourceId,
+                  targetId: graphTargetId,
                   type: 'DATA_FLOW',
                   properties: {
                     sourceVariable: variable,
@@ -242,6 +272,7 @@ export async function processDataflow(
 
   // Write all edges to graph
   onProgress?.('Writing dataflow edges to graph...', 95);
+  console.log(`[dataflow] Writing ${allEdges.length} edges, ${allTaintPaths.length} taint paths`);
 
   if (allTaintPaths.length > 0) {
     writeTaintPaths(knowledgeGraph, allTaintPaths);

@@ -162,8 +162,8 @@ function transfer(
   const outFacts = new Map(inFacts);
 
   for (const stmt of node.basicBlock) {
-    // Handle assignment: x = expr
-    const assignMatch = stmt.match(/^(\w+)\s*=\s*(.+)$/);
+    // Handle assignment: x = expr OR const/let/var x = expr
+    const assignMatch = stmt.match(/^(?:(?:const|let|var)\s+)?(\w+)\s*=\s*(.+)$/);
     if (assignMatch) {
       const [, lhs, rhs] = assignMatch;
       const rhsValue = computeRHSValue(rhs, outFacts, context);
@@ -180,7 +180,7 @@ function transfer(
       // Check if it's a taint source
       if (context.taintSources?.has(funcName)) {
         // Function call result is tainted
-        const resultVar = stmt.match(/^(\w+)\s*=/)?.[1];
+        const resultVar = stmt.match(/^(?:(?:const|let|var)\s+)?(\w+)\s*=/)?.[1];
         if (resultVar) {
           outFacts.set(resultVar, 'TAINTED');
         }
