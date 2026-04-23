@@ -42,7 +42,7 @@ const EXTENSION_MAP: Record<SupportedLanguages, readonly string[]> = {
   [SupportedLanguages.Swift]: ['.swift'],
   [SupportedLanguages.Dart]: ['.dart'],
   [SupportedLanguages.ArkTS]: ['.ets', '.arkts'],
-  [SupportedLanguages.ObjectiveC]: ['.m', '.mm', '.h'],
+  [SupportedLanguages.ObjectiveC]: ['.m', '.mm'],
   [SupportedLanguages.Vue]: ['.vue'],
   [SupportedLanguages.Cobol]: ['.cbl', '.cob', '.cpy', '.cobol'],
 } satisfies Record<SupportedLanguages, readonly string[]>; // Ensure exhaustiveness
@@ -57,6 +57,29 @@ for (const [lang, exts] of Object.entries(EXTENSION_MAP) as [
     extToLang.set(ext, lang);
   }
 }
+
+/**
+ * Regex patterns that unambiguously identify an Objective-C header file.
+ * These tokens cannot appear in valid C++ source, so a match indicates OC.
+ */
+const OC_HEADER_PATTERNS = [
+  /^@interface\b/m,
+  /^@protocol\b/m,
+  /^@end\b/m,
+  /^@property\b/m,
+  /^@implementation\b/m,
+  /@interface\b/m,
+  /@protocol\b/m,
+];
+
+/**
+ * Detect whether a .h header file contains Objective-C or C++ content.
+ * Returns ObjectiveC if OC patterns are found, otherwise CPlusPlus.
+ */
+export const detectOCHeaderLanguage = (content: string): SupportedLanguages => {
+  const hasOC = OC_HEADER_PATTERNS.some((re) => re.test(content));
+  return hasOC ? SupportedLanguages.ObjectiveC : SupportedLanguages.CPlusPlus;
+};
 
 /**
  * Map file extension to SupportedLanguage enum.
