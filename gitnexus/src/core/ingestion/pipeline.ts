@@ -34,6 +34,7 @@ import {
   mroPhase,
   communitiesPhase,
   processesPhase,
+  dataflowPhase,
   type PipelinePhase,
   type CommunitiesOutput,
   type ProcessesOutput,
@@ -44,6 +45,8 @@ export interface PipelineOptions {
   skipGraphPhases?: boolean;
   /** Force sequential parsing (no worker pool). Useful for testing the sequential path. */
   skipWorkers?: boolean;
+  /** Skip dataflow analysis phase (Phase 13). */
+  skipDataflow?: boolean;
   /**
    * @internal Test-only override for worker-pool gating thresholds.
    * When unset, production defaults apply (15 files OR 512 KB total bytes).
@@ -86,6 +89,9 @@ function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
 
   if (!options?.skipGraphPhases) {
     phases.push(mroPhase, communitiesPhase, processesPhase);
+    if (!options?.skipDataflow) {
+      phases.push(dataflowPhase);
+    }
   }
 
   return phases;

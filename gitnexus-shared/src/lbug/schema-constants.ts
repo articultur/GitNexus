@@ -67,6 +67,15 @@ export const REL_TYPES = [
   'ENTRY_POINT_OF',
   'WRAPS',
   'QUERIES',
+  // Data flow edge types
+  'DATA_FLOW',
+  'TAINTED',
+  'PROPAGATES',
+  'RETURNS',
+  'SINK_REACHABLE',
+  'SANITIZES',
+  'ALIASES',
+  'BOUNDARY_CROSS',
 ] as const;
 
 export type RelType = (typeof REL_TYPES)[number];
