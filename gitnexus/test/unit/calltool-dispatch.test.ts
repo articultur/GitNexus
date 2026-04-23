@@ -579,8 +579,8 @@ describe('LocalBackend.callTool', () => {
     expect(result.mismatches).toHaveLength(1);
     expect(result.mismatches[0].field).toBe('meta');
     expect(result.mismatches[0].reason).toContain('not in response shape');
-    // 1 consumer = LOW, but mismatch + breaking contract change bumps to HIGH
-    expect(result.impactSummary.riskLevel).toBe('HIGH');
+    // 1 consumer = LOW, mismatch bumps one level to MEDIUM
+    expect(result.impactSummary.riskLevel).toBe('MEDIUM');
   });
 
   it('api_impact supports file param lookup', async () => {

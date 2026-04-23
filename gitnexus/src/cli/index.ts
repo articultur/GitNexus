@@ -232,6 +232,7 @@ Output: augmented search pattern with context.
 
 program
   .command('detect-changes')
+  .alias('detect_changes')
   .description('Detect execution flows affected by git changes (pre-commit review)')
   .option(
     '-s, --scope <scope>',
@@ -359,15 +360,6 @@ Edge types: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, etc.
 `,
   )
   .action(createLazyAction(() => import('./tool.js'), 'cypherCommand'));
-
-program
-  .command('detect-changes')
-  .alias('detect_changes')
-  .description('Map git diff hunks to indexed symbols and affected execution flows')
-  .option('-s, --scope <scope>', 'What to analyze: unstaged, staged, all, or compare', 'unstaged')
-  .option('-b, --base-ref <ref>', 'Branch/commit for compare scope (e.g. main)')
-  .option('-r, --repo <name>', 'Target repository')
-  .action(createLazyAction(() => import('./tool.js'), 'detectChangesCommand'));
 
 // ─── Eval Server (persistent daemon for SWE-bench) ─────────────────
 

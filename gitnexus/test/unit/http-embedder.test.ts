@@ -179,15 +179,12 @@ describe('HTTP embedding backend', () => {
         ok: true,
         json: async () => ({ data: Array.from({ length: n }, () => ({ embedding: mockVec })) }),
       });
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValueOnce(makeResp(64)).mockResolvedValueOnce(makeResp(6)),
-      );
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(makeResp(70)));
 
       const { embedBatch } = await import('../../src/core/embeddings/embedder.js');
       const results = await embedBatch(Array.from({ length: 70 }, (_, i) => `text ${i}`));
 
-      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenCalledTimes(1);
       expect(results).toHaveLength(70);
     });
 

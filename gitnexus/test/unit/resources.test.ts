@@ -18,6 +18,10 @@ import {
 
 // ─── Minimal mock backend ──────────────────────────────────────────
 
+function createMockBackend(overrides: Partial<Record<string, any>> = {}): any {
+  return createTestBackend(overrides);
+}
+
 function createTestBackend(overrides: Partial<Record<string, any>> = {}): any {
   return {
     listRepos: vi.fn().mockResolvedValue(overrides.repos ?? []),
