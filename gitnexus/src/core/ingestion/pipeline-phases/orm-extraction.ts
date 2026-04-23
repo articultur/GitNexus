@@ -21,6 +21,18 @@ const PRISMA_QUERY_RE =
 const SUPABASE_QUERY_RE =
   /\bsupabase\.from\s*\(\s*['"](\w+)['"]\s*\)\s*\.(select|insert|update|delete|upsert)\s*\(/g;
 
+// ── HarmonyOS RDB / Preferences patterns ───────────────────────────────────
+
+const HARMONY_RDB_PREDICATE_RE =
+  /\b(?:const|let|var)\s+(\w+)\s*=\s*new\s+(?:rdb|relationalStore)\.RdbPredicates\s*\(\s*['"]([\w$-]+)['"]\s*\)/g;
+const HARMONY_RDB_QUERY_RE = /\b\w+\.(query|querySync)\s*\(\s*(\w+)/g;
+const HARMONY_RDB_INLINE_QUERY_RE =
+  /\b\w+\.(query|querySync)\s*\(\s*new\s+(?:rdb|relationalStore)\.RdbPredicates\s*\(\s*['"]([\w$-]+)['"]\s*\)/g;
+const HARMONY_RDB_SQL_RE = /\b\w+\.(querySql|executeSql)\s*\(\s*(['"`])([\s\S]*?)\2/g;
+const HARMONY_PREFERENCES_STORE_RE =
+  /\b(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?preferences\.getPreferences(?:Sync)?\s*\(/g;
+const HARMONY_PREFERENCES_GET_RE = /\b(\w+)\.(get|getSync)\s*\(\s*['"]([^'"]+)['"]/g;
+
 // ── Extraction function ───────────────────────────────────────────────────
 
 /**
@@ -40,7 +52,12 @@ export function extractORMQueriesInline(
 ): void {
   const hasPrisma = content.includes('prisma.');
   const hasSupabase = content.includes('supabase.from');
-  if (!hasPrisma && !hasSupabase) return;
+  const hasRdb =
+    content.includes('RdbPredicates') ||
+    content.includes('.querySql(') ||
+    content.includes('.executeSql(');
+  const hasPreferences = content.includes('preferences.getPreferences');
+  if (!hasPrisma && !hasSupabase && !hasRdb && !hasPreferences) return;
 
   // Pre-compute line number offsets to avoid O(n²) substring+split per match
   const lineOffsets = buildLineOffsets(content);
