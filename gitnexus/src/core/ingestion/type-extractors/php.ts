@@ -499,6 +499,7 @@ const extractForLoopBinding: ForLoopExtractor = (
   }
 
   // Strategy A: try resolveIterableElementType (handles constructor-binding container types)
+  if (!iterableName) return;
   const elementType = resolveIterableElementType(
     iterableName,
     node,
@@ -516,6 +517,7 @@ const extractForLoopBinding: ForLoopExtractor = (
 
   // Strategy B: direct scopeEnv lookup — PHP normalizePhpType strips User[] → User,
   // so the iterable's stored type is already the element type from PHPDoc annotations.
+  if (!iterableName) return;
   const iterableType = scopeEnv.get(iterableName);
   if (iterableType) {
     scopeEnv.set(varName, iterableType);

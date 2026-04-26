@@ -46,7 +46,7 @@ export const chunkNode = async (
     ];
   }
 
-  const rule = CHUNKING_RULES[label];
+  const rule = CHUNKING_RULES[label as keyof typeof CHUNKING_RULES];
   if (!rule) {
     return characterChunk(content, startLine, endLine, chunkSize, overlap);
   }

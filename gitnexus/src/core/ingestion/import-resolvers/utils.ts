@@ -77,10 +77,10 @@ export interface SuffixIndex {
   /** Case-insensitive suffix lookup */
   getInsensitive(suffix: string): string | undefined;
   /** Get all files in a directory suffix */
-  getFilesInDir(dirSuffix: string, extension: string): string[];
+  getFilesInDir(dirSuffix: string, extension: string): readonly string[];
 }
 
-const FROZEN_EMPTY_ARRAY: string[] = Object.freeze([]) as string[];
+const FROZEN_EMPTY_ARRAY: readonly string[] = Object.freeze([]) as readonly string[];
 
 /** Sentinel index that returns no results. Used to release memory after import resolution. */
 export const EMPTY_INDEX: SuffixIndex = Object.freeze({
@@ -140,7 +140,7 @@ export function buildSuffixIndex(normalizedFileList: string[], allFileList: stri
     get: (suffix: string) => exactMap.get(suffix),
     getInsensitive: (suffix: string) => lowerMap.get(suffix.toLowerCase()),
     getFilesInDir: (dirSuffix: string, extension: string) => {
-      return dirMap.get(`${dirSuffix}:${extension}`) || [];
+      return (dirMap.get(`${dirSuffix}:${extension}`) || []) as readonly string[];
     },
   };
 }

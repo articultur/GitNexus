@@ -10,6 +10,8 @@
  * Run after process-processor (phase 11) to analyze data flow relationships.
  */
 
+import { readFileSync } from 'fs';
+import { join, isAbsolute } from 'path';
 import type { KnowledgeGraph } from '../../graph/types.js';
 import type { ResolutionContext } from '../model/resolution-context.js';
 import type { CommunityMembership } from '../community-processor.js';
@@ -92,6 +94,29 @@ function valuePriority(v: LatticeValue): number {
   return priorities[v] ?? 0;
 }
 
+// ── CFG Result Conversion ─────────────────────────────────────────────────
+
+import type { CFGResult } from './types.js';
+
+/**
+ * Convert CFGResult (array-based, from buildCFG) to CFG (Map-based).
+ * The DFA engine expects the legacy Map-based format.
+ */
+function convertCFGResultToCFG(result: CFGResult): import('./types.js').CFG {
+  const nodes = new Map<string, import('./types.js').CFGNode>();
+  for (const node of result.nodes) {
+    nodes.set(node.id, node);
+  }
+  // entryNodeId: use first node's id as the entry point
+  const entryNodeId = result.nodes[0]?.id ?? `${result.functionId}:bb:0`;
+  return {
+    functionId: result.functionId,
+    nodes,
+    entryNodeId,
+    exitNodeId: result.nodes[result.nodes.length - 1]?.id ?? entryNodeId,
+  };
+}
+
 // ── Main Processor ────────────────────────────────────────────────────────
 
 /**
@@ -132,10 +157,17 @@ export async function processDataflow(
 
   knowledgeGraph.forEachNode((node) => {
     if (node.label === 'Function' || node.label === 'Method') {
+      const startLine = (node.properties.startLine as number | undefined) ?? 1;
+      const endLine = (node.properties.endLine as number | undefined) ?? startLine;
       functions.push({
         id: node.id,
         filePath: node.properties.filePath ?? '',
-        content: (node.properties.content as string | undefined)?.split('\n') ?? [],
+        content: readSourceFile(
+          node.properties.filePath ?? '',
+          opts.repoPath ?? '',
+          startLine,
+          endLine,
+        ),
       });
     }
   });
@@ -198,15 +230,43 @@ export async function processDataflow(
     return null;
   }
 
+  // Probe TSG availability once (check CLI + DSL files)
+  let tsgAvailable: { cli: boolean; dsl: Record<string, boolean> } | null = null;
+  try {
+    tsgAvailable = isTSGAvailable();
+  } catch {
+    /* TSG not installed */
+  }
+
+  const useTSG = tsgAvailable !== null && tsgAvailable.cli;
+  const parser = useTSG ? await loadParser() : null;
+
   // Process functions in batches to avoid memory issues
   const BATCH_SIZE = 100;
   for (let i = 0; i < functionsToAnalyze.length; i += BATCH_SIZE) {
     const batch = functionsToAnalyze.slice(i, i + BATCH_SIZE);
 
     for (const func of batch) {
-      // Build CFG from function source
-      const statements = parseStatements(func.id, func.content);
-      const cfg = buildCFGFromStatements(func.id, statements);
+      const lang = detectLanguage(func.filePath) as SupportedLanguages;
+      // Build CFG from function source (tree-sitter if language is available, else legacy)
+      let cfg: import('./types.js').CFG;
+      if (useTSG && isLanguageAvailable(lang) && tsgAvailable?.dsl[lang.toLowerCase()]) {
+        try {
+          const { loadLanguage } = await import('../../tree-sitter/parser-loader.js');
+          await loadLanguage(lang);
+          const source = func.content.join('\n');
+          const tree = parser!.parse(source);
+          const cfgResult = buildCFGFromTSG({ rootNode: tree.rootNode }, source, lang, func.id);
+          cfg = convertCFGResultToCFG(cfgResult);
+        } catch (err) {
+          // TSG failed — fall through to legacy
+          const statements = parseStatements(func.id, func.content);
+          cfg = buildCFGFromStatements(func.id, statements);
+        }
+      } else {
+        const statements = parseStatements(func.id, func.content);
+        cfg = buildCFGFromStatements(func.id, statements);
+      }
 
       // Create analysis context
       const context = createDefaultContext(cfg);
@@ -225,6 +285,7 @@ export async function processDataflow(
           resultFacts = result.facts;
         }
 
+        let edgesCreated = 0;
         for (const [nodeId, nodeFacts] of resultFacts) {
           const cfgNode = cfg.nodes.get(nodeId);
           if (!cfgNode || cfgNode.id === cfg.entryNodeId) continue;
@@ -247,6 +308,7 @@ export async function processDataflow(
                     reason: `DFA: ${variable} = ${value} (from ${predId} → ${nodeId})`,
                   },
                 });
+                edgesCreated++;
               }
             }
           }
@@ -254,8 +316,7 @@ export async function processDataflow(
       }
 
       // Run taint analysis
-      const language = detectLanguage(func.filePath);
-      const taintResult = analyzeTaint(cfg, context, language);
+      const taintResult = analyzeTaint(cfg, context, lang);
       allTaintPaths.push(...(taintResult.paths as TaintPath[]));
     }
 
@@ -272,7 +333,6 @@ export async function processDataflow(
 
   // Write all edges to graph
   onProgress?.('Writing dataflow edges to graph...', 95);
-  console.log(`[dataflow] Writing ${allEdges.length} edges, ${allTaintPaths.length} taint paths`);
 
   if (allTaintPaths.length > 0) {
     writeTaintPaths(knowledgeGraph, allTaintPaths);
@@ -283,6 +343,31 @@ export async function processDataflow(
   }
 
   onProgress?.(`Dataflow analysis complete. Found ${allTaintPaths.length} taint paths.`, 100);
+}
+
+// ── Source File Reader ──────────────────────────────────────────────────────
+
+/**
+ * Read source file and return as line array.
+ * Resolves relative paths against repoPath.
+ */
+function readSourceFile(
+  filePath: string,
+  repoPath: string,
+  startLine?: number,
+  endLine?: number,
+): string[] {
+  try {
+    const absPath = isAbsolute(filePath) ? filePath : join(repoPath, filePath);
+    const content = readFileSync(absPath, 'utf-8');
+    const lines = content.split('\n');
+    if (startLine == null || endLine == null) return lines;
+    const start = Math.max(0, startLine - 1);
+    const end = Math.min(lines.length, endLine);
+    return lines.slice(start, end);
+  } catch {
+    return [];
+  }
 }
 
 // ── Language Detection ─────────────────────────────────────────────────────
@@ -372,7 +457,7 @@ export async function processCFG(
       functions.push({
         id: node.id,
         filePath: node.properties.filePath ?? '',
-        content: (node.properties.content as string | undefined)?.split('\n') ?? [],
+        content: readSourceFile(node.properties.filePath ?? '', ''),
       });
     }
   });

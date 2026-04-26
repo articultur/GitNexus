@@ -258,7 +258,7 @@ export const generateEmbeddingText = (
     return `${header}\n\n${cleaned}`;
   }
 
-  const chunkingRule = CHUNKING_RULES[node.label];
+  const chunkingRule = CHUNKING_RULES[node.label as keyof typeof CHUNKING_RULES];
   if (chunkingRule?.structuralTextMode === STRUCTURAL_TEXT_MODE_DECLARATION) {
     return generateStructuralTypeText(node, codeBody, config, chunkIndex, prevTail);
   }

@@ -985,7 +985,7 @@ export class LocalBackend {
       return { results: [], ftsUsed: false };
     }
 
-    const ftsUsed = bm25Results.length === 0 || bm25Results[0]?.ftsUsed !== false;
+    const ftsUsed = bm25Results.length > 0;
 
     const results: any[] = [];
 
@@ -1668,7 +1668,7 @@ export class LocalBackend {
     // during disambiguation (Step 2), use it directly — no extra round-trip.
     // Otherwise fall back to a single label check only when the type field is
     // empty (LadybugDB labels(n)[0] limitation).
-    const symRawType = sym.type || sym[2] || '';
+    const symRawType = (sym as any).type || (sym as any)[2] || '';
     let isClassLike = resolvedLabel === 'Class' || resolvedLabel === 'Interface';
     if (!isClassLike && symRawType === '') {
       try {
@@ -1783,7 +1783,7 @@ export class LocalBackend {
     };
 
     // Method/Function/Constructor enrichment: fetch method-specific properties
-    const symKind = isClassLike ? resolvedLabel || 'Class' : sym.type || sym[2];
+    const symKind = isClassLike ? resolvedLabel || 'Class' : (sym as any).type || (sym as any)[2];
     const isMethodLike =
       symKind === 'Method' || symKind === 'Function' || symKind === 'Constructor';
     let methodMetadata: Record<string, unknown> | undefined;
@@ -1821,13 +1821,13 @@ export class LocalBackend {
     return {
       status: 'found',
       symbol: {
-        uid: sym.id || sym[0],
-        name: sym.name || sym[1],
+        uid: sym.id ?? (sym as any)[0],
+        name: sym.name ?? (sym as any)[1],
         kind: symKind,
-        filePath: sym.filePath || sym[3],
-        startLine: sym.startLine || sym[4],
-        endLine: sym.endLine || sym[5],
-        ...(include_content && (sym.content || sym[6]) ? { content: sym.content || sym[6] } : {}),
+        filePath: sym.filePath ?? (sym as any)[3],
+        startLine: sym.startLine ?? (sym as any)[4],
+        endLine: sym.endLine ?? (sym as any)[5],
+        ...(include_content ? { content: sym.content ?? (sym as any)[6] } : {}),
         ...(methodMetadata ? { methodMetadata } : {}),
       },
       incoming: categorize(incomingRows),
@@ -3299,7 +3299,7 @@ export class LocalBackend {
     await this.ensureInitialized(repo.id);
 
     const routeFilter = params.route ? `AND n.name CONTAINS $route` : '';
-    const queryParams = params.route ? { route: params.route } : {};
+    const queryParams: Record<string, string> = params.route ? { route: params.route } : {};
     const routes = await this.fetchRoutesWithConsumers(repo.id, routeFilter, queryParams);
 
     if (routes.length === 0) {
@@ -3333,7 +3333,7 @@ export class LocalBackend {
     await this.ensureInitialized(repo.id);
 
     const routeFilter = params.route ? `AND n.name CONTAINS $route` : '';
-    const queryParams = params.route ? { route: params.route } : {};
+    const queryParams: Record<string, string> = params.route ? { route: params.route } : {};
     const allRoutes = await this.fetchRoutesWithConsumers(repo.id, routeFilter, queryParams);
 
     const results = allRoutes

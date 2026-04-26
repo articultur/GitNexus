@@ -33,7 +33,7 @@ function findFunctionDeclarator(node: SyntaxNode): SyntaxNode | null {
       if (child?.type === 'function_declarator') return child;
     }
     // Go deeper into nested pointer/reference declarators
-    const next = current.namedChildren.find(
+    const next: SyntaxNode | undefined = current.namedChildren.find(
       (c) => c.type === 'pointer_declarator' || c.type === 'reference_declarator',
     );
     current = next ?? null;

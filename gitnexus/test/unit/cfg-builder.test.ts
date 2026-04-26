@@ -8,7 +8,7 @@
  * - Control flow constructs: if, while, for, switch, try-catch, break, continue, return, throw
  * - Edge cases: empty function, nested control flow
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import Parser, { type Tree } from 'tree-sitter';
 import TypeScript from 'tree-sitter-typescript';
 import { loadLanguage } from '../../src/core/tree-sitter/parser-loader.js';
@@ -16,7 +16,6 @@ import {
   buildCFG,
   buildCFGFromStatements,
   cfgToResult,
-  type CFGResult,
 } from '../../src/core/ingestion/dataflow/cfg-builder.js';
 import type { CFG, CFGNode } from '../../src/core/ingestion/dataflow/types.js';
 import { SupportedLanguages } from 'gitnexus-shared';
@@ -37,7 +36,6 @@ function parseTS(source: string): Tree {
 // ─── buildCFG ─────────────────────────────────────────────────────────────────
 
 describe('buildCFG (tree-sitter AST)', () => {
-
   describe('basic functionality', () => {
     it('produces a CFGResult with nodes and edges', () => {
       const source = 'function foo() { return 1; }';
@@ -232,9 +230,7 @@ describe('buildCFG (tree-sitter AST)', () => {
       const tree = parseTS(source);
       const result = buildCFG(tree, source, SupportedLanguages.TypeScript);
 
-      const returnNode = result.nodes.find(
-        (n) => n.basicBlock.some((b) => b.includes('return'))
-      );
+      const returnNode = result.nodes.find((n) => n.basicBlock.some((b) => b.includes('return')));
       expect(returnNode?.statementType).toBe('terminal');
     });
 
@@ -243,9 +239,7 @@ describe('buildCFG (tree-sitter AST)', () => {
       const tree = parseTS(source);
       const result = buildCFG(tree, source, SupportedLanguages.TypeScript);
 
-      const throwNode = result.nodes.find(
-        (n) => n.basicBlock.some((b) => b.includes('throw'))
-      );
+      const throwNode = result.nodes.find((n) => n.basicBlock.some((b) => b.includes('throw')));
       expect(throwNode?.statementType).toBe('terminal');
     });
   });
@@ -418,8 +412,8 @@ describe('buildCFGFromStatements (legacy)', () => {
       { type: 'return', content: 'return x', line: 1 },
     ]);
 
-    const returnNode = Array.from(cfg.nodes.values()).find(
-      (n) => n.basicBlock.includes('return x')
+    const returnNode = Array.from(cfg.nodes.values()).find((n) =>
+      n.basicBlock.includes('return x'),
     );
     expect(returnNode?.successors).toEqual([]);
   });
@@ -452,7 +446,7 @@ describe('cfgToResult', () => {
 
     expect(result.functionId).toBe('fn');
     expect(result.nodes).toHaveLength(2);
-    expect(result.edges).toEqual([]); // cfgToResult does not convert edges
+    expect(result.edges).toEqual([{ sourceId: 'fn:bb:0', targetId: 'fn:bb:1', edgeType: 'NEXT' }]);
   });
 
   it('preserves node order from Map iteration', () => {

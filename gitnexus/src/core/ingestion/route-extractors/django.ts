@@ -77,7 +77,7 @@ export function extractDjangoRoutes(content: string, filePath: string): DjangoRo
     const rawPattern = match[1];
     // Skip include() calls — these are prefixes handled by nested url confs,
     // not direct handler registrations.
-    if (rawPattern.endsWith('/') === false && includes(content, match.index)) continue;
+    if (rawPattern.endsWith('/') === false && includes(content, match.index ?? 0)) continue;
 
     const routePath = normaliseDjangoPattern(rawPattern);
     if (!routePath || routePath === '/') {

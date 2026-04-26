@@ -30,7 +30,7 @@ export const indexCommand = async (inputPathParts?: string[], options?: IndexOpt
   const inputPath = inputPathParts?.length ? inputPathParts.join(' ') : undefined;
 
   if (inputPathParts && inputPathParts.length > 1) {
-    const resolvedCombinedPath = path.resolve(inputPath);
+    const resolvedCombinedPath = path.resolve(inputPath!);
     try {
       await fs.access(resolvedCombinedPath);
     } catch {

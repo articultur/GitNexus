@@ -458,10 +458,11 @@ function findClassNodeByQualifiedName(node: SyntaxNode): SyntaxNode | null {
         }
       }
       if (!funcDecl) {
-        const next = current.namedChildren.find(
-          (c) => c.type === 'pointer_declarator' || c.type === 'reference_declarator',
-        );
-        current = next ?? null;
+        const next: SyntaxNode | null =
+          current.namedChildren.find(
+            (c) => c.type === 'pointer_declarator' || c.type === 'reference_declarator',
+          ) ?? null;
+        current = next;
       }
     }
   }
@@ -655,7 +656,8 @@ const findEnclosingFunctionId = (
       if (customResult) {
         let finalLabel: NodeLabel = customResult.label;
         if (provider.labelOverride) {
-          const override = provider.labelOverride(current.previousSibling, finalLabel);
+          const prevSibling = current.previousSibling;
+          const override = prevSibling ? provider.labelOverride(prevSibling, finalLabel) : null;
           if (override !== null) finalLabel = override;
         }
         // Qualify custom result with enclosing class

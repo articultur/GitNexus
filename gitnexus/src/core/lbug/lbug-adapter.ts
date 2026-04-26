@@ -200,16 +200,16 @@ export const isDbBusyError = (err: unknown): boolean => {
 
 const runWithSessionLock = async <T>(operation: () => Promise<T>): Promise<T> => {
   const previous = sessionLock;
-  let release: (() => void) | null = null;
+  let releaseFn: (() => void) | undefined = undefined;
   sessionLock = new Promise<void>((resolve) => {
-    release = resolve;
+    releaseFn = resolve;
   });
 
   await previous;
   try {
     return await operation();
   } finally {
-    release?.();
+    if (releaseFn !== undefined) (releaseFn as () => void)();
   }
 };
 

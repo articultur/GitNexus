@@ -1059,7 +1059,7 @@ export const buildTypeEnv = (
             skip--;
             continue;
           }
-          if (!declarationTypeNodes.has(`${scope}\0${varName}`)) {
+          if (!declarationTypeNodes.has(`${scope}\0${varName}`) && typeNode) {
             declarationTypeNodes.set(`${scope}\0${varName}`, typeNode);
           }
         }

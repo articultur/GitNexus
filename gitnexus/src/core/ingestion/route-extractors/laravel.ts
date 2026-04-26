@@ -66,16 +66,16 @@ function extractPrefixedGroups(
   let match: RegExpMatchArray | null;
 
   while ((match = LARAVEL_PREFIX_GROUP_START_RE.exec(content)) !== null) {
-    const prefix = match[1] || match[2];
+    const prefix = match[1] || match[2] || '';
     if (!prefix) continue;
-    const openBraceIndex = content.indexOf('{', match.index + match[0].length - 1);
+    const openBraceIndex = content.indexOf('{', (match.index ?? 0) + match[0].length - 1);
     if (openBraceIndex < 0) continue;
     const closeBraceIndex = findMatchingBrace(content, openBraceIndex);
     if (closeBraceIndex < 0) continue;
     groups.push({
       prefix,
       body: content.slice(openBraceIndex + 1, closeBraceIndex),
-      start: match.index,
+      start: match.index ?? 0,
       end: closeBraceIndex + 1,
     });
     LARAVEL_PREFIX_GROUP_START_RE.lastIndex = closeBraceIndex + 1;
@@ -115,18 +115,18 @@ export function extractLaravelRoutes(content: string, filePath: string): Laravel
   LARAVEL_ROUTE_RE.lastIndex = 0;
   let match: RegExpMatchArray | null;
   while ((match = LARAVEL_ROUTE_RE.exec(content)) !== null) {
-    if (isInExcludedRange(match.index, excludedRanges)) continue;
-    const httpMethod = match[1].toUpperCase();
-    const routePath = normaliseLaravelPath(match[2]);
-    const lineNumber = content.slice(0, match.index).split('\n').length;
+    if (isInExcludedRange(match.index ?? 0, excludedRanges)) continue;
+    const httpMethod = (match[1] || '').toUpperCase();
+    const routePath = normaliseLaravelPath(match[2] || '');
+    const lineNumber = content.slice(0, match.index ?? 0).split('\n').length;
     routes.push({ routePath, httpMethod, filePath, lineNumber });
   }
 
   LARAVEL_RESOURCE_RE.lastIndex = 0;
   while ((match = LARAVEL_RESOURCE_RE.exec(content)) !== null) {
-    if (isInExcludedRange(match.index, excludedRanges)) continue;
+    if (isInExcludedRange(match.index ?? 0, excludedRanges)) continue;
     const isApi = match[1] === 'apiResource';
-    const resourceName = match[2].trim();
+    const resourceName = (match[2] || '').trim();
     const base = '/' + resourceName;
     const lineNumber = content.slice(0, match.index).split('\n').length;
 
@@ -155,9 +155,9 @@ export function extractLaravelRoutes(content: string, filePath: string): Laravel
 
   ROUTER_METHOD_RE.lastIndex = 0;
   while ((match = ROUTER_METHOD_RE.exec(content)) !== null) {
-    if (isInExcludedRange(match.index, excludedRanges)) continue;
-    const httpMethod = match[1].toUpperCase();
-    const routePath = normaliseLaravelPath(match[2]);
+    if (isInExcludedRange(match.index ?? 0, excludedRanges)) continue;
+    const httpMethod = (match[1] || '').toUpperCase();
+    const routePath = normaliseLaravelPath(match[2] || '');
     const lineNumber = content.slice(0, match.index).split('\n').length;
     routes.push({ routePath, httpMethod, filePath, lineNumber });
   }

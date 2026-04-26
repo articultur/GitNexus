@@ -23,7 +23,7 @@ export const readServerMapping = async (repoName: string): Promise<string | unde
       const raw = await fs.readFile(MAPPING_FILE, 'utf-8');
       cachedMapping = JSON.parse(raw);
     }
-    return cachedMapping[repoName];
+    return cachedMapping?.[repoName];
   } catch {
     return undefined;
   }

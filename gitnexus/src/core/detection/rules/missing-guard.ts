@@ -138,7 +138,7 @@ export const missingGuardRule: Rule = {
       const re = new RegExp(risky.pattern.source, risky.pattern.flags + 'g');
       let match: RegExpMatchArray | null;
       while ((match = re.exec(content)) !== null) {
-        if (!hasGuard(content, match.index)) {
+        if (match.index !== undefined && !hasGuard(content, match.index)) {
           findings.push({ match, description: risky.description });
         }
         // Safety: limit matches per pattern to avoid runaway

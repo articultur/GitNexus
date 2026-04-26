@@ -1321,12 +1321,17 @@ export function extractCobolSymbolsWithRegex(
 
   // Flush any pending EXEC block (truncated file without END-EXEC)
   if (execAccum !== null) {
-    if (execAccum.type === 'sql') {
-      result.execSqlBlocks.push(parseExecSqlBlock(execAccum.lines, execAccum.startLine));
-    } else if (execAccum.type === 'cics') {
-      result.execCicsBlocks.push(parseExecCicsBlock(execAccum.lines, execAccum.startLine));
-    } else if (execAccum.type === 'dli') {
-      result.execDliBlocks.push(parseExecDliBlock(execAccum.lines, execAccum.startLine));
+    const pendingExec = execAccum as {
+      type: 'sql' | 'cics' | 'dli';
+      lines: string;
+      startLine: number;
+    };
+    if (pendingExec.type === 'sql') {
+      result.execSqlBlocks.push(parseExecSqlBlock(pendingExec.lines, pendingExec.startLine));
+    } else if (pendingExec.type === 'cics') {
+      result.execCicsBlocks.push(parseExecCicsBlock(pendingExec.lines, pendingExec.startLine));
+    } else if (pendingExec.type === 'dli') {
+      result.execDliBlocks.push(parseExecDliBlock(pendingExec.lines, pendingExec.startLine));
     }
     execAccum = null;
   }
@@ -1930,7 +1935,8 @@ export function extractCobolSymbolsWithRegex(
     if (lv88Match) {
       const name = lv88Match[1];
       const values = parseConditionValues(lv88Match[2]);
-      const parent88 = dataLevelStack.length > 0 ? dataLevelStack[dataLevelStack.length - 1].name : undefined;
+      const parent88 =
+        dataLevelStack.length > 0 ? dataLevelStack[dataLevelStack.length - 1].name : undefined;
       result.dataItems.push({
         name,
         level: 88,
@@ -2009,7 +2015,8 @@ export function extractCobolSymbolsWithRegex(
           dataLevelStack.push({ level: item.level, name: item.name });
         } else {
           dataLevelStack = dataLevelStack.filter((e) => e.level < item.level);
-          const parent = dataLevelStack.length > 0 ? dataLevelStack[dataLevelStack.length - 1] : undefined;
+          const parent =
+            dataLevelStack.length > 0 ? dataLevelStack[dataLevelStack.length - 1] : undefined;
           item.parentName = parent?.name;
           dataLevelStack.push({ level: item.level, name: item.name });
         }

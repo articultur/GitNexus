@@ -9,7 +9,7 @@
 import { SupportedLanguages } from 'gitnexus-shared';
 import { createClassExtractor } from '../class-extractors/generic.js';
 import { phpClassConfig } from '../class-extractors/configs/php.js';
-import { defineLanguage } from '../language-provider.js';
+import { defineLanguage, type CaptureMap } from '../language-provider.js';
 import { typeConfig as phpConfig } from '../type-extractors/php.js';
 import { phpExportChecker } from '../export-detection.js';
 import { createImportResolver } from '../import-resolvers/resolver-factory.js';
@@ -218,7 +218,7 @@ function extractEloquentRelationDescription(methodNode: SyntaxNode): string | nu
 function phpDescriptionExtractor(
   nodeLabel: NodeLabel,
   nodeName: string,
-  captureMap: Record<string, SyntaxNode>,
+  captureMap: CaptureMap,
 ): string | undefined {
   if (nodeLabel === 'Property' && captureMap['definition.property']) {
     return extractPhpPropertyDescription(nodeName, captureMap['definition.property']) ?? undefined;

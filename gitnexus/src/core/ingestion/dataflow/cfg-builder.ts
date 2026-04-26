@@ -531,7 +531,7 @@ function collectIfBranches(ifNode: SyntaxNode): string[] {
         tryStack: [],
         lastSeqId: null,
         freshId() {
-          return '';
+          return `cfg-n${this.nodeCounter++}`;
         },
       };
       const s = walkChildren(cons, state);
@@ -891,9 +891,15 @@ export type { BasicBlock, ParsedStatement, StatementType } from './types.js';
  * Used to feed legacy CFG results into writeCFGEdges().
  */
 export function cfgToResult(cfg: import('./types.js').CFG): CFGResult {
+  const edges: Array<{ sourceId: string; targetId: string; edgeType: 'NEXT' }> = [];
+  for (const node of cfg.nodes.values()) {
+    for (const succId of node.successors) {
+      edges.push({ sourceId: node.id, targetId: succId, edgeType: 'NEXT' });
+    }
+  }
   return {
     functionId: cfg.functionId,
     nodes: Array.from(cfg.nodes.values()),
-    edges: [],
+    edges,
   };
 }

@@ -54,7 +54,7 @@ function wireImplicitImports(
   }
 
   for (const [provider, langFiles] of grouped) {
-    if (langFiles.length > 1) {
+    if (langFiles.length > 1 && provider.implicitImportWirer) {
       provider.implicitImportWirer(langFiles, importMap, addImportEdge, projectConfig);
     }
   }

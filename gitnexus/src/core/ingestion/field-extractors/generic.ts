@@ -171,9 +171,11 @@ export function createFieldExtractor(config: FieldExtractionConfig): FieldExtrac
 
       let type: string | null = config.extractType(node) ?? null;
       if (type) {
-        type = this.normalizeType(type);
-        const resolved = this.resolveType(type, context);
-        if (resolved) type = resolved;
+        const typeVal: string = type;
+        let normalized: string = this.normalizeType(typeVal) ?? '';
+        const resolved = this.resolveType(normalized, context);
+        if (resolved) normalized = resolved;
+        type = normalized;
       }
 
       return {

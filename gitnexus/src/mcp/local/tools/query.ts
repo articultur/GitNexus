@@ -302,7 +302,7 @@ async function bm25SearchHelper(
     return { results: [], ftsUsed: false };
   }
 
-  const ftsUsed = bm25Results.length === 0 || bm25Results[0]?.ftsUsed !== false;
+  const ftsUsed = bm25Results.length > 0;
 
   const results: any[] = [];
 

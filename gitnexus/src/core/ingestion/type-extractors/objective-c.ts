@@ -449,7 +449,7 @@ export function synthesizePropertyAccessors(node: SyntaxNode): PropertyInfo {
   } else {
     // Legacy support: handle direct nodes
     const nameNode = node.childForFieldName('name') ?? node.lastNamedChild;
-    propertyName = nameNode ? extractVarName(nameNode) : '';
+    propertyName = nameNode ? (extractVarName(nameNode) ?? '') : '';
 
     const typeNode = node.childForFieldName('type');
     if (typeNode) {

@@ -166,7 +166,7 @@ export async function routeMapTool(
   await ensureInitialized(repo.id);
 
   const routeFilter = params.route ? `AND n.name CONTAINS $route` : '';
-  const queryParams = params.route ? { route: params.route } : {};
+  const queryParams: Record<string, string> = params.route ? { route: params.route } : {};
   const routes = await fetchRoutesWithConsumers(repo.id, routeFilter, queryParams);
 
   if (routes.length === 0) {
@@ -204,7 +204,7 @@ export async function shapeCheckTool(
   await ensureInitialized(repo.id);
 
   const routeFilter = params.route ? `AND n.name CONTAINS $route` : '';
-  const queryParams = params.route ? { route: params.route } : {};
+  const queryParams: Record<string, string> = params.route ? { route: params.route } : {};
   const allRoutes = await fetchRoutesWithConsumers(repo.id, routeFilter, queryParams);
 
   const results = allRoutes

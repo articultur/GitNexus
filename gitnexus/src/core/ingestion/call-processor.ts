@@ -2107,7 +2107,7 @@ const resolveFieldAccessType = (
   // Use stripNullable (not extractReturnTypeName) — field types like List<User>
   // should be preserved as-is, not unwrapped to User. Only strip nullable wrappers.
   return {
-    typeName: stripNullable(fieldDef.declaredType),
+    typeName: stripNullable(fieldDef.declaredType ?? '') ?? '',
     fieldNodeId: fieldDef.nodeId,
   };
 };

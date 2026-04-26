@@ -232,14 +232,40 @@ function computeRHSValue(
     return facts.get(assignedVar)!;
   }
 
+  // Extract variables from expressions like "x + 1" or "a * b - c"
+  // and propagate the least precise value among them
+  const varMatches = rhs.matchAll(/\b([a-zA-Z_]\w*)\b/g);
+  let propagatedValue: LatticeValue | null = null;
+  const priorities: Record<LatticeValue, number> = {
+    CONSTANT: 4,
+    TAINTED: 3,
+    SANITIZED: 3,
+    NAC: 2,
+    UNINIT: 1,
+  };
+  for (const match of varMatches) {
+    const varName = match[1];
+    // Skip keywords and known non-variable names
+    if (['true', 'false', 'null', 'undefined', 'NaN', 'Infinity'].includes(varName)) continue;
+    if (facts.has(varName)) {
+      const varValue = facts.get(varName)!;
+      if (!propagatedValue || (priorities[varValue] ?? 0) < (priorities[propagatedValue] ?? 0)) {
+        propagatedValue = varValue;
+      }
+    }
+  }
+  if (propagatedValue) {
+    return propagate(propagatedValue);
+  }
+
   // Check if RHS contains a function call that returns a value
   if (rhs.includes('(')) {
     // Assume function calls return constants unless they're known sources/sanitizers
     return 'CONSTANT';
   }
 
-  // Literal value
-  if (rhs.match(/^['"0-9]/)) {
+  // Literal value (numbers, strings)
+  if (rhs.match(/^['"0-9]/) || rhs.match(/^\d/)) {
     return 'CONSTANT';
   }
 
