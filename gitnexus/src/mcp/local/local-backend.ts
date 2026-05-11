@@ -33,6 +33,7 @@ import { collectBestChunks } from '../../core/embeddings/types.js';
 import { EMBEDDING_TABLE_NAME, EMBEDDING_INDEX_NAME } from '../../core/lbug/schema.js';
 import { PhaseTimer } from '../../core/search/phase-timer.js';
 import { checkStaleness, checkCwdMatch } from '../../core/git-staleness.js';
+import { testImpactTool } from './tools/test-impact.js';
 // AI context generation is CLI-only (gitnexus analyze)
 // import { generateAIContextFiles } from '../../cli/ai-context.js';
 
@@ -665,6 +666,8 @@ export class LocalBackend {
         return this.context(repo, params);
       case 'impact':
         return this.impact(repo, params);
+      case 'test_impact':
+        return testImpactTool(repo, params, (repoId) => this.ensureInitialized(repoId));
       case 'detect_changes':
         return this.detectChanges(repo, params);
       case 'rename':

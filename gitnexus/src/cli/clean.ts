@@ -14,7 +14,26 @@ import {
   UnsafeStoragePathError,
 } from '../storage/repo-manager.js';
 
-export const cleanCommand = async (options?: { force?: boolean; all?: boolean }) => {
+type CleanOptions = { force?: boolean; all?: boolean };
+
+const normalizeCleanOptions = (value: unknown): CleanOptions => {
+  if (!value || typeof value !== 'object') return {};
+  const maybeCommand = value as { opts?: () => CleanOptions };
+  if (typeof maybeCommand.opts === 'function') {
+    return maybeCommand.opts();
+  }
+  return value as CleanOptions;
+};
+
+export const cleanCommand = async (
+  nameOrOptions?: string | CleanOptions,
+  commandOrOptions?: CleanOptions,
+) => {
+  const options =
+    typeof nameOrOptions === 'object'
+      ? normalizeCleanOptions(nameOrOptions)
+      : normalizeCleanOptions(commandOrOptions);
+
   // --all flag: clean all indexed repos
   if (options?.all) {
     if (!options?.force) {

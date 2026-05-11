@@ -37,6 +37,17 @@ const FTS_INDEXES: ReadonlyArray<{
   { table: 'Interface', indexName: 'interface_fts', properties: ['name', 'content'] },
 ];
 
+const KEYWORD_FALLBACK_TABLES: ReadonlyArray<{
+  table: string;
+  properties: readonly string[];
+}> = [
+  { table: 'File', properties: ['name', 'content'] },
+  { table: 'Function', properties: ['name', 'content', 'description'] },
+  { table: 'Class', properties: ['name', 'content', 'description'] },
+  { table: 'Method', properties: ['name', 'content', 'description'] },
+  { table: 'Interface', properties: ['name', 'content', 'description'] },
+];
+
 /**
  * Per-process cache for the MCP pool path: tracks which `(repoId, table)`
  * pairs have been ensured. The CLI/pipeline path gets its own cache inside
@@ -137,7 +148,7 @@ async function queryFTSViaExecutor(
   // Escape single quotes and backslashes to prevent Cypher injection
   const escapedQuery = query.replace(/\\/g, '\\\\').replace(/'/g, "''");
   const cypher = `
-    CALL QUERY_FTS_INDEX('${tableName}', '${indexName}', '${escapedQuery}', conjunctive := true)
+    CALL QUERY_FTS_INDEX('${tableName}', '${indexName}', '${escapedQuery}', conjunctive := false)
     RETURN node, score
     ORDER BY score DESC
     LIMIT ${limit}
@@ -156,6 +167,93 @@ async function queryFTSViaExecutor(
   } catch {
     return [];
   }
+}
+
+function escapeCypherString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "''");
+}
+
+function getKeywordTerms(query: string): string[] {
+  const terms = [query.trim(), ...query.trim().split(/\s+/)]
+    .map((term) => term.trim())
+    .filter(Boolean);
+  return [...new Set(terms)].slice(0, 8);
+}
+
+function scoreKeywordRow(
+  row: Record<string, any>,
+  terms: string[],
+): { filePath: string; score: number; nodeId: string } {
+  const name = String(row.name ?? row[2] ?? '');
+  const content = String(row.content ?? row[3] ?? '');
+  const description = String(row.description ?? row[4] ?? '');
+  const haystacks = {
+    name: name.toLowerCase(),
+    content: content.toLowerCase(),
+    description: description.toLowerCase(),
+  };
+  let score = 0;
+  for (const term of terms) {
+    const needle = term.toLowerCase();
+    if (haystacks.name.includes(needle)) score += 12;
+    if (haystacks.description.includes(needle)) score += 6;
+    if (haystacks.content.includes(needle)) score += 2;
+  }
+  return {
+    filePath: String(row.filePath ?? row[0] ?? ''),
+    score,
+    nodeId: String(row.nodeId ?? row[1] ?? ''),
+  };
+}
+
+async function queryKeywordFallbackViaExecutor(
+  executor: (cypher: string) => Promise<any[]>,
+  tableName: string,
+  properties: readonly string[],
+  query: string,
+  limit: number,
+): Promise<Array<{ filePath: string; score: number; nodeId: string }>> {
+  if (limit <= 0) return [];
+  const terms = getKeywordTerms(query);
+  if (terms.length === 0) return [];
+
+  const predicates = properties.flatMap((property) =>
+    terms.map((term) => `n.${property} CONTAINS '${escapeCypherString(term)}'`),
+  );
+  const descriptionProjection = properties.includes('description')
+    ? ', n.description AS description'
+    : '';
+  const cypher = `
+    MATCH (n:${tableName})
+    WHERE ${predicates.join(' OR ')}
+    RETURN n.filePath AS filePath, n.id AS nodeId, n.name AS name, n.content AS content${descriptionProjection}
+    LIMIT ${limit}
+  `;
+
+  try {
+    const rows = await executor(cypher);
+    return rows
+      .map((row: any) => scoreKeywordRow(row, terms))
+      .filter((row) => row.filePath && row.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function searchKeywordFallbackViaExecutor(
+  executor: (cypher: string) => Promise<any[]>,
+  query: string,
+  limit: number,
+): Promise<Array<{ filePath: string; score: number; nodeId: string }>> {
+  const results: Array<{ filePath: string; score: number; nodeId: string }> = [];
+  for (const { table, properties } of KEYWORD_FALLBACK_TABLES) {
+    results.push(
+      ...(await queryKeywordFallbackViaExecutor(executor, table, properties, query, limit)),
+    );
+  }
+  return results.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 /**
@@ -210,6 +308,16 @@ export const searchFTSFromLbug = async (
       query,
       limit,
     );
+
+    if (
+      fileResults.length === 0 &&
+      functionResults.length === 0 &&
+      classResults.length === 0 &&
+      methodResults.length === 0 &&
+      interfaceResults.length === 0
+    ) {
+      fileResults = await searchKeywordFallbackViaExecutor(executor, query, limit);
+    }
   } else {
     // Use core lbug adapter (CLI / pipeline context) — also sequential for safety.
     // Lazy-create FTS indexes on first query (analyze no longer does it).
