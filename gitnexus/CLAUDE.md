@@ -99,3 +99,19 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Commands
+
+```bash
+npm run test:unit   # 单元测试 (5019 tests)
+npx tsc --noEmit   # TypeScript 类型检查 (strict mode)
+npm run lint       # Linting
+```
+
+## Package Structure
+
+| Path | Purpose |
+|------|---------|
+| `src/core/ingestion/` | 代码解析 pipeline (14 phases) |
+| `src/mcp/local/` | MCP 工具后端 (LocalBackend class) |
+| `src/core/ingestion/dataflow/` | DFA 污点分析 |

@@ -70,4 +70,22 @@ This project is indexed by GitNexus as **gitnexus** (21817 symbols, 30657 relati
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
-<!-- gitnexus:end -->` block in **[AGENTS.md](AGENTS.md)** for the canonical MCP tools, impact analysis rules, and index instructions.
+<!-- gitnexus:end -->
+
+## Directory Structure
+
+| Path | Purpose |
+|------|---------|
+| `src/core/ingestion/` | 代码解析 pipeline (14 phases) |
+| `src/mcp/local/` | MCP 工具后端 |
+| `src/core/ingestion/dataflow/` | DFA 污点分析 |
+| `test/unit/` | 单元测试 (5019 tests) |
+
+## Commands
+
+```bash
+npm run test:unit   # 单元测试 (gitnexus/)
+npx tsc --noEmit   # TypeScript 类型检查
+npm run lint       # Linting
+npx gitnexus analyze  # 更新索引
+```

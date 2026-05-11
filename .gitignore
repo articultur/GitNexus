@@ -98,3 +98,7 @@ gitnexus/*.tgz
 # Local agent scratch / review prompts (never commit)
 .tmp/
 .agents/
+
+# Local tool artifacts
+.playwright-mcp/
+.serena/project.local.yml
