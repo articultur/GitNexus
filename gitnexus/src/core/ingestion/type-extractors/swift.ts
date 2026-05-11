@@ -120,7 +120,13 @@ const extractInitializer: InitializerExtractor = (
   if (callee.type === 'navigation_expression') {
     const receiver = callee.firstNamedChild;
     const suffix = callee.lastNamedChild;
-    if (receiver?.type === 'simple_identifier' && suffix?.text === 'init') {
+    const suffixName =
+      suffix?.type === 'navigation_suffix'
+        ? suffix.lastNamedChild?.text
+        : suffix?.type === 'simple_identifier'
+          ? suffix.text
+          : undefined;
+    if (receiver?.type === 'simple_identifier' && suffixName === 'init') {
       const calleeName = receiver.text;
       if (calleeName && classNames.has(calleeName)) {
         env.set(varName, calleeName);
