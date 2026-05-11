@@ -1405,6 +1405,12 @@ export const OBJECTIVEC_QUERIES = `
 (method_definition
   (method_type)
   (identifier) @name) @definition.method
+
+; ── Imports (#import "Foo.h" / #import <Foo/Foo.h>) ───────────────────────
+(preproc_include path: (_) @import.source) @import
+
+; ── Message sends ([receiver selector] / [receiver selector:arg]) ──────────
+(message_expression method: (identifier) @call.name) @call
 `;
 
 export const ARKTS_QUERIES =
