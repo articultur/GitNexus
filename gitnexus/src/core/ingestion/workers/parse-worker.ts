@@ -6,7 +6,7 @@ import Python from 'tree-sitter-python';
 import Java from 'tree-sitter-java';
 import C from 'tree-sitter-c';
 import CPP from 'tree-sitter-cpp';
-import CSharp from 'tree-sitter-c-sharp';
+import CSharp from 'tree-sitter-c-sharp/bindings/node/index.js';
 import Go from 'tree-sitter-go';
 import Rust from 'tree-sitter-rust';
 import PHP from 'tree-sitter-php';
@@ -23,27 +23,40 @@ type TreeSitterLanguage = Parameters<typeof Parser.prototype.setLanguage>[0];
 
 // tree-sitter-swift is an optionalDependency — may not be installed
 const _require = createRequire(import.meta.url);
+
+const resolveUsableGrammar = (grammarModule: any): TreeSitterLanguage | null => {
+  for (const candidate of [grammarModule, grammarModule?.language]) {
+    if (!candidate) continue;
+    try {
+      const probe = new Parser();
+      probe.setLanguage(candidate);
+      return candidate;
+    } catch {}
+  }
+  return null;
+};
+
 let Swift: TreeSitterLanguage | null = null;
 try {
-  Swift = _require('tree-sitter-swift');
+  Swift = resolveUsableGrammar(_require('tree-sitter-swift'));
 } catch {}
 
 // tree-sitter-dart is an optionalDependency — may not be installed
 let Dart: TreeSitterLanguage | null = null;
 try {
-  Dart = _require('tree-sitter-dart');
+  Dart = resolveUsableGrammar(_require('tree-sitter-dart'));
 } catch {}
 
 // tree-sitter-kotlin is an optionalDependency — may not be installed
 let Kotlin: TreeSitterLanguage | null = null;
 try {
-  Kotlin = _require('tree-sitter-kotlin');
+  Kotlin = resolveUsableGrammar(_require('tree-sitter-kotlin'));
 } catch {}
 
 // tree-sitter-objc is an optionalDependency — may not be installed
 let Objc: TreeSitterLanguage | null = null;
 try {
-  Objc = _require('tree-sitter-objc');
+  Objc = resolveUsableGrammar(_require('tree-sitter-objc'));
 } catch {}
 import { getLanguageFromFilename } from 'gitnexus-shared';
 import {
