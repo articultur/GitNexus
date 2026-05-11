@@ -31,7 +31,7 @@ If always-on instructions grow, load deep conventions via conditional reads inst
 - **GitNexus rules:** Defined in [AGENTS.md](AGENTS.md) `<!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **GitNexus** (21755 symbols, 30593 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **gitnexus** (21817 symbols, 30657 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -54,10 +54,10 @@ This project is indexed by GitNexus as **GitNexus** (21755 symbols, 30593 relati
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/GitNexus/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/GitNexus/clusters` | All functional areas |
-| `gitnexus://repo/GitNexus/processes` | All execution flows |
-| `gitnexus://repo/GitNexus/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/gitnexus/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/gitnexus/clusters` | All functional areas |
+| `gitnexus://repo/gitnexus/processes` | All execution flows |
+| `gitnexus://repo/gitnexus/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
