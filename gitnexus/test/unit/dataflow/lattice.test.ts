@@ -8,15 +8,12 @@ import {
   isLessOrEqual,
   isTainted,
   isSanitized,
-  isNAC,
-  isUninit,
   propagate,
   flowSensitiveMeet,
   bottom,
   top,
   LATTICE_ORDER,
 } from '../../../src/core/ingestion/dataflow/lattice';
-import type { LatticeValue } from '../../../src/core/ingestion/dataflow/types';
 
 describe('Lattice Operations', () => {
   describe('join', () => {

@@ -1,6 +1,7 @@
 // gitnexus/src/cli/group.ts
 import { createRequire } from 'node:module';
 import type { Command } from 'commander';
+import { logger } from '../core/logger.js';
 
 const _require = createRequire(import.meta.url);
 const yaml = _require('js-yaml') as typeof import('js-yaml');
@@ -97,7 +98,7 @@ Example:
       const groupDir = getGroupDir(getDefaultGitnexusDir(), groupName);
       const config = await loadGroupConfig(groupDir);
       if (!(repoPath in config.repos)) {
-        console.error(`Repo path "${repoPath}" not found in group "${groupName}"`);
+        logger.error(`Repo path "${repoPath}" not found in group "${groupName}"`);
         process.exitCode = 1;
         return;
       }
@@ -324,7 +325,7 @@ Matching cascade: exact → BM25 → embedding (if --embeddings enabled)
 
         const raw = await backend.getGroupService().groupImpact(payload);
         if (raw && typeof raw === 'object' && 'error' in raw) {
-          console.error(String((raw as { error: string }).error));
+          logger.error(String((raw as { error: string }).error));
           process.exitCode = 1;
           return;
         }
@@ -444,7 +445,7 @@ Output shows:
         });
 
         if (raw && typeof raw === 'object' && 'error' in raw) {
-          console.error(String((raw as { error: string }).error));
+          logger.error(String((raw as { error: string }).error));
           process.exitCode = 1;
           return;
         }

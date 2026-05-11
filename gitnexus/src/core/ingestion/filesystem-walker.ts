@@ -1,9 +1,11 @@
 import { isVerboseIngestionEnabled } from './utils/verbose.js';
+import { DEFAULT_MAX_FILE_SIZE_BYTES, getMaxFileSizeBytes } from './utils/max-file-size.js';
 import fs from 'fs/promises';
 import path from 'path';
-import { globIterate } from 'glob';
+import { glob } from 'glob';
 import { createIgnoreFilter } from '../../config/ignore-service.js';
 
+import { logger } from '../logger.js';
 export interface FileEntry {
   path: string;
   content: string;
@@ -22,100 +24,61 @@ export interface FilePath {
 
 const READ_CONCURRENCY = 32;
 
-/** Skip files larger than 512KB — they're usually generated/vendored and crash tree-sitter */
-const MAX_FILE_SIZE = 512 * 1024;
-
 /**
  * Phase 1: Scan repository — stat files to get paths + sizes, no content loaded.
  * Memory: ~10MB for 100K files vs ~1GB+ with content.
- *
- * Uses globIterate for streaming to memory-efficiently process large repositories
- * without loading all file paths into memory at once.
  */
 export const walkRepositoryPaths = async (
   repoPath: string,
   onProgress?: (current: number, total: number, filePath: string) => void,
 ): Promise<ScannedFile[]> => {
   const ignoreFilter = await createIgnoreFilter(repoPath);
+  const maxFileSizeBytes = getMaxFileSizeBytes();
 
-  const entries: ScannedFile[] = [];
-  let processed = 0;
-  let skippedLarge = 0;
-  const skippedLargePaths: string[] = [];
-  let batch: string[] = [];
-
-  // Stream files from glob instead of loading all at once
-  for await (const relativePath of globIterate('**/*', {
+  const filtered = await glob('**/*', {
     cwd: repoPath,
     nodir: true,
     dot: false,
     ignore: ignoreFilter,
-  })) {
-    batch.push(relativePath);
+  });
+  const entries: ScannedFile[] = [];
+  let processed = 0;
+  let skippedLarge = 0;
+  const skippedLargePaths: string[] = [];
 
-    // Process batch when reaching concurrency limit
-    if (batch.length >= READ_CONCURRENCY) {
-      const results = await Promise.allSettled(
-        batch.map(async (p) => {
-          const fullPath = path.join(repoPath, p);
-          const stat = await fs.stat(fullPath);
-          if (stat.size > MAX_FILE_SIZE) {
-            skippedLarge++;
-            skippedLargePaths.push(p.replace(/\\/g, '/'));
-            return null;
-          }
-          return { path: p.replace(/\\/g, '/'), size: stat.size };
-        }),
-      );
-
-      for (let i = 0; i < results.length; i++) {
-        processed++;
-        const result = results[i];
-        if (result.status === 'fulfilled' && result.value !== null) {
-          entries.push(result.value);
-          onProgress?.(processed, entries.length, result.value.path);
-        } else {
-          onProgress?.(processed, entries.length, batch[i]);
-        }
-      }
-      batch = [];
-    }
-  }
-
-  // Process any remaining files in final batch
-  if (batch.length > 0) {
+  for (let start = 0; start < filtered.length; start += READ_CONCURRENCY) {
+    const batch = filtered.slice(start, start + READ_CONCURRENCY);
     const results = await Promise.allSettled(
-      batch.map(async (p) => {
-        const fullPath = path.join(repoPath, p);
+      batch.map(async (relativePath) => {
+        const fullPath = path.join(repoPath, relativePath);
         const stat = await fs.stat(fullPath);
-        if (stat.size > MAX_FILE_SIZE) {
+        if (stat.size > maxFileSizeBytes) {
           skippedLarge++;
-          skippedLargePaths.push(p.replace(/\\/g, '/'));
+          skippedLargePaths.push(relativePath.replace(/\\/g, '/'));
           return null;
         }
-        return { path: p.replace(/\\/g, '/'), size: stat.size };
+        return { path: relativePath.replace(/\\/g, '/'), size: stat.size };
       }),
     );
 
-    for (let i = 0; i < results.length; i++) {
+    for (const result of results) {
       processed++;
-      const result = results[i];
       if (result.status === 'fulfilled' && result.value !== null) {
         entries.push(result.value);
-        onProgress?.(processed, entries.length, result.value.path);
+        onProgress?.(processed, filtered.length, result.value.path);
       } else {
-        onProgress?.(processed, entries.length, batch[i]);
+        onProgress?.(processed, filtered.length, batch[results.indexOf(result)]);
       }
     }
   }
 
   if (skippedLarge > 0) {
-    console.warn(
-      `  Skipped ${skippedLarge} large files (>${MAX_FILE_SIZE / 1024}KB, likely generated/vendored)`,
-    );
+    const isDefault = maxFileSizeBytes === DEFAULT_MAX_FILE_SIZE_BYTES;
+    const suffix = isDefault ? ', likely generated/vendored' : '';
+    logger.warn(`  Skipped ${skippedLarge} large files (>${maxFileSizeBytes / 1024}KB${suffix})`);
     if (isVerboseIngestionEnabled()) {
       for (const p of skippedLargePaths) {
-        console.warn(`  - ${p}`);
+        logger.warn(`  - ${p}`);
       }
     }
   }

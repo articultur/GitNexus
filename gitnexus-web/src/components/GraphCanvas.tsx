@@ -245,7 +245,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle>((_, ref) => {
 
       {/* Sigma container */}
       <div
-        ref={containerRef}
+        ref={containerRef as React.LegacyRef<HTMLDivElement>}
         className="sigma-container h-full w-full cursor-grab active:cursor-grabbing"
       />
 

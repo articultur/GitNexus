@@ -23,6 +23,7 @@ import { analyzePathSensitive, type PathSensitiveResult } from './path-sensitive
 import { detectChangedFunctions, getTransitiveDependencies } from './incremental.js';
 import type { LatticeValue } from './types.js';
 import { loadParser, isLanguageAvailable } from '../../tree-sitter/parser-loader.js';
+import { parseSourceSafe } from '../../tree-sitter/safe-parse.js';
 import type { SupportedLanguages } from 'gitnexus-shared';
 import {
   writeDataFlowEdges,
@@ -255,7 +256,7 @@ export async function processDataflow(
           const { loadLanguage } = await import('../../tree-sitter/parser-loader.js');
           await loadLanguage(lang);
           const source = func.content.join('\n');
-          const tree = parser!.parse(source);
+          const tree = parseSourceSafe(parser!, source);
           const cfgResult = buildCFGFromTSG({ rootNode: tree.rootNode }, source, lang, func.id);
           cfg = convertCFGResultToCFG(cfgResult);
         } catch (err) {
@@ -487,7 +488,7 @@ export async function processCFG(
         try {
           const { loadLanguage } = await import('../../tree-sitter/parser-loader.js');
           await loadLanguage(lang);
-          const tree = parser!.parse(source);
+          const tree = parseSourceSafe(parser!, source);
           const cfgResult = buildCFGFromTSG({ rootNode: tree.rootNode }, source, lang, func.id);
           writeCFGEdges(knowledgeGraph, cfgResult);
           continue;

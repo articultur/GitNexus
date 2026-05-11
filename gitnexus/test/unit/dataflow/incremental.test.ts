@@ -1,7 +1,7 @@
 /**
  * Unit tests for Incremental Data Flow Analysis
  */
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   detectChangedFunctions,
   getTransitiveDependencies,

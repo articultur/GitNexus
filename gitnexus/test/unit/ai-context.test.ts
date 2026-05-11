@@ -137,6 +137,101 @@ describe('generateAIContextFiles', () => {
     }
   });
 
+  it('does not create .claude/skills/gitnexus/ when skipSkills is true (#742)', async () => {
+    // Regression guard for #742. The --skip-skills flag must prevent
+    // installSkills() from writing the 6 standard skill dirs into the
+    // analyzed repo. Per-test tmpdir so we start from a known-clean
+    // slate — the shared tmpDir from beforeAll may already contain
+    // .claude/skills/gitnexus/ from an earlier test.
+    const skipDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-ai-ctx-skip-skills-'));
+    const skipStorage = path.join(skipDir, '.gitnexus');
+    await fs.mkdir(skipStorage, { recursive: true });
+    try {
+      const stats = { nodes: 50, edges: 100, processes: 5 };
+      const result = await generateAIContextFiles(
+        skipDir,
+        skipStorage,
+        'TestProject',
+        stats,
+        undefined,
+        { skipSkills: true },
+      );
+
+      expect(result.files).toContain('.claude/skills/gitnexus/ (skipped via --skip-skills)');
+      await expect(
+        fs.access(path.join(skipDir, '.claude', 'skills', 'gitnexus')),
+      ).rejects.toThrow();
+    } finally {
+      await fs.rm(skipDir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes nothing when both skipAgentsMd and skipSkills are true (--index-only, #742)', async () => {
+    // Regression guard for #742. analyzeCommand() resolves --index-only
+    // into BOTH skipAgentsMd=true and skipSkills=true. This test pins
+    // the resolved-flag combination so a future regression that drops
+    // either guard fails here. Per-test tmpdir for the same reason as
+    // the skipSkills test above.
+    const idxDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-ai-ctx-index-only-'));
+    const idxStorage = path.join(idxDir, '.gitnexus');
+    await fs.mkdir(idxStorage, { recursive: true });
+    try {
+      const stats = { nodes: 50, edges: 100, processes: 5 };
+      const result = await generateAIContextFiles(
+        idxDir,
+        idxStorage,
+        'TestProject',
+        stats,
+        undefined,
+        { skipAgentsMd: true, skipSkills: true },
+      );
+
+      expect(result.files).toContain('AGENTS.md (skipped via --skip-agents-md)');
+      expect(result.files).toContain('CLAUDE.md (skipped via --skip-agents-md)');
+      expect(result.files).toContain('.claude/skills/gitnexus/ (skipped via --skip-skills)');
+
+      await expect(fs.access(path.join(idxDir, 'AGENTS.md'))).rejects.toThrow();
+      await expect(fs.access(path.join(idxDir, 'CLAUDE.md'))).rejects.toThrow();
+      await expect(fs.access(path.join(idxDir, '.claude', 'skills', 'gitnexus'))).rejects.toThrow();
+    } finally {
+      await fs.rm(idxDir, { recursive: true, force: true });
+    }
+  });
+
+  it('omits standard skill references from AGENTS.md/CLAUDE.md when skipSkills is true (#742)', async () => {
+    // The skills routing table in AGENTS.md/CLAUDE.md points agents at
+    // .claude/skills/gitnexus/*/SKILL.md files installed by installSkills().
+    // When --skip-skills suppresses that install but AGENTS.md/CLAUDE.md
+    // are still written, the routing table must NOT name files that don't
+    // exist — otherwise every agent load incurs 6 failed reads and the
+    // routing instructions are worthless. Per-test tmpdir so the assertions
+    // are not contaminated by a CLAUDE.md from an earlier test.
+    const noStdDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-ai-ctx-no-std-skills-'));
+    const noStdStorage = path.join(noStdDir, '.gitnexus');
+    await fs.mkdir(noStdStorage, { recursive: true });
+    try {
+      const stats = { nodes: 50, edges: 100, processes: 5 };
+      await generateAIContextFiles(noStdDir, noStdStorage, 'TestProject', stats, undefined, {
+        skipSkills: true,
+      });
+
+      const content = await fs.readFile(path.join(noStdDir, 'CLAUDE.md'), 'utf-8');
+      expect(content).not.toContain('gitnexus-exploring/SKILL.md');
+      expect(content).not.toContain('gitnexus-impact-analysis/SKILL.md');
+      expect(content).not.toContain('gitnexus-debugging/SKILL.md');
+      expect(content).not.toContain('gitnexus-refactoring/SKILL.md');
+      expect(content).not.toContain('gitnexus-guide/SKILL.md');
+      expect(content).not.toContain('gitnexus-cli/SKILL.md');
+      // The load-bearing imperative sections must still ship — only the
+      // routing rows are conditional.
+      expect(content).toContain('## Always Do');
+      expect(content).toContain('## Never Do');
+      expect(content).toContain('gitnexus://repo/TestProject/context');
+    } finally {
+      await fs.rm(noStdDir, { recursive: true, force: true });
+    }
+  });
+
   it('preserves manual AGENTS.md and CLAUDE.md edits when skipAgentsMd is enabled', async () => {
     const stats = { nodes: 42, edges: 84, processes: 3 };
     const agentsPath = path.join(tmpDir, 'AGENTS.md');
@@ -163,5 +258,117 @@ describe('generateAIContextFiles', () => {
     const claudeAfter = await fs.readFile(claudePath, 'utf-8');
     expect(agentsAfter).toBe(agentsContent);
     expect(claudeAfter).toBe(claudeContent);
+  });
+
+  it('preserves inline marker references in prose and does not corrupt markdown (#1041)', async () => {
+    // Regression guard for #1041. The shipped CLAUDE.md ships with a
+    // prose paragraph referencing the marker pair inline — wrapped in a
+    // backtick-quoted fragment mid-sentence. `indexOf` (the pre-fix
+    // matcher) would match both of those inline markers and replace the
+    // content between them with the full injected block, destroying the
+    // sentence and leaving the backtick unclosed.
+    //
+    // Per-test tmpdir so we start from a known clean slate — the shared
+    // `tmpDir` from beforeAll may already contain CLAUDE.md from earlier
+    // tests in this describe block.
+    const bugDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-ai-ctx-1041-'));
+    const bugStorage = path.join(bugDir, '.gitnexus');
+    await fs.mkdir(bugStorage, { recursive: true });
+
+    const inlineProseLine =
+      'See the `<!-- gitnexus:start --> … <!-- gitnexus:end -->` block in **[AGENTS.md](AGENTS.md)** for the canonical MCP tools, impact analysis rules, and index instructions.';
+    const originalContent = `# Claude Code Rules\n\nLast reviewed: 2026-04-21\n\n## GitNexus rules\n\n${inlineProseLine}\n`;
+
+    const claudeMd = path.join(bugDir, 'CLAUDE.md');
+    await fs.writeFile(claudeMd, originalContent, 'utf-8');
+
+    try {
+      const stats = { nodes: 50, edges: 100, processes: 5 };
+
+      // First run — no section-position markers exist yet, so the
+      // injector must append a fresh section at end. The inline prose
+      // must be preserved verbatim; if it disappears or gets altered,
+      // the bug has recurred.
+      await generateAIContextFiles(bugDir, bugStorage, 'TestProject', stats);
+      let contentAfter = await fs.readFile(claudeMd, 'utf-8');
+
+      expect(contentAfter, 'inline prose line must survive the first run verbatim').toContain(
+        inlineProseLine,
+      );
+      // Exactly 2 start markers total: 1 inline (in prose) + 1
+      // section-position (appended by the injector). The pre-fix
+      // behaviour would have only 1 — the inline pair having been
+      // consumed as if they were section delimiters.
+      expect((contentAfter.match(/<!-- gitnexus:start -->/g) || []).length).toBe(2);
+      expect((contentAfter.match(/<!-- gitnexus:end -->/g) || []).length).toBe(2);
+
+      // Second run — the section from run 1 is now at section position,
+      // so the injector must UPDATE in place (not re-append). Inline
+      // prose stays preserved; marker counts unchanged.
+      await generateAIContextFiles(bugDir, bugStorage, 'TestProject', stats);
+      contentAfter = await fs.readFile(claudeMd, 'utf-8');
+
+      expect(contentAfter, 'inline prose line must survive the second run verbatim').toContain(
+        inlineProseLine,
+      );
+      expect((contentAfter.match(/<!-- gitnexus:start -->/g) || []).length).toBe(2);
+      expect((contentAfter.match(/<!-- gitnexus:end -->/g) || []).length).toBe(2);
+    } finally {
+      await fs.rm(bugDir, { recursive: true, force: true });
+    }
+  });
+
+  it('matches section markers on files with CRLF line endings (#1041 cross-platform)', async () => {
+    // Locks in the CRLF leg of the section-position matcher. Git on
+    // Windows may store files with `\r\n` line endings depending on
+    // `core.autocrlf`; when a section line ends `<!-- gitnexus:start
+    // -->\r\n`, the byte at `endPos` is `\r` (not `\n`). A `\n`-only
+    // line-end check would reject the real section, fall through to
+    // "append", and duplicate the block every run.
+    const crlfDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-ai-ctx-crlf-'));
+    const crlfStorage = path.join(crlfDir, '.gitnexus');
+    await fs.mkdir(crlfStorage, { recursive: true });
+
+    // Inline reference carries BOTH markers in a backtick-quoted
+    // fragment — matches the shape of the shipped CLAUDE.md line
+    // that triggered #1041 so the regression guard is meaningful.
+    const inlineProseLine =
+      'See the `<!-- gitnexus:start --> … <!-- gitnexus:end -->` block in **[AGENTS.md](AGENTS.md)** for more.';
+    const seeded = [
+      '# Claude Code Rules',
+      '',
+      '## GitNexus rules',
+      '',
+      inlineProseLine,
+      '',
+      '<!-- gitnexus:start -->',
+      '# GitNexus — Code Intelligence (stale stub)',
+      '<!-- gitnexus:end -->',
+      '',
+    ].join('\r\n');
+
+    const claudeMd = path.join(crlfDir, 'CLAUDE.md');
+    await fs.writeFile(claudeMd, seeded, 'utf-8');
+
+    try {
+      const stats = { nodes: 50, edges: 100, processes: 5 };
+      await generateAIContextFiles(crlfDir, crlfStorage, 'TestProject', stats);
+      const content = await fs.readFile(claudeMd, 'utf-8');
+
+      // Inline prose survives verbatim — no corruption of CRLF bytes.
+      expect(content).toContain(inlineProseLine);
+      // Exactly 2 start markers total (1 inline + 1 section-position).
+      // If CRLF handling broke, the inline marker would be (incorrectly)
+      // matched as a section start, OR the real section would be
+      // appended duplicated — either way we'd see !== 2.
+      expect((content.match(/<!-- gitnexus:start -->/g) || []).length).toBe(2);
+      expect((content.match(/<!-- gitnexus:end -->/g) || []).length).toBe(2);
+      // Stale stub content must be gone — proves the section was
+      // REPLACED (not appended as a duplicate), which requires the
+      // CRLF-ending markers to have been matched.
+      expect(content).not.toContain('# GitNexus — Code Intelligence (stale stub)');
+    } finally {
+      await fs.rm(crlfDir, { recursive: true, force: true });
+    }
   });
 });

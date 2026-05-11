@@ -10,6 +10,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { type GeneratedSkillInfo } from './skill-gen.js';
+import { logger } from '../core/logger.js';
 
 // ESM equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -27,10 +28,38 @@ interface RepoStats {
 export interface AIContextOptions {
   skipAgentsMd?: boolean;
   noStats?: boolean;
+  skipSkills?: boolean;
 }
 
 const GITNEXUS_START_MARKER = '<!-- gitnexus:start -->';
 const GITNEXUS_END_MARKER = '<!-- gitnexus:end -->';
+
+/**
+ * Find the index of a section marker that occupies its own line.
+ * Unlike `indexOf`, this rejects inline prose references like
+ * `` See the `<!-- gitnexus:start -->` block `` that appear
+ * mid-sentence (#1041). A marker counts as section-position only when:
+ *   - preceded by newline or start-of-file, AND
+ *   - followed by newline, `\r` (CRLF files), or end-of-file.
+ * The generator always emits each marker alone on its line, so this
+ * matches every legitimate section and none of the inline mentions.
+ *
+ * `startFrom` lets the end-marker lookup start after the already-found
+ * start marker, avoiding a scan from 0 and guaranteeing we never pick
+ * up an end marker that appears earlier in the file than the start.
+ */
+function findSectionMarkerIndex(content: string, marker: string, startFrom = 0): number {
+  let idx = content.indexOf(marker, startFrom);
+  while (idx !== -1) {
+    const atLineStart = idx === 0 || content[idx - 1] === '\n';
+    const endPos = idx + marker.length;
+    const atLineEnd =
+      endPos === content.length || content[endPos] === '\n' || content[endPos] === '\r';
+    if (atLineStart && atLineEnd) return idx;
+    idx = content.indexOf(marker, idx + 1);
+  }
+  return -1;
+}
 
 /**
  * Generate the full GitNexus context content.
@@ -66,6 +95,7 @@ function generateGitNexusContent(
   generatedSkills?: GeneratedSkillInfo[],
   groupNames?: string[],
   noStats?: boolean,
+  skipSkills?: boolean,
 ): string {
   const generatedRows =
     generatedSkills && generatedSkills.length > 0
@@ -77,14 +107,26 @@ function generateGitNexusContent(
           .join('\n')
       : '';
 
-  const skillsTable = `| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | \`.claude/skills/gitnexus/gitnexus-exploring/SKILL.md\` |
+  // Standard skill rows reference files installed by installSkills(). When
+  // --skip-skills suppresses that install, these rows must be omitted — else
+  // AGENTS.md/CLAUDE.md would direct agents to read files that don't exist.
+  // Community skills (generatedRows) live in .claude/skills/generated/ and
+  // are independent of --skip-skills, so they remain when present.
+  const standardSkillsRows = skipSkills
+    ? ''
+    : `| Understand architecture / "How does X work?" | \`.claude/skills/gitnexus/gitnexus-exploring/SKILL.md\` |
 | Blast radius / "What breaks if I change X?" | \`.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md\` |
 | Trace bugs / "Why is X failing?" | \`.claude/skills/gitnexus/gitnexus-debugging/SKILL.md\` |
 | Rename / extract / split / refactor | \`.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md\` |
 | Tools, resources, schema reference | \`.claude/skills/gitnexus/gitnexus-guide/SKILL.md\` |
-| Index, status, clean, wiki CLI commands | \`.claude/skills/gitnexus/gitnexus-cli/SKILL.md\` |${generatedRows ? '\n' + generatedRows : ''}`;
+| Index, status, clean, wiki CLI commands | \`.claude/skills/gitnexus/gitnexus-cli/SKILL.md\` |`;
+
+  const tableBody = [standardSkillsRows, generatedRows].filter(Boolean).join('\n');
+  const skillsTable = tableBody
+    ? `| Task | Read this skill file |
+|------|---------------------|
+${tableBody}`
+    : '';
 
   return `${GITNEXUS_START_MARKER}
 # GitNexus — Code Intelligence
@@ -125,11 +167,15 @@ This repository is listed under GitNexus **group(s): ${groupNames.join(', ')}** 
 
 `
     : ''
-}## CLI
+}${
+    skillsTable
+      ? `## CLI
 
 ${skillsTable}
 
-${GITNEXUS_END_MARKER}`;
+`
+      : ''
+  }${GITNEXUS_END_MARKER}`;
 }
 
 /**
@@ -163,9 +209,18 @@ async function upsertGitNexusSection(
 
   const existingContent = await fs.readFile(filePath, 'utf-8');
 
-  // Check if GitNexus section already exists
-  const startIdx = existingContent.indexOf(GITNEXUS_START_MARKER);
-  const endIdx = existingContent.indexOf(GITNEXUS_END_MARKER);
+  // Check if GitNexus section already exists. Matching is restricted
+  // to markers that occupy their own line so that inline prose
+  // references (e.g. `` See the `<!-- gitnexus:start -->` block `` in
+  // the shipped CLAUDE.md) are NOT treated as section delimiters
+  // (#1041). The end-marker scan starts after the start-marker so it
+  // can never pick up an earlier end in the file.
+  const startIdx = findSectionMarkerIndex(existingContent, GITNEXUS_START_MARKER);
+  const endIdx = findSectionMarkerIndex(
+    existingContent,
+    GITNEXUS_END_MARKER,
+    startIdx === -1 ? 0 : startIdx,
+  );
 
   if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
     // Replace existing section
@@ -257,7 +312,7 @@ Use GitNexus tools to accomplish this task.
       installedSkills.push(skill.name);
     } catch (err) {
       // Skip on error, don't fail the whole process
-      console.warn(`Warning: Could not install skill ${skill.name}:`, err);
+      logger.warn({ err }, `Warning: Could not install skill ${skill.name}:`);
     }
   }
 
@@ -282,6 +337,7 @@ export async function generateAIContextFiles(
     generatedSkills,
     groupNames,
     options?.noStats,
+    options?.skipSkills,
   );
   const createdFiles: string[] = [];
 
@@ -300,10 +356,14 @@ export async function generateAIContextFiles(
     createdFiles.push('CLAUDE.md (skipped via --skip-agents-md)');
   }
 
-  // Install skills to .claude/skills/gitnexus/
-  const installedSkills = await installSkills(repoPath);
-  if (installedSkills.length > 0) {
-    createdFiles.push(`.claude/skills/gitnexus/ (${installedSkills.length} skills)`);
+  // Install skills to .claude/skills/gitnexus/ (unless --skip-skills)
+  if (!options?.skipSkills) {
+    const installedSkills = await installSkills(repoPath);
+    if (installedSkills.length > 0) {
+      createdFiles.push(`.claude/skills/gitnexus/ (${installedSkills.length} skills)`);
+    }
+  } else {
+    createdFiles.push('.claude/skills/gitnexus/ (skipped via --skip-skills)');
   }
 
   return { files: createdFiles };

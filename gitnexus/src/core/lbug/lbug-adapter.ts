@@ -21,7 +21,18 @@ import {
 } from './schema-version.js';
 import { streamAllCSVsToDisk } from './csv-generator.js';
 import type { CachedEmbedding } from '../embeddings/types.js';
+import { extensionManager, type ExtensionEnsureOptions } from './extension-loader.js';
+import {
+  closeLbugConnection,
+  isDbBusyError,
+  isOpenRetryExhausted,
+  openLbugConnection,
+  waitForWindowsHandleRelease,
+  type LbugConnectionHandle,
+} from './lbug-config.js';
+import { isVectorExtensionSupportedByPlatform } from '../platform/capabilities.js';
 
+import { logger } from '../logger.js';
 // ---------------------------------------------------------------------------
 // Relationship CSV splitting — extracted for testability (PR #818)
 // ---------------------------------------------------------------------------
@@ -150,16 +161,15 @@ let ftsLoaded = false;
 let vectorExtensionLoaded = false;
 
 /**
- * In-process cache of FTS indexes that have been ensured against the current
- * connection. Prevents repeated `CALL CREATE_FTS_INDEX` round-trips inside a
- * single CLI/MCP session — the first call to `ensureFTSIndex` for a given
- * `(tableName, indexName)` pays the LadybugDB cost (~440 ms even when the
- * index already exists on disk), subsequent calls are a Set lookup. Cleared
- * by `closeLbug` so a re-init starts fresh.
+ * In-process cache of FTS indexes observed against the current singleton
+ * connection. Avoids repeated `CALL CREATE_FTS_INDEX` calls, which can trip
+ * native duplicate-index/WAL edge cases. Cleared on re-init and close.
  *
  * Key format: `${tableName}:${indexName}`.
  */
 const ensuredFTSIndexes = new Set<string>();
+
+const ftsIndexKey = (tableName: string, indexName: string): string => `${tableName}:${indexName}`;
 
 /**
  * Check if an error indicates a missing column or table (schema-level problem)
@@ -184,18 +194,16 @@ const DB_LOCK_RETRY_ATTEMPTS = 3;
 const DB_LOCK_RETRY_DELAY_MS = 500;
 
 /**
- * Return true when the error message indicates that another process holds
- * an exclusive lock on the LadybugDB file (e.g. `gitnexus analyze` or
- * `gitnexus serve` running at the same time).
+ * Return true when the error message indicates a write was attempted against
+ * a read-only LadybugDB connection. The MCP query pool opens DBs read-only,
+ * so any path that calls a `CREATE_*` procedure there will surface this
+ * (e.g. defensive `ensureFTSIndex` calls). Owners of the writable analyze
+ * path should ignore this error — index creation is owned by `gitnexus
+ * analyze` and either already happened or will happen on the next run.
  */
-export const isDbBusyError = (err: unknown): boolean => {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-  return (
-    msg.includes('busy') ||
-    msg.includes('lock') ||
-    msg.includes('already in use') ||
-    msg.includes('could not set lock')
-  );
+export const isReadOnlyDbError = (err: unknown): boolean => {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /read-only database/i.test(msg);
 };
 
 const runWithSessionLock = async <T>(operation: () => Promise<T>): Promise<T> => {
@@ -237,27 +245,21 @@ export const withLbugDb = async <T>(dbPath: string, operation: () => Promise<T>)
       });
     } catch (err) {
       lastError = err;
-      if (!isDbBusyError(err) || attempt === DB_LOCK_RETRY_ATTEMPTS) {
+      // Skip outer retry when the inner open-retry already exhausted: the
+      // ~1.5s open-time budget was just spent, repeating the full reset+
+      // reopen cycle would only add 4-5s of tail latency without changing
+      // the outcome (both layers consult the same isDbBusyError matcher).
+      if (!isDbBusyError(err) || isOpenRetryExhausted(err) || attempt === DB_LOCK_RETRY_ATTEMPTS) {
         throw err;
       }
       // Close stale connection inside the session lock to prevent race conditions
       // with concurrent operations that might acquire the lock between cleanup steps
       await runWithSessionLock(async () => {
-        try {
-          if (conn) await conn.close();
-        } catch {
-          /* best-effort */
-        }
-        try {
-          if (db) await db.close();
-        } catch {
-          /* best-effort */
-        }
-        conn = null;
-        db = null;
+        await safeClose();
         currentDbPath = null;
         ftsLoaded = false;
         vectorExtensionLoaded = false;
+        ensuredFTSIndexes.clear();
       });
       // Sleep outside the lock — no need to block others while waiting
       await new Promise((resolve) => setTimeout(resolve, DB_LOCK_RETRY_DELAY_MS * attempt));
@@ -279,17 +281,11 @@ const ensureLbugInitialized = async (dbPath: string) => {
 const doInitLbug = async (dbPath: string) => {
   // Different database requested — close the old one first
   if (conn || db) {
-    try {
-      if (conn) await conn.close();
-    } catch {}
-    try {
-      if (db) await db.close();
-    } catch {}
-    conn = null;
-    db = null;
+    await safeClose();
     currentDbPath = null;
     ftsLoaded = false;
     vectorExtensionLoaded = false;
+    ensuredFTSIndexes.clear();
   }
 
   // LadybugDB stores the database as a single file (not a directory).
@@ -322,8 +318,9 @@ const doInitLbug = async (dbPath: string) => {
   const parentDir = path.dirname(dbPath);
   await fs.mkdir(parentDir, { recursive: true });
 
-  db = new lbug.Database(dbPath);
-  conn = new lbug.Connection(db);
+  const opened = await openLbugConnection(lbug, dbPath);
+  db = opened.db;
+  conn = opened.conn;
 
   // ── Schema migration ────────────────────────────────────────────────────
   // Read the stored schema version from meta.json (if present) and compare
@@ -349,7 +346,7 @@ const doInitLbug = async (dbPath: string) => {
           `${formatSchemaRebuildInstructions(repoRoot)}`,
       );
     } else if (result.message !== 'Schema is up-to-date.') {
-      console.log(`ℹ️  LadybugDB schema migrated: ${result.message}`);
+      logger.info(`LadybugDB schema migrated: ${result.message}`);
     }
   } else {
     // Fresh DB or same version — apply schema normally (ignore "already exists")
@@ -358,15 +355,16 @@ const doInitLbug = async (dbPath: string) => {
         await conn.query(schemaQuery);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes('already exists')) {
-          console.warn(`⚠️ Schema creation warning: ${msg.slice(0, 120)}`);
+        if (!msg.includes('already exists') && !isDbBusyError(err)) {
+          logger.error(`Schema creation warning: ${msg.slice(0, 120)}`);
         }
       }
     }
   }
 
-  // Load VECTOR extension for semantic search support
-  await loadVectorExtension();
+  // FTS powers baseline search, so initialize it with the core DB. VECTOR is
+  // only required for semantic embeddings and is probed lazily there.
+  await loadFTSExtension();
 
   currentDbPath = dbPath;
   return { db, conn };
@@ -635,6 +633,9 @@ const getCopyQuery = (table: NodeTableName, filePath: string): string => {
   if (table === 'Method') {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description, parameterCount, returnType) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
+  if (table === 'Property') {
+    return `COPY ${t}(id, name, filePath, startLine, endLine, content, description, declaredType) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+  }
   // TypeScript/JS code element tables have isExported; multi-language tables do not
   if (TABLES_WITH_EXPORTED.has(table)) {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
@@ -686,6 +687,11 @@ export const insertNodeToLbug = async (
         ? `, description: ${escapeValue(properties.description)}`
         : '';
       query = `CREATE (n:${t} {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, isExported: ${!!properties.isExported}, content: ${escapeValue(properties.content || '')}${descPart}})`;
+    } else if (label === 'Property') {
+      const descPart = properties.description
+        ? `, description: ${escapeValue(properties.description)}`
+        : '';
+      query = `CREATE (n:${t} {id: ${escapeValue(properties.id)}, name: ${escapeValue(properties.name)}, filePath: ${escapeValue(properties.filePath)}, startLine: ${properties.startLine || 0}, endLine: ${properties.endLine || 0}, content: ${escapeValue(properties.content || '')}${descPart}, declaredType: ${escapeValue(properties.declaredType || '')}})`;
     } else {
       // Multi-language tables (Struct, Impl, Trait, Macro, etc.) — no isExported
       const descPart = properties.description
@@ -696,18 +702,12 @@ export const insertNodeToLbug = async (
 
     // Use per-query connection if dbPath provided (avoids lock conflicts)
     if (targetDbPath) {
-      const tempDb = new lbug.Database(targetDbPath);
-      const tempConn = new lbug.Connection(tempDb);
+      const tempHandle = await openLbugConnection(lbug, targetDbPath);
       try {
-        await tempConn.query(query);
+        await tempHandle.conn.query(query);
         return true;
       } finally {
-        try {
-          await tempConn.close();
-        } catch {}
-        try {
-          await tempDb.close();
-        } catch {}
+        await closeLbugConnection(tempHandle);
       }
     } else if (conn) {
       // Use existing persistent connection (when called from analyze)
@@ -718,7 +718,7 @@ export const insertNodeToLbug = async (
     return false;
   } catch (e: any) {
     // Node may already exist or other error
-    console.error(`Failed to insert ${label} node:`, e.message);
+    logger.error({ err: e.message }, `Failed to insert ${label} node:`);
     return false;
   }
 };
@@ -743,8 +743,8 @@ export const batchInsertNodesToLbug = async (
   };
 
   // Open a single connection for all inserts
-  const tempDb = new lbug.Database(dbPath);
-  const tempConn = new lbug.Connection(tempDb);
+  const tempHandle = await openLbugConnection(lbug, dbPath);
+  const tempConn = tempHandle.conn;
 
   let inserted = 0;
   let failed = 0;
@@ -770,6 +770,11 @@ export const batchInsertNodesToLbug = async (
             ? `, n.description = ${escapeValue(properties.description)}`
             : '';
           query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.isExported = ${!!properties.isExported}, n.content = ${escapeValue(properties.content || '')}${descPart}`;
+        } else if (label === 'Property') {
+          const descPart = properties.description
+            ? `, n.description = ${escapeValue(properties.description)}`
+            : '';
+          query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.content = ${escapeValue(properties.content || '')}${descPart}, n.declaredType = ${escapeValue(properties.declaredType || '')}`;
         } else {
           const descPart = properties.description
             ? `, n.description = ${escapeValue(properties.description)}`
@@ -785,12 +790,7 @@ export const batchInsertNodesToLbug = async (
       }
     }
   } finally {
-    try {
-      await tempConn.close();
-    } catch {}
-    try {
-      await tempDb.close();
-    } catch {}
+    await closeLbugConnection(tempHandle);
   }
 
   return { inserted, failed };
@@ -880,8 +880,11 @@ export const executeWithReusedStatement = async (
         await conn.execute(stmt, params);
       }
     } catch (e) {
-      // Log the error and continue with next batch
-      console.warn('Batch execution error:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      const queryPreview = cypher.replace(/\s+/g, ' ').slice(0, 120);
+      throw new Error(
+        `Batch execution failed for rows ${i + 1}-${i + subBatch.length}: ${msg} (${queryPreview})`,
+      );
     }
     // Note: LadybugDB PreparedStatement doesn't require explicit close()
   }
@@ -1047,14 +1050,14 @@ export const fetchExistingEmbeddingHashes = async (
           const nodeId = r.nodeId ?? r[0];
           if (nodeId) map.set(nodeId, STALE_HASH_SENTINEL);
         }
-        console.log(
+        logger.info(
           `[embed] ${map.size} nodes in legacy DB (missing chunk-aware columns) — all treated as stale`,
         );
         return map;
       } catch (fallbackErr: any) {
         const fallbackMsg = fallbackErr?.message ?? '';
         if (isMissingColumnOrTableError(fallbackMsg)) {
-          console.log(
+          logger.info(
             `[embed] CodeEmbedding table not yet present — full embedding run (${fallbackMsg})`,
           );
           return undefined;
@@ -1066,19 +1069,83 @@ export const fetchExistingEmbeddingHashes = async (
   }
 };
 
-export const closeLbug = async (): Promise<void> => {
+/**
+ * Flush the WAL so all pending writes are visible to subsequent readers.
+ *
+ * Best-effort: swallows errors from older LadybugDB versions or schemaless
+ * databases that do not support the CHECKPOINT command.  A no-op when there
+ * is nothing pending, so safe (and cheap) to call unconditionally after any
+ * write path.
+ *
+ * Use this instead of safeClose when the connection must stay open
+ * (e.g. the /api/embed handler that keeps serving queries after flushing).
+ *
+ * @see safeClose — CHECKPOINT + connection/database close
+ */
+export const flushWAL = async (): Promise<void> => {
+  if (!conn) return;
+  try {
+    await conn.query('CHECKPOINT');
+  } catch {
+    /* ignore — older LadybugDB or schemaless DB may not accept it */
+  }
+};
+
+/**
+ * Flush the WAL and close the connection and database handles.
+ *
+ * Consolidates the CHECKPOINT + close pattern into a single function so
+ * callers never call conn.close() or db.close() directly (#1376).
+ * An ESLint no-restricted-syntax rule enforces this — see eslint.config.mjs.
+ *
+ * @see flushWAL — CHECKPOINT-only (connection stays open)
+ * @see closeLbug — safeClose + module state reset (full teardown)
+ */
+export const safeClose = async (): Promise<void> => {
+  await flushWAL();
+  // Capture before close — currentDbPath stays set so the Windows post-close
+  // probe below knows which file to wait on.
+  const closingDbPath = currentDbPath;
   if (conn) {
     try {
+      // eslint-disable-next-line no-restricted-syntax -- sole authorised close site
       await conn.close();
-    } catch {}
+    } catch {
+      /* best-effort */
+    }
     conn = null;
   }
   if (db) {
     try {
+      // eslint-disable-next-line no-restricted-syntax -- sole authorised close site
       await db.close();
-    } catch {}
+    } catch {
+      /* best-effort */
+    }
     db = null;
   }
+  // Windows: libuv reports `db.close()` resolved before the kernel has
+  // released the file handle. A subsequent `new Database(samePath)` in
+  // the same process can race the release. The probe (lbug-config.ts)
+  // forces any residual lock to surface as EBUSY/EPERM/EACCES so the
+  // open-time retry absorbs the lag.
+  if (process.platform === 'win32' && closingDbPath) {
+    const released = await waitForWindowsHandleRelease(closingDbPath);
+    if (!released) {
+      // Probe exhausted with a lock code still in flight. The next
+      // openLbugConnection will absorb whatever residual lag remains, but
+      // a chronic warning helps operators spot AV interference (Windows
+      // Defender holding the file far past the 250ms budget).
+      logger.warn(
+        { dbPath: closingDbPath },
+        '⚠️ LadybugDB file handle still locked after close (Windows). If this repeats, check antivirus/Defender exclusions for the GitNexus storage directory.',
+      );
+    }
+  }
+};
+
+export const closeLbug = async (): Promise<void> => {
+  await safeClose();
   currentDbPath = null;
   ftsLoaded = false;
   vectorExtensionLoaded = false;
@@ -1100,13 +1167,13 @@ export const deleteNodesForFile = async (
   const usePerQuery = !!dbPath;
 
   // Set up connection (either use existing or create per-query)
-  let tempDb: lbug.Database | null = null;
+  let tempHandle: LbugConnectionHandle | null = null;
   let tempConn: lbug.Connection | null = null;
   let targetConn: lbug.Connection | null = conn;
 
   if (usePerQuery) {
-    tempDb = new lbug.Database(dbPath);
-    tempConn = new lbug.Connection(tempDb);
+    tempHandle = await openLbugConnection(lbug, dbPath);
+    tempConn = tempHandle.conn;
     targetConn = tempConn;
   } else if (!conn) {
     throw new Error('LadybugDB not initialized. Provide dbPath or call initLbug first.');
@@ -1156,16 +1223,7 @@ export const deleteNodesForFile = async (
     return { deletedNodes };
   } finally {
     // Close per-query connection if used
-    if (tempConn) {
-      try {
-        await tempConn.close();
-      } catch {}
-    }
-    if (tempDb) {
-      try {
-        await tempDb.close();
-      } catch {}
-    }
+    if (tempHandle) await closeLbugConnection(tempHandle);
   }
 };
 
@@ -1176,63 +1234,62 @@ export const getEmbeddingTableName = (): string => EMBEDDING_TABLE_NAME;
 // ============================================================================
 
 /**
- * Load the FTS extension (required before using FTS functions).
- * Safe to call multiple times — tracks loaded state via module-level ftsLoaded.
+ * Load the FTS extension on the supplied connection (or the singleton
+ * writable connection when none is given).
+ *
+ * Delegates to the shared `ExtensionManager` so install policy (auto /
+ * load-only / never), out-of-process bounded INSTALL, and capability
+ * caching are owned in one place. The module-level `ftsLoaded` flag is
+ * kept purely as a per-call short-circuit on the singleton writable
+ * connection so repeated callers (e.g. createFTSIndex) avoid an extra
+ * `LOAD` round-trip per invocation. Pool adapter callers pass
+ * `{ policy: 'load-only' }` so query paths never block on a network install.
  */
-export const loadFTSExtension = async (): Promise<void> => {
-  if (ftsLoaded) return;
-  if (!conn) {
+export const loadFTSExtension = async (
+  targetConn?: lbug.Connection,
+  opts: ExtensionEnsureOptions = {},
+): Promise<boolean> => {
+  const useModuleState = targetConn === undefined;
+  if (useModuleState && ftsLoaded) return true;
+
+  const c: lbug.Connection | null = targetConn ?? conn;
+  if (!c) {
     throw new Error('LadybugDB not initialized. Call initLbug first.');
   }
-  try {
-    // Try loading locally first (no network required)
-    await conn.query('LOAD EXTENSION fts');
-    ftsLoaded = true;
-  } catch {
-    // Fall back to install + load (requires network)
-    try {
-      await conn.query('INSTALL fts');
-      await conn.query('LOAD EXTENSION fts');
-      ftsLoaded = true;
-    } catch (err: any) {
-      const msg = err?.message || '';
-      if (
-        msg.includes('already loaded') ||
-        msg.includes('already installed') ||
-        msg.includes('already exists')
-      ) {
-        ftsLoaded = true;
-      } else {
-        console.error('GitNexus: FTS extension load failed:', msg);
-      }
-    }
-  }
+
+  const loaded = await extensionManager.ensure((sql) => c.query(sql), 'fts', 'FTS', opts);
+  if (loaded && useModuleState) ftsLoaded = true;
+  return loaded;
 };
+
 /**
- * Load the VECTOR extension (required before using QUERY_VECTOR_INDEX).
- * Safe to call multiple times -- tracks loaded state via module-level vectorExtensionLoaded.
+ * Load the VECTOR extension on the supplied connection (or the singleton
+ * writable connection when none is given). Returns false when VECTOR is
+ * unavailable so semantic search can fall back to exact scan.
  */
-export const loadVectorExtension = async (): Promise<void> => {
-  if (vectorExtensionLoaded) return;
-  if (!conn) {
+export const loadVectorExtension = async (
+  targetConn?: lbug.Connection,
+  opts: ExtensionEnsureOptions = {},
+): Promise<boolean> => {
+  const useModuleState = targetConn === undefined;
+  if (useModuleState && vectorExtensionLoaded) return true;
+  // INSTALL VECTOR crashes with SIGSEGV on Windows: the KuzuDB native extension
+  // installer has an unhandled error path on Windows that raises a fatal signal
+  // that JS try/catch cannot intercept. Skip loading — vector/embedding search
+  // is unavailable but all graph index queries still work. Do NOT set
+  // vectorExtensionLoaded here: the flag means "successfully loaded", and a
+  // subsequent call would otherwise short-circuit to `return true` at the top.
+  if (process.platform === 'win32') return false;
+  if (!isVectorExtensionSupportedByPlatform()) return false;
+
+  const c: lbug.Connection | null = targetConn ?? conn;
+  if (!c) {
     throw new Error('LadybugDB not initialized. Call initLbug first.');
   }
-  try {
-    await conn.query('INSTALL VECTOR');
-    await conn.query('LOAD EXTENSION VECTOR');
-    vectorExtensionLoaded = true;
-  } catch (err: any) {
-    const msg = err?.message || '';
-    if (
-      msg.includes('already loaded') ||
-      msg.includes('already installed') ||
-      msg.includes('already exists')
-    ) {
-      vectorExtensionLoaded = true;
-    } else {
-      console.error('GitNexus: VECTOR extension load failed:', msg);
-    }
-  }
+
+  const loaded = await extensionManager.ensure((sql) => c.query(sql), 'VECTOR', 'VECTOR', opts);
+  if (loaded && useModuleState) vectorExtensionLoaded = true;
+  return loaded;
 };
 /**
  * Create a full-text search index on a table
@@ -1251,30 +1308,44 @@ export const createFTSIndex = async (
     throw new Error('LadybugDB not initialized. Call initLbug first.');
   }
 
-  await loadFTSExtension();
+  const key = ftsIndexKey(tableName, indexName);
+  if (ensuredFTSIndexes.has(key)) return;
+
+  if (!(await loadFTSExtension())) {
+    return;
+  }
 
   const propList = properties.map((p) => `'${p}'`).join(', ');
   const query = `CALL CREATE_FTS_INDEX('${tableName}', '${indexName}', [${propList}], stemmer := '${stemmer}')`;
 
   try {
     await conn.query(query);
+    ensuredFTSIndexes.add(key);
   } catch (e: any) {
-    if (!e.message?.includes('already exists')) {
-      throw e;
+    if (e.message?.includes('already exists')) {
+      ensuredFTSIndexes.add(key);
+      return;
     }
+    throw e;
   }
 };
 
 /**
  * Lazy-create an FTS index, caching the fact in-process.
  *
- * Used by `queryFTS` so that `analyze` doesn't pay the ~440 ms × 5 fixed
- * LadybugDB cost up-front (it dominates analyze on small repos). Instead,
- * the cost is moved to the first `query`/`context` call in a session,
- * where it's amortised across many lookups.
+ * Kept for writable maintenance paths that need to lazily materialize an
+ * index. Read-only query paths must not call this; production analysis owns
+ * creating the configured search indexes before the database is served.
  *
  * Safe to call repeatedly — the in-process Set guarantees only the first
  * call hits LadybugDB. `closeLbug` clears the cache so re-init starts fresh.
+ *
+ * Defense in depth: if the active connection is read-only (e.g. the MCP
+ * pool adapter), `CREATE_FTS_INDEX` will fail with "Cannot execute write
+ * operations in a read-only database". Treat that as a no-op and cache
+ * the key so callers don't loop on a path that can never succeed here —
+ * the index is owned by `gitnexus analyze` (writable) and either already
+ * exists or will be created on the next analyze.
  */
 export const ensureFTSIndex = async (
   tableName: string,
@@ -1282,10 +1353,20 @@ export const ensureFTSIndex = async (
   properties: string[],
   stemmer: string = 'porter',
 ): Promise<void> => {
-  const key = `${tableName}:${indexName}`;
+  const key = ftsIndexKey(tableName, indexName);
   if (ensuredFTSIndexes.has(key)) return;
-  await createFTSIndex(tableName, indexName, properties, stemmer);
-  ensuredFTSIndexes.add(key);
+  try {
+    await createFTSIndex(tableName, indexName, properties, stemmer);
+  } catch (e) {
+    // Read-only DB: writable analyze owns index creation; silently skip
+    // and cache so callers don't loop on a path that can never succeed
+    // here (the MCP query pool opens DBs read-only by design).
+    if (isReadOnlyDbError(e)) {
+      ensuredFTSIndexes.add(key);
+      return;
+    }
+    throw e;
+  }
 };
 
 /**
@@ -1357,5 +1438,7 @@ export const dropFTSIndex = async (tableName: string, indexName: string): Promis
     await conn.query(`CALL DROP_FTS_INDEX('${tableName}', '${indexName}')`);
   } catch {
     // Index may not exist
+  } finally {
+    ensuredFTSIndexes.delete(ftsIndexKey(tableName, indexName));
   }
 };

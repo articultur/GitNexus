@@ -56,10 +56,10 @@ export const useCommand = async (name?: string, options?: UseOptions): Promise<v
   if (!match) {
     const names = repos.map((r) => r.name);
     if (names.length === 0) {
-      console.error(`  ✗ No indexed repositories found. Run: gitnexus analyze\n`);
+      console.log(`  ✗ No indexed repositories found. Run: gitnexus analyze\n`);
     } else {
-      console.error(`  ✗ Repository "${name}" not found.\n`);
-      console.error(`  Available: ${names.join(', ')}\n`);
+      console.log(`  ✗ Repository "${name}" not found.\n`);
+      console.log(`  Available: ${names.join(', ')}\n`);
     }
     process.exitCode = 1;
     return;

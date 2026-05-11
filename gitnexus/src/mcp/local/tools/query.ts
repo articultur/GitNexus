@@ -302,11 +302,13 @@ async function bm25SearchHelper(
     return { results: [], ftsUsed: false };
   }
 
-  const ftsUsed = bm25Results.length > 0;
+  const ftsResponse = bm25Results as any;
+  const ftsUsed = ftsResponse.ftsAvailable !== false;
+  const bm25List: any[] = ftsResponse.results ?? bm25Results;
 
   const results: any[] = [];
 
-  for (const bm25Result of bm25Results) {
+  for (const bm25Result of bm25List) {
     const fullPath = bm25Result.filePath;
     try {
       const symbols = await executeParameterized(

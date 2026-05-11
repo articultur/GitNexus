@@ -102,3 +102,5 @@ gitnexus/*.tgz
 # Local tool artifacts
 .playwright-mcp/
 .serena/project.local.yml
+.context/
+gitnexus/web/

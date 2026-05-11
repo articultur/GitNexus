@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { RuleEngine, createEngine, buildRelationshipIndex } from '../../../src/core/detection/rule-engine.js';
+import {
+  RuleEngine,
+  createEngine,
+  buildRelationshipIndex,
+} from '../../../src/core/detection/rule-engine.js';
 import { DiffDetector } from '../../../src/core/detection/diff-detector.js';
-import type { Rule, RuleContext, DetectionResult } from '../../../src/core/detection/types.js';
+import type { Rule, RuleContext } from '../../../src/core/detection/types.js';
 import type { GraphNode, GraphRelationship } from 'gitnexus-shared';
 
 // ── Test fixtures ───────────────────────────────────────────────────────────
@@ -307,7 +311,9 @@ describe('DiffDetector', () => {
     );
 
     expect(changes.length).toBeGreaterThanOrEqual(1);
-    const callChange = changes.find((c) => c.changeType === 'added_edge' && c.message.includes('calls'));
+    const callChange = changes.find(
+      (c) => c.changeType === 'added_edge' && c.message.includes('calls'),
+    );
     expect(callChange).toBeDefined();
     expect(callChange!.severity).toBe('medium');
   });
@@ -348,8 +354,16 @@ describe('DiffDetector', () => {
   });
 
   it('detects signature changes', () => {
-    const baseNode = makeNode('a', 'Function', { name: 'alpha', parameterCount: 2, filePath: 'a.ts' });
-    const headNode = makeNode('a', 'Function', { name: 'alpha', parameterCount: 3, filePath: 'a.ts' });
+    const baseNode = makeNode('a', 'Function', {
+      name: 'alpha',
+      parameterCount: 2,
+      filePath: 'a.ts',
+    });
+    const headNode = makeNode('a', 'Function', {
+      name: 'alpha',
+      parameterCount: 3,
+      filePath: 'a.ts',
+    });
 
     const changes = detector.detect(
       { nodes: [baseNode], relationships: [] },

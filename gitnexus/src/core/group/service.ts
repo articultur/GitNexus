@@ -14,6 +14,7 @@ import {
 } from './group-path-utils.js';
 import { getDefaultGitnexusDir, getGroupDir, listGroups, readContractRegistry } from './storage.js';
 import { syncGroup } from './sync.js';
+import { logger } from '../logger.js';
 import type {
   ContractRegistry,
   CrossLink,
@@ -66,6 +67,7 @@ export interface GroupToolPort {
       includeTests: boolean;
       include_evidence?: boolean;
       include_content?: boolean;
+      signal?: AbortSignal;
     },
   ): Promise<unknown | null>;
   context(
@@ -172,11 +174,11 @@ async function loadContractRegistryResilient(
           contracts.push(row);
         } else {
           skippedCorrupt++;
-          console.warn('[group] skipping corrupt contract row in contracts.json');
+          logger.warn('[group] skipping corrupt contract row in contracts.json');
         }
       } catch {
         skippedCorrupt++;
-        console.warn('[group] skipping corrupt contract row in contracts.json');
+        logger.warn('[group] skipping corrupt contract row in contracts.json');
       }
     }
   }
@@ -189,11 +191,11 @@ async function loadContractRegistryResilient(
           crossLinks.push(row);
         } else {
           skippedCorrupt++;
-          console.warn('[group] skipping corrupt crossLinks row in contracts.json');
+          logger.warn('[group] skipping corrupt crossLinks row in contracts.json');
         }
       } catch {
         skippedCorrupt++;
-        console.warn('[group] skipping corrupt crossLinks row in contracts.json');
+        logger.warn('[group] skipping corrupt crossLinks row in contracts.json');
       }
     }
   }

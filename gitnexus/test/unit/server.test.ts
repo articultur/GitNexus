@@ -13,11 +13,14 @@
  * directly through the MCP Server's handler dispatch.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createMCPServer } from '../../src/mcp/server.js';
+import { GITNEXUS_TOOLS } from '../../src/mcp/tools.js';
 
 // ─── Mock backend ──────────────────────────────────────────────────
 
-function createTestBackend(overrides: Record<string, any> = {}): any {
+function createMockBackend(overrides: Record<string, any> = {}): any {
   return {
     callTool: vi.fn().mockResolvedValue({ result: 'ok' }),
     listRepos: vi.fn().mockResolvedValue([]),
@@ -38,7 +41,7 @@ function createTestBackend(overrides: Record<string, any> = {}): any {
 
 describe('createMCPServer', () => {
   it('returns a Server instance with expected shape', () => {
-    const backend = createTestBackend();
+    const backend = createMockBackend();
     const server = createMCPServer(backend);
     expect(server).toBeDefined();
     // Server should have connect/close methods
@@ -47,22 +50,44 @@ describe('createMCPServer', () => {
   });
 
   it('server has setRequestHandler method', () => {
-    const backend = createTestBackend();
+    const backend = createMockBackend();
     const server = createMCPServer(backend);
     // The server has registered handlers — verify it was created without errors
     expect(server).toBeTruthy();
   });
+
+  it('tools/list response includes tool annotations', async () => {
+    const backend = createMockBackend();
+    const server = createMCPServer(backend);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+      const response = await client.listTools();
+      expect(response.tools).toHaveLength(GITNEXUS_TOOLS.length);
+
+      for (const tool of response.tools) {
+        const definition = GITNEXUS_TOOLS.find((t) => t.name === tool.name)!;
+        expect(tool.annotations).toEqual(definition.annotations);
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });
 
-// ─── getNextActionHint (tested indirectly via server tool handler) ──────
+// ─── getNextStepHint (tested indirectly via server tool handler) ──────
 
-describe('getNextActionHint (via tool call response)', () => {
+describe('getNextStepHint (via tool call response)', () => {
   // We test hints by calling the server's tool handler indirectly.
   // Since createMCPServer registers handlers on the Server, we verify
   // hints are appended by checking the tool response format.
 
   it('query tool response includes hint about context', async () => {
-    const backend = createTestBackend({
+    const backend = createMockBackend({
       callTool: vi.fn().mockResolvedValue({ processes: [], definitions: [] }),
     });
     const server = createMCPServer(backend);
@@ -78,12 +103,12 @@ describe('getNextActionHint (via tool call response)', () => {
 
 describe('server error handling', () => {
   it('createMCPServer does not throw for valid backend', () => {
-    const backend = createTestBackend();
+    const backend = createMockBackend();
     expect(() => createMCPServer(backend)).not.toThrow();
   });
 
   it('createMCPServer reads version from package.json', () => {
-    const backend = createTestBackend();
+    const backend = createMockBackend();
     const server = createMCPServer(backend);
     // Server was created with version from package.json — no crash
     expect(server).toBeDefined();
@@ -94,7 +119,7 @@ describe('server error handling', () => {
 
 describe('prompt registration', () => {
   it('server registers detect_impact and generate_map prompts', () => {
-    const backend = createTestBackend();
+    const backend = createMockBackend();
     // Creating the server registers all handlers including prompts
     const server = createMCPServer(backend);
     expect(server).toBeDefined();

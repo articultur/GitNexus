@@ -12,7 +12,6 @@ import {
   type DataFlowEdge,
 } from '../../../src/core/ingestion/dataflow/storage-writer';
 import { createKnowledgeGraph } from '../../../src/core/graph/graph.js';
-import type { KnowledgeGraph } from '../../../src/core/graph/types.js';
 
 describe('Storage Writer', () => {
   let graph: ReturnType<typeof createKnowledgeGraph>;
@@ -129,8 +128,18 @@ describe('Storage Writer', () => {
     it('should write TAINED edges for taint path', () => {
       const paths = [
         {
-          source: { nodeId: 'Function:getInput', variable: 'x', kind: 'ts-env', description: 'env' },
-          sink: { nodeId: 'Function:exec', variable: 'sql', kind: 'ts-sink:query', description: 'sql' },
+          source: {
+            nodeId: 'Function:getInput',
+            variable: 'x',
+            kind: 'ts-env',
+            description: 'env',
+          },
+          sink: {
+            nodeId: 'Function:exec',
+            variable: 'sql',
+            kind: 'ts-sink:query',
+            description: 'sql',
+          },
           path: [
             { from: 'Function:getInput', to: 'Function:process', operation: 'propagate' },
             { from: 'Function:process', to: 'Function:exec', operation: 'propagate' },
@@ -150,11 +159,19 @@ describe('Storage Writer', () => {
     it('should write SINK_REACHABLE edge when path reaches sink', () => {
       const paths = [
         {
-          source: { nodeId: 'Function:getInput', variable: 'x', kind: 'ts-env', description: 'env' },
-          sink: { nodeId: 'Function:exec', variable: 'sql', kind: 'ts-sink:query', description: 'sql' },
-          path: [
-            { from: 'Function:getInput', to: 'Function:exec', operation: 'direct' },
-          ],
+          source: {
+            nodeId: 'Function:getInput',
+            variable: 'x',
+            kind: 'ts-env',
+            description: 'env',
+          },
+          sink: {
+            nodeId: 'Function:exec',
+            variable: 'sql',
+            kind: 'ts-sink:query',
+            description: 'sql',
+          },
+          path: [{ from: 'Function:getInput', to: 'Function:exec', operation: 'direct' }],
           sanitizers: [],
           confidence: 1.0,
         },

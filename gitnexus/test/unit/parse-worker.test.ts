@@ -10,8 +10,7 @@
  * The worker machinery (message protocol, batch accumulation, file grouping)
  * is tested end-to-end in the worker-pool integration tests.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import path from 'path';
+import { describe, it, expect, vi } from 'vitest';
 
 // ─── Worker Threads Mock ─────────────────────────────────────────────────────
 // Mock worker_threads so parentPort!.on(...) at module evaluation time does not
@@ -54,15 +53,31 @@ describe('extractORMQueries', async () => {
       out,
     );
     expect(out).toEqual([
-      { filePath: '/fake/prisma.ts', orm: 'prisma', model: 'user', method: 'findMany', lineNumber: 0 },
+      {
+        filePath: '/fake/prisma.ts',
+        orm: 'prisma',
+        model: 'user',
+        method: 'findMany',
+        lineNumber: 0,
+      },
     ]);
   });
 
   it('extracts Prisma create calls', () => {
     const out: any[] = [];
-    extractORMQueries('/fake/prisma.ts', 'await prisma.post.create({ data: { title: "Hi" } });', out);
+    extractORMQueries(
+      '/fake/prisma.ts',
+      'await prisma.post.create({ data: { title: "Hi" } });',
+      out,
+    );
     expect(out).toEqual([
-      { filePath: '/fake/prisma.ts', orm: 'prisma', model: 'post', method: 'create', lineNumber: 0 },
+      {
+        filePath: '/fake/prisma.ts',
+        orm: 'prisma',
+        model: 'post',
+        method: 'create',
+        lineNumber: 0,
+      },
     ]);
   });
 
@@ -74,7 +89,13 @@ describe('extractORMQueries', async () => {
       out,
     );
     expect(out).toEqual([
-      { filePath: '/fake/prisma.ts', orm: 'prisma', model: 'user', method: 'update', lineNumber: 0 },
+      {
+        filePath: '/fake/prisma.ts',
+        orm: 'prisma',
+        model: 'user',
+        method: 'update',
+        lineNumber: 0,
+      },
     ]);
   });
 
@@ -82,13 +103,20 @@ describe('extractORMQueries', async () => {
     const out: any[] = [];
     extractORMQueries('/fake/prisma.ts', 'await prisma.user.delete({ where: { id: 1 } });', out);
     expect(out).toEqual([
-      { filePath: '/fake/prisma.ts', orm: 'prisma', model: 'user', method: 'delete', lineNumber: 0 },
+      {
+        filePath: '/fake/prisma.ts',
+        orm: 'prisma',
+        model: 'user',
+        method: 'delete',
+        lineNumber: 0,
+      },
     ]);
   });
 
   it('extracts multiple Prisma calls in one file', () => {
     const out: any[] = [];
-    const content = 'const users = await prisma.user.findMany();\nconst posts = await prisma.post.findMany();';
+    const content =
+      'const users = await prisma.user.findMany();\nconst posts = await prisma.post.findMany();';
     extractORMQueries('/fake/prisma.ts', content, out);
     expect(out).toHaveLength(2);
     expect(out[0].model).toBe('user');
@@ -109,7 +137,13 @@ describe('extractORMQueries', async () => {
       out,
     );
     expect(out).toEqual([
-      { filePath: '/fake/supabase.ts', orm: 'supabase', model: 'profiles', method: 'select', lineNumber: 0 },
+      {
+        filePath: '/fake/supabase.ts',
+        orm: 'supabase',
+        model: 'profiles',
+        method: 'select',
+        lineNumber: 0,
+      },
     ]);
   });
 
@@ -121,7 +155,13 @@ describe('extractORMQueries', async () => {
       out,
     );
     expect(out).toEqual([
-      { filePath: '/fake/supabase.ts', orm: 'supabase', model: 'users', method: 'insert', lineNumber: 0 },
+      {
+        filePath: '/fake/supabase.ts',
+        orm: 'supabase',
+        model: 'users',
+        method: 'insert',
+        lineNumber: 0,
+      },
     ]);
   });
 
@@ -211,13 +251,15 @@ describe('stripNullabilityMacros', () => {
   });
 
   it('removes both macros preserving content between them', () => {
-    const input = 'NS_ASSUME_NONNULL_BEGIN\n@property (nonatomic) NSString *name;\nNS_ASSUME_NONNULL_END';
+    const input =
+      'NS_ASSUME_NONNULL_BEGIN\n@property (nonatomic) NSString *name;\nNS_ASSUME_NONNULL_END';
     const result = stripNullabilityMacros(input);
     expect(result).toContain('@property (nonatomic) NSString *name;');
   });
 
   it('handles multiple occurrences', () => {
-    const input = 'NS_ASSUME_NONNULL_BEGIN\n@interface A\nNS_ASSUME_NONNULL_END\nNS_ASSUME_NONNULL_BEGIN\n@interface B\nNS_ASSUME_NONNULL_END';
+    const input =
+      'NS_ASSUME_NONNULL_BEGIN\n@interface A\nNS_ASSUME_NONNULL_END\nNS_ASSUME_NONNULL_BEGIN\n@interface B\nNS_ASSUME_NONNULL_END';
     const result = stripNullabilityMacros(input);
     expect(result).not.toContain('NS_ASSUME_NONNULL');
     expect(result).toContain('@interface A');
@@ -258,9 +300,9 @@ describe('detectOCHeaderLanguageFallback', async () => {
   });
 
   it('returns true for @property in header', () => {
-    expect(
-      detectOCHeaderLanguageFallback('@property (nonatomic, strong) NSString *name;'),
-    ).toBe(true);
+    expect(detectOCHeaderLanguageFallback('@property (nonatomic, strong) NSString *name;')).toBe(
+      true,
+    );
   });
 
   it('returns false for C++ template header', () => {

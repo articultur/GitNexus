@@ -21,15 +21,22 @@ import {
   closeLbug,
   loadCachedEmbeddings,
 } from './lbug/lbug-adapter.js';
+import { createSearchFTSIndexes } from './search/fts-indexes.js';
 import {
   getStoragePaths,
   saveMeta,
   loadMeta,
-  addToGitignore,
+  ensureGitNexusIgnored,
   registerRepo,
   cleanupOldKuzuFiles,
 } from '../storage/repo-manager.js';
-import { getCurrentCommit, getRemoteUrl, hasGitDir, getInferredRepoName } from '../storage/git.js';
+import {
+  getCurrentCommit,
+  getRemoteUrl,
+  hasGitDir,
+  getInferredRepoName,
+  resolveRepoIdentityRoot,
+} from '../storage/git.js';
 import type { CachedEmbedding } from './embeddings/types.js';
 import { generateAIContextFiles } from '../cli/ai-context.js';
 import { EMBEDDING_TABLE_NAME } from './lbug/schema.js';
@@ -53,11 +60,29 @@ export interface AnalyzeOptions {
    */
   force?: boolean;
   embeddings?: boolean;
+  /**
+   * Override the auto-skip node-count cap for embedding generation.
+   * `undefined` (default) keeps the built-in 50,000-node safety limit;
+   * `0` disables the cap entirely; any positive integer sets a custom cap.
+   * Mapped from the CLI's `--embeddings [limit]` argument.
+   */
+  embeddingsNodeLimit?: number;
+  /**
+   * Explicitly drop any embeddings present in the existing index instead of
+   * preserving them. Only meaningful when `embeddings` is false/undefined:
+   * the default behavior in that case is to load the previously generated
+   * embeddings and re-insert them after the rebuild so a routine
+   * re-analyze does not silently wipe a long embedding pass (#issue: analyze
+   * silently wipes existing embeddings when run without --embeddings).
+   */
+  dropEmbeddings?: boolean;
   skipGit?: boolean;
   /** Skip AGENTS.md and CLAUDE.md gitnexus block updates. */
   skipAgentsMd?: boolean;
   /** Omit volatile symbol/relationship counts from AGENTS.md and CLAUDE.md. */
   noStats?: boolean;
+  /** Skip installing standard GitNexus skill files to .claude/skills/gitnexus/. */
+  skipSkills?: boolean;
   /**
    * User-provided alias for the registry `name` (#829). When set,
    * forwarded to `registerRepo` so the indexed repo is stored under
@@ -91,8 +116,15 @@ export interface AnalyzeResult {
   pipelineResult?: any;
 }
 
-/** Threshold: auto-skip embeddings for repos with more nodes than this */
-const EMBEDDING_NODE_LIMIT = 50_000;
+// Re-export the pure flag-derivation helper so external callers (and tests)
+// keep importing from this module's stable surface.
+export { deriveEmbeddingMode, DEFAULT_EMBEDDING_NODE_LIMIT } from './embedding-mode.js';
+export type { EmbeddingMode } from './embedding-mode.js';
+import {
+  deriveEmbeddingMode as _deriveEmbeddingMode,
+  deriveEmbeddingCap,
+  DEFAULT_EMBEDDING_NODE_LIMIT,
+} from './embedding-mode.js';
 
 export const PHASE_LABELS: Record<string, string> = {
   extracting: 'Scanning files',
@@ -150,8 +182,15 @@ export async function runFullAnalysis(
   if (existingMeta && !options.force && existingMeta.lastCommit === currentCommit) {
     // Non-git folders have currentCommit = '' — always rebuild since we can't detect changes
     if (currentCommit !== '') {
+      await ensureGitNexusIgnored(repoPath);
       return {
-        repoName: options.registryName ?? getInferredRepoName(repoPath) ?? path.basename(repoPath),
+        // `resolveRepoIdentityRoot` collapses worktree roots to the
+        // canonical repo basename (#1259) but leaves arbitrary subdirs
+        // and `--skip-git` paths unchanged (#1232/#1233 intent preserved).
+        repoName:
+          options.registryName ??
+          getInferredRepoName(repoPath) ??
+          path.basename(resolveRepoIdentityRoot(repoPath)),
         repoPath,
         stats: existingMeta.stats ?? {},
         alreadyUpToDate: true,
@@ -160,10 +199,51 @@ export async function runFullAnalysis(
   }
 
   // ── Cache embeddings from existing index before rebuild ────────────
+  // Four modes:
+  //   --embeddings              -> load cache, restore, then generate any new ones
+  //   --force (with existing
+  //    embeddings)              -> auto-imply --embeddings: load cache, restore,
+  //                                regenerate embeddings for new/changed nodes
+  //                                (a forced re-index of an embedded repo
+  //                                shouldn't quietly downgrade to "preserve only")
+  //   (default)                 -> if existing index has embeddings, preserve them
+  //                                (load + restore, but do not generate); otherwise no-op
+  //   --drop-embeddings         -> skip cache load entirely; rebuild wipes embeddings
+  //
+  // The default-preserve branch is what makes a routine `analyze` (e.g. a
+  // post-commit hook) safe: a multi-minute embedding pass is no longer
+  // silently dropped just because the caller omitted `--embeddings`.
   let cachedEmbeddingNodeIds = new Set<string>();
   let cachedEmbeddings: CachedEmbedding[] = [];
 
-  if (options.embeddings && existingMeta && !options.force) {
+  const existingEmbeddingCount = existingMeta?.stats?.embeddings ?? 0;
+  const {
+    forceRegenerateEmbeddings,
+    preserveExistingEmbeddings,
+    shouldGenerateEmbeddings,
+    shouldLoadCache,
+  } = _deriveEmbeddingMode(options, existingEmbeddingCount);
+
+  if (options.dropEmbeddings && existingEmbeddingCount > 0) {
+    log(
+      `Dropping ${existingEmbeddingCount} existing embeddings (--drop-embeddings). ` +
+        `Re-run with --embeddings to regenerate.`,
+    );
+  } else if (forceRegenerateEmbeddings) {
+    log(
+      `--force on a repo with ${existingEmbeddingCount} existing embeddings: ` +
+        `regenerating embeddings for new/changed nodes. ` +
+        `Pass --drop-embeddings to wipe them instead.`,
+    );
+  } else if (preserveExistingEmbeddings) {
+    log(
+      `Preserving ${existingEmbeddingCount} existing embeddings. ` +
+        `Pass --embeddings to also generate embeddings for new/changed nodes, ` +
+        `or --drop-embeddings to wipe them.`,
+    );
+  }
+
+  if (shouldLoadCache && existingMeta) {
     try {
       progress('embeddings', 0, 'Caching embeddings...');
       await initLbug(lbugPath);
@@ -171,7 +251,17 @@ export async function runFullAnalysis(
       cachedEmbeddingNodeIds = cached.embeddingNodeIds;
       cachedEmbeddings = cached.embeddings;
       await closeLbug();
-    } catch {
+    } catch (err: any) {
+      // Surface cache-load failures explicitly: silently swallowing here would
+      // re-introduce the original silent-data-loss symptom (embeddings end up
+      // at 0 in meta.json with no diagnostic) through a different door.
+      log(
+        `Warning: could not load cached embeddings ` +
+          `(${err?.message ?? String(err)}). ` +
+          `Embeddings will not be preserved on this run.`,
+      );
+      cachedEmbeddingNodeIds = new Set<string>();
+      cachedEmbeddings = [];
       try {
         await closeLbug();
       } catch {
@@ -184,7 +274,8 @@ export async function runFullAnalysis(
   const pipelineResult = await runPipelineFromRepo(repoPath, (p) => {
     const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
     const scaled = Math.round(p.percent * 0.6);
-    progress(p.phase, scaled, phaseLabel);
+    const message = p.detail ? `${p.message || phaseLabel} (${p.detail})` : p.message || phaseLabel;
+    progress(p.phase, scaled, message);
   });
 
   // ── Phase 2: LadybugDB (60–85%) ──────────────────────────────────
@@ -214,12 +305,9 @@ export async function runFullAnalysis(
     });
 
     // ── Phase 3: FTS (85–90%) ─────────────────────────────────────────
-    // FTS indexes are created lazily on first `query`/`context` call instead
-    // of eagerly here. On small repos / CI runners the LadybugDB
-    // CREATE_FTS_INDEX cost is ~440 ms × 5 (≈2 s) regardless of table size,
-    // which dominated `analyze` runtime and pushed Windows CI past its
-    // 30 s test budget. Lazy creation is implemented in
-    // `core/search/bm25-index.ts` via `ensureFTSIndex`.
+    progress('fts', 85, 'Creating search indexes...');
+    await createSearchFTSIndexes();
+    progress('fts', 90, 'Search indexes ready');
 
     // ── Phase 3.5: Re-insert cached embeddings ────────────────────────
     if (cachedEmbeddings.length > 0) {
@@ -252,10 +340,30 @@ export async function runFullAnalysis(
     // ── Phase 4: Embeddings (90–98%) ──────────────────────────────────
     const stats = await getLbugStats();
     let embeddingSkipped = true;
+    let semanticMode: 'vector-index' | 'exact-scan' | undefined;
 
-    if (options.embeddings) {
-      if (stats.nodes <= EMBEDDING_NODE_LIMIT) {
+    if (shouldGenerateEmbeddings) {
+      const { skipForCap, capDisabled, nodeLimit } = deriveEmbeddingCap(
+        stats.nodes,
+        options.embeddingsNodeLimit,
+      );
+      if (!skipForCap) {
         embeddingSkipped = false;
+        if (capDisabled && stats.nodes > DEFAULT_EMBEDDING_NODE_LIMIT) {
+          log(
+            `Embedding node-count cap disabled — generating embeddings for ` +
+              `${stats.nodes.toLocaleString()} nodes. Ensure sufficient memory; ` +
+              `the default ${DEFAULT_EMBEDDING_NODE_LIMIT.toLocaleString()}-node ` +
+              `cap exists to prevent OOM.`,
+          );
+        }
+      } else {
+        log(
+          `Embeddings skipped: ${stats.nodes.toLocaleString()} nodes exceeds ` +
+            `the ${nodeLimit.toLocaleString()}-node safety cap. ` +
+            `Override with \`--embeddings 0\` to disable the cap, or ` +
+            `\`--embeddings <n>\` to set a custom cap.`,
+        );
       }
     }
 
@@ -278,9 +386,21 @@ export async function runFullAnalysis(
       }
 
       const { readServerMapping } = await import('./embeddings/server-mapping.js');
-      const projectName = path.basename(repoPath);
+      // Mirror the registry's name-resolution chain so the server-mapping
+      // lookup key stays aligned with the final registry name (#1259):
+      //   --name → remote-derived → canonical-root basename
+      // (preserved-alias is intentionally NOT consulted here — server
+      // mappings are addressed by the operationally-meaningful name the
+      // user configures, not by a sticky registry-only alias they may not
+      // know about. The previous canonical-only logic ignored both --name
+      // and remote-derived names, silently breaking server-mapping for
+      // anyone with a `--name` alias or remote-named repo.)
+      const projectName =
+        options.registryName ??
+        getInferredRepoName(repoPath) ??
+        path.basename(resolveRepoIdentityRoot(repoPath));
       const serverName = await readServerMapping(projectName);
-      await runEmbeddingPipeline(
+      const embeddingResult = await runEmbeddingPipeline(
         executeQuery,
         executeWithReusedStatement,
         (p) => {
@@ -298,6 +418,15 @@ export async function runFullAnalysis(
         { repoName: projectName, serverName },
         existingEmbeddings,
       );
+      if (embeddingResult.semanticMode === 'exact-scan') {
+        semanticMode = 'exact-scan';
+        log(
+          'Semantic embeddings were generated without a VECTOR index; ' +
+            'queries will use exact-scan fallback within the configured limit.',
+        );
+      } else {
+        semanticMode = 'vector-index';
+      }
     }
 
     // ── Phase 5: Finalize (98–100%) ───────────────────────────────────
@@ -309,11 +438,24 @@ export async function runFullAnalysis(
       const embResult = await executeQuery(
         `MATCH (e:${EMBEDDING_TABLE_NAME}) RETURN count(e) AS cnt`,
       );
-      embeddingCount = embResult?.[0]?.cnt ?? 0;
+      const row = embResult?.[0];
+      embeddingCount = Number(row?.cnt ?? row?.[0] ?? 0);
     } catch {
       /* table may not exist if embeddings never ran */
     }
 
+    if (!embeddingSkipped && stats.nodes > 0 && embeddingCount === 0) {
+      throw new Error(
+        'Embedding generation completed without persisted embeddings. ' +
+          'The index was not registered to avoid silently reporting embeddings: 0.',
+      );
+    }
+
+    const { getRuntimeCapabilities } = await import('./platform/capabilities.js');
+    const runtimeCapabilities = getRuntimeCapabilities();
+    const effectiveSemanticMode =
+      semanticMode ??
+      (runtimeCapabilities.semanticMode === 'vector-index' ? 'vector-index' : 'exact-scan');
     const meta = {
       repoPath,
       lastCommit: currentCommit,
@@ -333,6 +475,16 @@ export async function runFullAnalysis(
         processes: pipelineResult.processResult?.stats.totalProcesses,
         embeddings: embeddingCount,
       },
+      capabilities: {
+        graph: { provider: 'ladybugdb', status: runtimeCapabilities.graph },
+        fts: { provider: 'ladybugdb-fts', status: runtimeCapabilities.fts },
+        vectorSearch: {
+          provider: effectiveSemanticMode === 'vector-index' ? 'ladybugdb-vector' : 'exact-scan',
+          status: embeddingCount > 0 ? effectiveSemanticMode : 'unavailable',
+          exactScanLimit: runtimeCapabilities.exactScanLimit,
+          reason: runtimeCapabilities.reason,
+        },
+      },
     };
     await saveMeta(storagePath, meta);
     // Forward the --name alias and the registry-collision bypass bit.
@@ -349,10 +501,8 @@ export async function runFullAnalysis(
       allowDuplicateName: options.allowDuplicateName,
     });
 
-    // Only attempt to update .gitignore when a .git directory is present.
-    if (hasGitDir(repoPath)) {
-      await addToGitignore(repoPath);
-    }
+    // Keep generated .gitnexus contents ignored without editing the user's root .gitignore.
+    await ensureGitNexusIgnored(repoPath);
 
     // ── Generate AI context files (best-effort) ───────────────────────
     let aggregatedClusterCount = 0;
@@ -379,7 +529,11 @@ export async function runFullAnalysis(
           processes: pipelineResult.processResult?.stats.totalProcesses,
         },
         undefined,
-        { skipAgentsMd: options.skipAgentsMd, noStats: options.noStats },
+        {
+          skipAgentsMd: options.skipAgentsMd,
+          skipSkills: options.skipSkills,
+          noStats: options.noStats,
+        },
       );
     } catch {
       // Best-effort — don't fail the entire analysis for context file issues

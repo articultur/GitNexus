@@ -6,6 +6,7 @@ import Python from 'tree-sitter-python';
 import Java from 'tree-sitter-java';
 import C from 'tree-sitter-c';
 import CPP from 'tree-sitter-cpp';
+// Explicit subpath import — see parser-loader.ts for rationale (#1013).
 import CSharp from 'tree-sitter-c-sharp/bindings/node/index.js';
 import Go from 'tree-sitter-go';
 import Rust from 'tree-sitter-rust';
@@ -14,7 +15,12 @@ import Ruby from 'tree-sitter-ruby';
 import { createRequire } from 'node:module';
 import { SupportedLanguages } from 'gitnexus-shared';
 import { getProvider } from '../languages/index.js';
-import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from '../constants.js';
+import {
+  getTreeSitterBufferSize,
+  getTreeSitterContentByteLength,
+  TREE_SITTER_MAX_BUFFER,
+} from '../constants.js';
+import { parseSourceSafe } from '../../tree-sitter/safe-parse.js';
 import type { SymbolTableReader } from '../model/symbol-table.js';
 import type { ExtractedHeritage } from '../model/heritage-map.js';
 
@@ -23,40 +29,21 @@ type TreeSitterLanguage = Parameters<typeof Parser.prototype.setLanguage>[0];
 
 // tree-sitter-swift is an optionalDependency — may not be installed
 const _require = createRequire(import.meta.url);
-
-const resolveUsableGrammar = (grammarModule: any): TreeSitterLanguage | null => {
-  for (const candidate of [grammarModule, grammarModule?.language]) {
-    if (!candidate) continue;
-    try {
-      const probe = new Parser();
-      probe.setLanguage(candidate);
-      return candidate;
-    } catch {}
-  }
-  return null;
-};
-
 let Swift: TreeSitterLanguage | null = null;
 try {
-  Swift = resolveUsableGrammar(_require('tree-sitter-swift'));
+  Swift = _require('tree-sitter-swift');
 } catch {}
 
 // tree-sitter-dart is an optionalDependency — may not be installed
 let Dart: TreeSitterLanguage | null = null;
 try {
-  Dart = resolveUsableGrammar(_require('tree-sitter-dart'));
+  Dart = _require('tree-sitter-dart');
 } catch {}
 
 // tree-sitter-kotlin is an optionalDependency — may not be installed
 let Kotlin: TreeSitterLanguage | null = null;
 try {
-  Kotlin = resolveUsableGrammar(_require('tree-sitter-kotlin'));
-} catch {}
-
-// tree-sitter-objc is an optionalDependency — may not be installed
-let Objc: TreeSitterLanguage | null = null;
-try {
-  Objc = resolveUsableGrammar(_require('tree-sitter-objc'));
+  Kotlin = _require('tree-sitter-kotlin');
 } catch {}
 import { getLanguageFromFilename } from 'gitnexus-shared';
 import {
@@ -79,11 +66,10 @@ import { detectFrameworkFromAST } from '../framework-detection.js';
 import { generateId } from '../../../lib/utils.js';
 import { preprocessImportPath } from '../import-processor.js';
 import {
+  extractVueScript,
   extractTemplateComponents,
-  extractTemplateEventHandlers,
   isVueSetupTopLevel,
 } from '../vue-sfc-extractor.js';
-import { prepareParseContent } from '../parse-content.js';
 import type { NamedBinding } from '../named-bindings/types.js';
 import type { NodeLabel } from 'gitnexus-shared';
 import type { FieldInfo, FieldExtractorContext } from '../field-types.js';
@@ -100,6 +86,7 @@ import type { LanguageProvider } from '../language-provider.js';
 import type { ParsedFile } from 'gitnexus-shared';
 import { extractParsedFile } from '../scope-extractor-bridge.js';
 
+import { logger } from '../../logger.js';
 // ============================================================================
 // Types for serializable results
 // ============================================================================
@@ -229,11 +216,12 @@ export interface ExtractedToolDef {
   toolName: string;
   description: string;
   lineNumber: number;
+  handlerNodeId?: string;
 }
 
 export interface ExtractedORMQuery {
   filePath: string;
-  orm: 'prisma' | 'supabase' | 'harmony-rdb' | 'harmony-preferences';
+  orm: 'prisma' | 'supabase';
   model: string;
   method: string;
   lineNumber: number;
@@ -319,45 +307,10 @@ type WorkerIncomingMessage =
 
 const parser = new Parser();
 
-/** Detect language for a .h file by inspecting its content.
- *  For non-.h files, falls back to extension-based detection.
- *  This resolves the ambiguity between C++ headers and Objective-C headers. */
-const getLanguageFromFilenameWithContent = (
-  filePath: string,
-  content: string,
-): SupportedLanguages | null => {
-  const lang = getLanguageFromFilename(filePath);
-  if (lang === SupportedLanguages.CPlusPlus && filePath.toLowerCase().endsWith('.h')) {
-    return detectOCHeaderLanguageFallback(content);
-  }
-  return lang;
-};
-
-const OC_HEADER_PATTERNS: RegExp[] = [
-  /^@interface\b/m,
-  /^@protocol\b/m,
-  /^@end\b/m,
-  /^@property\b/m,
-  /^@implementation\b/m,
-  /@interface\b/m,
-  /@protocol\b/m,
-];
-
-function detectOCHeaderLanguageFallback(content: string): SupportedLanguages {
-  const hasOC = OC_HEADER_PATTERNS.some((re) => re.test(content));
-  return hasOC ? SupportedLanguages.ObjectiveC : SupportedLanguages.CPlusPlus;
-}
-
-/**
- * Strip Apple nullability annotation macros that confuse tree-sitter-objc.
- * These macros wrap OC headers but are not valid preprocessor directives in the grammar.
- * We remove the tokens, not the content between them (unlike #if/#endif pairs).
- */
 const languageMap: Record<string, TreeSitterLanguage> = {
   [SupportedLanguages.JavaScript]: JavaScript,
   [SupportedLanguages.TypeScript]: TypeScript.typescript,
   [`${SupportedLanguages.TypeScript}:tsx`]: TypeScript.tsx,
-  [SupportedLanguages.ArkTS]: TypeScript.typescript,
   [SupportedLanguages.Python]: Python,
   [SupportedLanguages.Java]: Java,
   [SupportedLanguages.C]: C,
@@ -371,7 +324,6 @@ const languageMap: Record<string, TreeSitterLanguage> = {
   [SupportedLanguages.Vue]: TypeScript.typescript,
   ...(Dart ? { [SupportedLanguages.Dart]: Dart } : {}),
   ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
-  ...(Objc ? { [SupportedLanguages.ObjectiveC]: Objc } : {}),
 };
 
 /**
@@ -471,11 +423,10 @@ function findClassNodeByQualifiedName(node: SyntaxNode): SyntaxNode | null {
         }
       }
       if (!funcDecl) {
-        const next: SyntaxNode | null =
-          current.namedChildren.find(
-            (c) => c.type === 'pointer_declarator' || c.type === 'reference_declarator',
-          ) ?? null;
-        current = next;
+        const next: SyntaxNode | null | undefined = current.namedChildren.find(
+          (c) => c.type === 'pointer_declarator' || c.type === 'reference_declarator',
+        );
+        current = next ?? null;
       }
     }
   }
@@ -625,32 +576,48 @@ const findEnclosingFunctionId = (
           filePath,
           provider.resolveEnclosingOwner,
         );
-        const qualifiedName = classInfo ? `${classInfo.className}.${funcName}` : funcName;
+        const encLang = getLanguageFromFilename(filePath);
+        const standaloneMethodInfo =
+          (finalLabel === 'Method' || finalLabel === 'Constructor') &&
+          encLang === SupportedLanguages.Go &&
+          provider.methodExtractor?.extractFromNode
+            ? provider.methodExtractor.extractFromNode(current, {
+                filePath,
+                language: encLang,
+              })
+            : null;
+        const ownerName = classInfo?.className ?? standaloneMethodInfo?.receiverType ?? undefined;
+        const qualifiedName = ownerName ? `${ownerName}.${funcName}` : funcName;
         // Include #<arity> suffix to match definition-phase Method/Constructor IDs.
         // Use the same MethodExtractor (getMethodInfo) as the definition phase.
         // When same-arity collisions exist, also append ~type1,type2.
         let arity: number | undefined;
         let encTypeTag = '';
         if (finalLabel === 'Method' || finalLabel === 'Constructor') {
-          const encLang = getLanguageFromFilename(filePath);
-          const classNode =
-            findEnclosingClassNode(current) ?? findClassNodeByQualifiedName(current);
-          if (classNode && encLang) {
-            const methodMap = getMethodInfo(classNode, provider, {
-              filePath,
-              language: encLang,
-            });
-            const defLine = current.startPosition.row + 1;
-            const info = methodMap?.get(`${funcName}:${defLine}`);
-            if (info) {
-              arity = info.parameters.some((p) => p.isVariadic)
-                ? undefined
-                : info.parameters.length;
-              if (methodMap && arity !== undefined) {
-                const g = buildCollisionGroups(methodMap);
-                encTypeTag =
-                  typeTagForId(methodMap, funcName, arity, info, encLang, g) +
-                  constTagForId(methodMap, funcName, arity, info, g);
+          if (standaloneMethodInfo) {
+            arity = standaloneMethodInfo.parameters.some((p) => p.isVariadic)
+              ? undefined
+              : standaloneMethodInfo.parameters.length;
+          } else {
+            const classNode =
+              findEnclosingClassNode(current) ?? findClassNodeByQualifiedName(current);
+            if (classNode && encLang) {
+              const methodMap = getMethodInfo(classNode, provider, {
+                filePath,
+                language: encLang,
+              });
+              const defLine = current.startPosition.row + 1;
+              const info = methodMap?.get(`${funcName}:${defLine}`);
+              if (info) {
+                arity = info.parameters.some((p) => p.isVariadic)
+                  ? undefined
+                  : info.parameters.length;
+                if (methodMap && arity !== undefined) {
+                  const g = buildCollisionGroups(methodMap);
+                  encTypeTag =
+                    typeTagForId(methodMap, funcName, arity, info, encLang, g) +
+                    constTagForId(methodMap, funcName, arity, info, g);
+                }
               }
             }
           }
@@ -669,8 +636,7 @@ const findEnclosingFunctionId = (
       if (customResult) {
         let finalLabel: NodeLabel = customResult.label;
         if (provider.labelOverride) {
-          const prevSibling = current.previousSibling;
-          const override = prevSibling ? provider.labelOverride(prevSibling, finalLabel) : null;
+          const override = provider.labelOverride(current.previousSibling!, finalLabel);
           if (override !== null) finalLabel = override;
         }
         // Qualify custom result with enclosing class
@@ -787,7 +753,7 @@ const processBatch = (
   // Group by language to minimize setLanguage calls
   const byLanguage = new Map<SupportedLanguages, ParseWorkerInput[]>();
   for (const file of files) {
-    const lang = getLanguageFromFilenameWithContent(file.path, file.content);
+    const lang = getLanguageFromFilename(file.path);
     if (!lang) continue;
     let list = byLanguage.get(lang);
     if (!list) {
@@ -799,7 +765,7 @@ const processBatch = (
 
   let totalProcessed = 0;
   let lastReported = 0;
-  const PROGRESS_INTERVAL = 100; // report every 100 files
+  const PROGRESS_INTERVAL = Math.max(1, Math.min(100, Math.ceil(files.length / 10)));
 
   const onFileProcessed = onProgress
     ? () => {
@@ -863,6 +829,10 @@ const processBatch = (
           (result.skippedLanguages[language] || 0) + tsxFiles.length;
       }
     }
+  }
+
+  if (onProgress && totalProcessed !== lastReported) {
+    onProgress(totalProcessed);
   }
 
   return result;
@@ -1356,125 +1326,6 @@ const PRISMA_QUERY_RE =
   /\bprisma\.(\w+)\.(findMany|findFirst|findUnique|findUniqueOrThrow|findFirstOrThrow|create|createMany|update|updateMany|delete|deleteMany|upsert|count|aggregate|groupBy)\s*\(/g;
 const SUPABASE_QUERY_RE =
   /\bsupabase\.from\s*\(\s*['"](\w+)['"]\s*\)\s*\.(select|insert|update|delete|upsert)\s*\(/g;
-const HARMONY_RDB_PREDICATE_RE =
-  /\b(?:const|let|var)\s+(\w+)\s*=\s*new\s+(?:rdb|relationalStore)\.RdbPredicates\s*\(\s*['"]([\w$-]+)['"]\s*\)/g;
-const HARMONY_RDB_QUERY_RE = /\b\w+\.(query|querySync)\s*\(\s*(\w+)/g;
-const HARMONY_RDB_INLINE_QUERY_RE =
-  /\b\w+\.(query|querySync)\s*\(\s*new\s+(?:rdb|relationalStore)\.RdbPredicates\s*\(\s*['"]([\w$-]+)['"]\s*\)/g;
-const HARMONY_RDB_SQL_RE = /\b\w+\.(querySql|executeSql)\s*\(\s*(['"`])([\s\S]*?)\2/g;
-const HARMONY_PREFERENCES_STORE_RE =
-  /\b(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?preferences\.getPreferences(?:Sync)?\s*\(/g;
-const HARMONY_PREFERENCES_GET_RE = /\b(\w+)\.(get|getSync)\s*\(\s*['"]([^'"]+)['"]/g;
-
-function getLineNumber(content: string, index: number): number {
-  return content.substring(0, index).split('\n').length - 1;
-}
-
-function extractSqlTargetName(sql: string): string | null {
-  const normalized = sql.replace(/\s+/g, ' ').trim();
-  const match = /\b(?:from|into|update|table)\s+([A-Za-z_][\w$]*)/i.exec(normalized);
-  return match?.[1] ?? null;
-}
-
-function extractHarmonyQueries(filePath: string, content: string, out: ExtractedORMQuery[]): void {
-  const hasRdb =
-    content.includes('RdbPredicates') ||
-    content.includes('.query(') ||
-    content.includes('.querySync(') ||
-    content.includes('.querySql(') ||
-    content.includes('.executeSql(');
-  const hasPreferences = content.includes('preferences.getPreferences');
-  if (!hasRdb && !hasPreferences) return;
-
-  if (hasRdb) {
-    const predicates = new Map<string, string>();
-
-    HARMONY_RDB_PREDICATE_RE.lastIndex = 0;
-    let predicateMatch;
-    while ((predicateMatch = HARMONY_RDB_PREDICATE_RE.exec(content)) !== null) {
-      predicates.set(predicateMatch[1], predicateMatch[2]);
-    }
-
-    HARMONY_RDB_QUERY_RE.lastIndex = 0;
-    let queryMatch;
-    while ((queryMatch = HARMONY_RDB_QUERY_RE.exec(content)) !== null) {
-      const model = predicates.get(queryMatch[2]);
-      if (!model) continue;
-      out.push({
-        filePath,
-        orm: 'harmony-rdb',
-        model,
-        method: queryMatch[1],
-        lineNumber: getLineNumber(content, queryMatch.index),
-      });
-    }
-
-    HARMONY_RDB_INLINE_QUERY_RE.lastIndex = 0;
-    let inlineQueryMatch;
-    while ((inlineQueryMatch = HARMONY_RDB_INLINE_QUERY_RE.exec(content)) !== null) {
-      out.push({
-        filePath,
-        orm: 'harmony-rdb',
-        model: inlineQueryMatch[2],
-        method: inlineQueryMatch[1],
-        lineNumber: getLineNumber(content, inlineQueryMatch.index),
-      });
-    }
-
-    HARMONY_RDB_SQL_RE.lastIndex = 0;
-    let sqlMatch;
-    while ((sqlMatch = HARMONY_RDB_SQL_RE.exec(content)) !== null) {
-      const model = extractSqlTargetName(sqlMatch[3]);
-      if (!model) continue;
-      out.push({
-        filePath,
-        orm: 'harmony-rdb',
-        model,
-        method: sqlMatch[1],
-        lineNumber: getLineNumber(content, sqlMatch.index),
-      });
-    }
-  }
-
-  if (hasPreferences) {
-    const storeVars = new Set<string>();
-
-    HARMONY_PREFERENCES_STORE_RE.lastIndex = 0;
-    let storeMatch;
-    while ((storeMatch = HARMONY_PREFERENCES_STORE_RE.exec(content)) !== null) {
-      storeVars.add(storeMatch[1]);
-    }
-
-    HARMONY_PREFERENCES_GET_RE.lastIndex = 0;
-    let prefMatch;
-    while ((prefMatch = HARMONY_PREFERENCES_GET_RE.exec(content)) !== null) {
-      if (!storeVars.has(prefMatch[1])) continue;
-      out.push({
-        filePath,
-        orm: 'harmony-preferences',
-        model: prefMatch[3],
-        method: prefMatch[2],
-        lineNumber: getLineNumber(content, prefMatch.index),
-      });
-    }
-  }
-}
-
-function deriveHarmonyEntryRoutePath(filePath: string): string | null {
-  const normalized = filePath.replace(/\\/g, '/');
-  if (!normalized.endsWith('.ets')) return null;
-
-  if (normalized.startsWith('pages/')) {
-    return normalized.slice(0, -4);
-  }
-
-  const pagesIndex = normalized.lastIndexOf('/pages/');
-  if (pagesIndex >= 0) {
-    return normalized.slice(pagesIndex + 1, -4);
-  }
-
-  return null;
-}
 
 /**
  * Extract ORM query calls from file content via regex.
@@ -1487,12 +1338,7 @@ export function extractORMQueries(
 ): void {
   const hasPrisma = content.includes('prisma.');
   const hasSupabase = content.includes('supabase.from');
-  const hasHarmony =
-    content.includes('RdbPredicates') ||
-    content.includes('preferences.getPreferences') ||
-    content.includes('.querySql(') ||
-    content.includes('.executeSql(');
-  if (!hasPrisma && !hasSupabase && !hasHarmony) return;
+  if (!hasPrisma && !hasSupabase) return;
 
   if (hasPrisma) {
     PRISMA_QUERY_RE.lastIndex = 0;
@@ -1523,10 +1369,6 @@ export function extractORMQueries(
       });
     }
   }
-
-  if (hasHarmony) {
-    extractHarmonyQueries(filePath, content, out);
-  }
 }
 
 const processFileGroup = (
@@ -1545,28 +1387,41 @@ const processFileGroup = (
     if (parentPort) {
       parentPort.postMessage({ type: 'warning', message });
     } else {
-      console.warn(message);
+      logger.warn(message);
     }
     return;
   }
 
   for (const file of files) {
     // Skip files larger than the max tree-sitter buffer (32 MB)
-    if (file.content.length > TREE_SITTER_MAX_BUFFER) continue;
+    if (getTreeSitterContentByteLength(file.content) > TREE_SITTER_MAX_BUFFER) continue;
 
-    const prepared = prepareParseContent(language, file.content);
-    if (!prepared) continue;
-    const { parseContent, lineOffset, isVueSetup } = prepared;
+    // Vue SFC preprocessing: extract <script> block content
+    let parseContent = file.content;
+    let lineOffset = 0;
+    let isVueSetup = false;
+    if (language === SupportedLanguages.Vue) {
+      const extracted = extractVueScript(file.content);
+      if (!extracted) continue; // skip .vue files with no script block
+      parseContent = extracted.scriptContent;
+      lineOffset = extracted.lineOffset;
+      isVueSetup = extracted.isSetup;
+    }
+
+    // Per-language source-text transform (e.g., UE macro stripping for C++).
+    // Length-preserving — see LanguageProvider.preprocessSource contract.
+    parseContent =
+      getProvider(language).preprocessSource?.(parseContent, file.path) ?? parseContent;
 
     clearCaches(); // Reset memoization before each new file
 
     let tree;
     try {
-      tree = parser.parse(parseContent, undefined, {
-        bufferSize: getTreeSitterBufferSize(parseContent.length),
+      tree = parseSourceSafe(parser, parseContent, undefined, {
+        bufferSize: getTreeSitterBufferSize(parseContent),
       });
     } catch (err) {
-      console.warn(
+      logger.warn(
         `Failed to parse file ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
       );
       continue;
@@ -1579,7 +1434,7 @@ const processFileGroup = (
     try {
       matches = query.matches(tree.rootNode);
     } catch (err) {
-      console.warn(
+      logger.warn(
         `Query execution failed for ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
       );
       continue;
@@ -1593,10 +1448,16 @@ const processFileGroup = (
     // Runs BEFORE legacy extraction and its result is independent: a
     // failure here is caught inside `extractParsedFile` and does NOT
     // affect the legacy DAG path that follows.
-    const parsedFile = extractParsedFile(provider, parseContent, file.path, (message) => {
-      if (parentPort) parentPort.postMessage({ type: 'warning', message });
-      else console.warn(message);
-    });
+    const parsedFile = extractParsedFile(
+      provider,
+      parseContent,
+      file.path,
+      (message) => {
+        if (parentPort) parentPort.postMessage({ type: 'warning', message });
+        else logger.warn(message);
+      },
+      tree,
+    );
     if (parsedFile !== undefined) result.parsedFiles.push(parsedFile);
 
     // Pre-pass: extract heritage from query matches to build parentMap for buildTypeEnv.
@@ -1749,18 +1610,6 @@ const processFileGroup = (
             decoratorName,
             lineNumber: decoratorNode.startPosition.row + lineOffset,
           });
-        }
-        if (decoratorName === 'Entry') {
-          const routePath = deriveHarmonyEntryRoutePath(file.path);
-          if (routePath) {
-            result.decoratorRoutes.push({
-              filePath: file.path,
-              routePath,
-              httpMethod: 'GET',
-              decoratorName,
-              lineNumber: decoratorNode.startPosition.row + lineOffset,
-            });
-          }
         }
         // MCP/RPC tool detection: @mcp.tool(), @app.tool(), @server.tool()
         if (decoratorName === 'tool') {
@@ -2166,11 +2015,7 @@ const processFileGroup = (
 
       // Synthesize name for constructors without explicit @name capture (e.g. Swift init)
       if (!nameNode && nodeLabel !== 'Constructor' && !extractedClassSymbol) continue;
-      const rawNodeName = extractedClassSymbol?.name ?? (nameNode ? nameNode.text : 'init');
-      // descriptionExtractor returns the full selector for OC methods (e.g. "sd_colorAtPoint:")
-      // Use it as the indexed name so callers can search by the complete selector.
-      const description = provider.descriptionExtractor?.(nodeLabel, rawNodeName, captureMap);
-      const nodeName = description ?? rawNodeName;
+      const nodeName = extractedClassSymbol?.name ?? (nameNode ? nameNode.text : 'init');
       const startLine = definitionNode
         ? definitionNode.startPosition.row + lineOffset
         : nameNode
@@ -2246,10 +2091,13 @@ const processFileGroup = (
         }
       }
 
-      // Append #<paramCount> to Method/Constructor IDs to disambiguate overloads.
-      // Functions are not suffixed — they don't overload by name in the same scope.
+      // Append #<paramCount> to owned callable IDs to disambiguate overloads.
+      // Top-level Function IDs stay stable; functions inside an owner may overload.
       // When same-arity collisions exist, append ~type1,type2 for further disambiguation.
-      const needsAritySuffix = nodeLabel === 'Method' || nodeLabel === 'Constructor';
+      const needsAritySuffix =
+        nodeLabel === 'Method' ||
+        nodeLabel === 'Constructor' ||
+        (nodeLabel === 'Function' && enclosingClassId !== null);
       let arityTag = needsAritySuffix && arityForId !== undefined ? `#${arityForId}` : '';
       if (arityTag && defMethodMap && defMethodInfo) {
         const groups = buildCollisionGroups(defMethodMap);
@@ -2270,6 +2118,8 @@ const processFileGroup = (
         (classNodeForSymbol && provider.classExtractor?.isTypeDeclaration(classNodeForSymbol)
           ? (provider.classExtractor.extractQualifiedName(classNodeForSymbol, nodeName) ?? nodeName)
           : undefined);
+
+      const description = provider.descriptionExtractor?.(nodeLabel, nodeName, captureMap);
 
       let frameworkHint = definitionNode
         ? detectFrameworkFromAST(language, (definitionNode.text || '').slice(0, 300))
@@ -2316,8 +2166,9 @@ const processFileGroup = (
               result.toolDefs.push({
                 filePath: file.path,
                 toolName: nodeName,
-                description: dec.arg || '',
+                description: (dec.arg || description || '').slice(0, 200),
                 lineNumber: definitionNode.startPosition.row + lineOffset,
+                handlerNodeId: nodeId,
               });
             }
             fileDecorators.delete(checkLine);
@@ -2463,22 +2314,13 @@ const processFileGroup = (
     // Extract ORM queries (Prisma, Supabase)
     extractORMQueries(file.path, parseContent, result.ormQueries);
 
-    // Vue: emit CALLS edges for components and event handlers used in <template>
+    // Vue: emit CALLS edges for components used in <template>
     if (language === SupportedLanguages.Vue) {
       const templateComponents = extractTemplateComponents(file.content);
       for (const componentName of templateComponents) {
         result.calls.push({
           filePath: file.path,
           calledName: componentName,
-          sourceId: generateId('File', file.path),
-          callForm: 'free',
-        });
-      }
-      const templateHandlers = extractTemplateEventHandlers(file.content);
-      for (const handlerName of templateHandlers) {
-        result.calls.push({
-          filePath: file.path,
-          calledName: handlerName,
           sourceId: generateId('File', file.path),
           callForm: 'free',
         });

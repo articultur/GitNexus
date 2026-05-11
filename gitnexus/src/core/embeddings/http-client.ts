@@ -3,18 +3,22 @@
  *
  * Shared fetch+retry logic for OpenAI-compatible /v1/embeddings endpoints.
  * Imported by both the core embedder (batch) and MCP embedder (query).
+ *
+ * Network resilience is delegated to `resilientFetch` from
+ * `gitnexus-shared` — bounded retries with exponential-backoff jitter,
+ * `Retry-After` honored on 429, and an in-process circuit breaker that
+ * fails fast on a flapping endpoint. Per-attempt timeout is enforced
+ * via `AbortSignal.timeout` on the underlying fetch.
  */
+
+import { CircuitOpenError, ResilientFetchExhaustedError, resilientFetch } from 'gitnexus-shared';
 
 const HTTP_TIMEOUT_MS = 30_000;
 const HTTP_MAX_RETRIES = 2;
 const HTTP_RETRY_BACKOFF_MS = 1_000;
-// Larger batches reduce round-trip overhead; Ollama /v1/embeddings handles 128+ fine.
-// Override with GITNEXUS_EMBEDDING_BATCH_SIZE env var.
-const HTTP_BATCH_SIZE = parseInt(process.env.GITNEXUS_EMBEDDING_BATCH_SIZE ?? '128', 10);
-// Number of concurrent batch requests. Ollama on Apple Silicon (Metal) benefits
-// from light concurrency; set GITNEXUS_EMBEDDING_CONCURRENCY=1 to disable.
-const HTTP_CONCURRENCY = parseInt(process.env.GITNEXUS_EMBEDDING_CONCURRENCY ?? '3', 10);
+const HTTP_BATCH_SIZE = 64;
 const DEFAULT_DIMS = 384;
+const HTTP_BREAKER_KEY = 'embeddings-http';
 
 interface HttpConfig {
   baseUrl: string;
@@ -36,8 +40,11 @@ const readConfig = (): HttpConfig | null => {
   const rawDims = process.env.GITNEXUS_EMBEDDING_DIMS;
   let dimensions: number | undefined;
   if (rawDims !== undefined) {
+    if (!/^\d+$/.test(rawDims)) {
+      throw new Error(`GITNEXUS_EMBEDDING_DIMS must be a positive integer, got "${rawDims}"`);
+    }
     const parsed = parseInt(rawDims, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) {
+    if (parsed <= 0) {
       throw new Error(`GITNEXUS_EMBEDDING_DIMS must be a positive integer, got "${rawDims}"`);
     }
     dimensions = parsed;
@@ -87,7 +94,13 @@ interface EmbeddingItem {
  * @param model - Model name for the request body
  * @param apiKey - Bearer token (only used in Authorization header)
  * @param batchIndex - Logical batch number (for error context)
- * @param attempt - Current retry attempt (internal)
+ * @param dimensions - Optional output-vector size. When provided, sent as
+ *   the `dimensions` field in the request body. Endpoints that implement
+ *   Matryoshka truncation (OpenAI text-embedding-3-*, Cohere embed-v3,
+ *   Voyage) return a truncated vector at that size; endpoints that do not
+ *   recognise the field may ignore it or return 400. Leave
+ *   `GITNEXUS_EMBEDDING_DIMS` unset for strict backends that reject
+ *   unknown fields.
  */
 const httpEmbedBatch = async (
   url: string,
@@ -95,46 +108,60 @@ const httpEmbedBatch = async (
   model: string,
   apiKey: string,
   batchIndex = 0,
-  attempt = 0,
+  dimensions?: number,
 ): Promise<EmbeddingItem[]> => {
+  const requestBody: { input: string[]; model: string; dimensions?: number } = {
+    input: batch,
+    model,
+  };
+  if (dimensions !== undefined) {
+    requestBody.dimensions = dimensions;
+  }
+
   let resp: Response;
   try {
-    resp = await fetch(url, {
-      method: 'POST',
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+    resp = await resilientFetch(
+      url,
+      {
+        method: 'POST',
+        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
       },
-      body: JSON.stringify({ input: batch, model }),
-    });
+      {
+        breakerKey: HTTP_BREAKER_KEY,
+        retry: { maxAttempts: HTTP_MAX_RETRIES + 1, baseDelayMs: HTTP_RETRY_BACKOFF_MS },
+      },
+    );
   } catch (err) {
-    // Timeouts should not be retried — the server is unresponsive.
-    // AbortSignal.timeout() throws DOMException with name 'TimeoutError'.
-    const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
-    if (isTimeout) {
+    if (err instanceof CircuitOpenError) {
+      throw new Error(
+        `Embedding endpoint circuit open (${safeUrl(url)}, batch ${batchIndex}): retry in ${Math.ceil(err.retryAfterMs / 1000)}s`,
+      );
+    }
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
       throw new Error(
         `Embedding request timed out after ${HTTP_TIMEOUT_MS}ms (${safeUrl(url)}, batch ${batchIndex})`,
       );
     }
-    // DNS, connection errors — retry with backoff
-    if (attempt < HTTP_MAX_RETRIES) {
-      const delay = HTTP_RETRY_BACKOFF_MS * (attempt + 1);
-      await new Promise((r) => setTimeout(r, delay));
-      return httpEmbedBatch(url, batch, model, apiKey, batchIndex, attempt + 1);
+    if (err instanceof ResilientFetchExhaustedError) {
+      throw new Error(
+        `Embedding endpoint returned ${err.response.status} (${safeUrl(url)}, batch ${batchIndex})`,
+      );
     }
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(`Embedding request failed (${safeUrl(url)}, batch ${batchIndex}): ${reason}`);
   }
 
   if (!resp.ok) {
-    const status = resp.status;
-    if ((status === 429 || status >= 500) && attempt < HTTP_MAX_RETRIES) {
-      const delay = HTTP_RETRY_BACKOFF_MS * (attempt + 1);
-      await new Promise((r) => setTimeout(r, delay));
-      return httpEmbedBatch(url, batch, model, apiKey, batchIndex, attempt + 1);
-    }
-    throw new Error(`Embedding endpoint returned ${status} (${safeUrl(url)}, batch ${batchIndex})`);
+    // resilientFetch already retried 5xx/429; any non-OK response here is
+    // a terminal client error (4xx other than 429).
+    throw new Error(
+      `Embedding endpoint returned ${resp.status} (${safeUrl(url)}, batch ${batchIndex})`,
+    );
   }
 
   const data = (await resp.json()) as { data: EmbeddingItem[] };
@@ -148,27 +175,6 @@ const httpEmbedBatch = async (
  * @param texts - Array of texts to embed
  * @returns Array of Float32Array embedding vectors
  */
-/**
- * Process an array of promises with bounded concurrency.
- */
-const runWithConcurrency = async <T>(
-  tasks: Array<() => Promise<T>>,
-  concurrency: number,
-): Promise<T[]> => {
-  const results: T[] = new Array(tasks.length);
-  let nextIdx = 0;
-
-  const worker = async (): Promise<void> => {
-    while (nextIdx < tasks.length) {
-      const idx = nextIdx++;
-      results[idx] = await tasks[idx]();
-    }
-  };
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
-  return results;
-};
-
 export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
   if (texts.length === 0) return [];
 
@@ -176,44 +182,47 @@ export const httpEmbed = async (texts: string[]): Promise<Float32Array[]> => {
   if (!config) throw new Error('HTTP embedding not configured');
 
   const url = `${config.baseUrl}/embeddings`;
-  const expected = config.dimensions ?? DEFAULT_DIMS;
+  const allVectors: Float32Array[] = [];
 
-  // Split into batches
-  const batches: string[][] = [];
   for (let i = 0; i < texts.length; i += HTTP_BATCH_SIZE) {
-    batches.push(texts.slice(i, i + HTTP_BATCH_SIZE));
-  }
+    const batch = texts.slice(i, i + HTTP_BATCH_SIZE);
+    const batchIndex = Math.floor(i / HTTP_BATCH_SIZE);
+    const items = await httpEmbedBatch(
+      url,
+      batch,
+      config.model,
+      config.apiKey,
+      batchIndex,
+      config.dimensions,
+    );
 
-  // Run batches with bounded concurrency
-  const batchResults = await runWithConcurrency(
-    batches.map((batch, batchIndex) => async () => {
-      const items = await httpEmbedBatch(url, batch, config.model, config.apiKey, batchIndex);
+    if (items.length !== batch.length) {
+      throw new Error(
+        `Embedding endpoint returned ${items.length} vectors for ${batch.length} texts ` +
+          `(${safeUrl(url)}, batch ${batchIndex})`,
+      );
+    }
 
-      if (items.length !== batch.length) {
+    for (const item of items) {
+      const vec = new Float32Array(item.embedding);
+      // Fail fast on dimension mismatch rather than inserting bad vectors
+      // into the FLOAT[N] column which would cause a cryptic Kuzu error.
+      const expected = config.dimensions ?? DEFAULT_DIMS;
+      if (vec.length !== expected) {
+        const hint = config.dimensions
+          ? 'Update GITNEXUS_EMBEDDING_DIMS to match your model output.'
+          : `Set GITNEXUS_EMBEDDING_DIMS=${vec.length} to match your model output.`;
         throw new Error(
-          `Embedding endpoint returned ${items.length} vectors for ${batch.length} texts ` +
-            `(${safeUrl(url)}, batch ${batchIndex})`,
+          `Embedding dimension mismatch: endpoint returned ${vec.length}d vector, ` +
+            `but expected ${expected}d. ${hint}`,
         );
       }
 
-      return items.map((item) => {
-        const vec = new Float32Array(item.embedding);
-        if (vec.length !== expected) {
-          const hint = config.dimensions
-            ? 'Update GITNEXUS_EMBEDDING_DIMS to match your model output.'
-            : `Set GITNEXUS_EMBEDDING_DIMS=${vec.length} to match your model output.`;
-          throw new Error(
-            `Embedding dimension mismatch: endpoint returned ${vec.length}d vector, ` +
-              `but expected ${expected}d. ${hint}`,
-          );
-        }
-        return vec;
-      });
-    }),
-    HTTP_CONCURRENCY,
-  );
+      allVectors.push(vec);
+    }
+  }
 
-  return batchResults.flat();
+  return allVectors;
 };
 
 /**
@@ -228,7 +237,14 @@ export const httpEmbedQuery = async (text: string): Promise<number[]> => {
   if (!config) throw new Error('HTTP embedding not configured');
 
   const url = `${config.baseUrl}/embeddings`;
-  const items = await httpEmbedBatch(url, [text], config.model, config.apiKey);
+  const items = await httpEmbedBatch(
+    url,
+    [text],
+    config.model,
+    config.apiKey,
+    0,
+    config.dimensions,
+  );
   if (!items.length) {
     throw new Error(`Embedding endpoint returned empty response (${safeUrl(url)})`);
   }

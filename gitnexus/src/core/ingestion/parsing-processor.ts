@@ -5,13 +5,12 @@ import { loadParser, loadLanguage, isLanguageAvailable } from '../tree-sitter/pa
 import { getProvider } from './languages/index.js';
 import { generateId } from '../../lib/utils.js';
 import type { SymbolTableReader, SymbolTableWriter, ExtractedHeritage } from './model/index.js';
-// SymbolTableReader is used for the FieldExtractorContext stub; the
-// parsing functions themselves need Writer because they call .add().
 import { ASTCache } from './ast-cache.js';
 import { getLanguageFromFilename, SupportedLanguages } from 'gitnexus-shared';
-import { isVueSetupTopLevel } from './vue-sfc-extractor.js';
-import { prepareParseContent } from './parse-content.js';
+import { extractVueScript, isVueSetupTopLevel } from './vue-sfc-extractor.js';
 import { yieldToEventLoop } from './utils/event-loop.js';
+import { parseSourceSafe } from '../tree-sitter/safe-parse.js';
+import { isVerboseIngestionEnabled } from './utils/verbose.js';
 import {
   getDefinitionNodeFromCaptures,
   findEnclosingClassInfo,
@@ -34,6 +33,7 @@ import {
 import type { LanguageProvider } from './language-provider.js';
 import type { ParsedFile } from 'gitnexus-shared';
 import { WorkerPool } from './workers/worker-pool.js';
+import { logger } from '../logger.js';
 import type {
   ParseWorkerResult,
   ParseWorkerInput,
@@ -48,7 +48,11 @@ import type {
   FileScopeBindings,
   ExtractedORMQuery,
 } from './workers/parse-worker.js';
-import { getTreeSitterBufferSize, TREE_SITTER_MAX_BUFFER } from './constants.js';
+import {
+  getTreeSitterBufferSize,
+  getTreeSitterContentByteLength,
+  TREE_SITTER_MAX_BUFFER,
+} from './constants.js';
 
 export type FileProgressCallback = (current: number, total: number, filePath: string) => void;
 
@@ -78,39 +82,6 @@ export interface WorkerExtractedData {
 // Worker-based parallel parsing
 // ============================================================================
 
-/** Detect language for a .h file by inspecting its content.
- *  For non-.h files, falls back to extension-based detection.
- *  This resolves the ambiguity between C++ headers and Objective-C headers,
- *  both of which use the .h extension. */
-const getLanguageFromFilenameWithContent = (
-  filePath: string,
-  content: string,
-): ReturnType<typeof getLanguageFromFilename> => {
-  const lang = getLanguageFromFilename(filePath);
-  // .h is ambiguous: C++ and Objective-C both use it.
-  // If extension-based detection gives C++, check content for OC tokens.
-  if (lang === SupportedLanguages.CPlusPlus && filePath.toLowerCase().endsWith('.h')) {
-    return detectOCHeaderLanguageFallback(content);
-  }
-  return lang;
-};
-
-// Keep a local fallback so runtime does not depend on a specific shared-package export shape.
-const OC_HEADER_PATTERNS: RegExp[] = [
-  /^@interface\b/m,
-  /^@protocol\b/m,
-  /^@end\b/m,
-  /^@property\b/m,
-  /^@implementation\b/m,
-  /@interface\b/m,
-  /@protocol\b/m,
-];
-
-function detectOCHeaderLanguageFallback(content: string): SupportedLanguages {
-  const hasOC = OC_HEADER_PATTERNS.some((re) => re.test(content));
-  return hasOC ? SupportedLanguages.ObjectiveC : SupportedLanguages.CPlusPlus;
-}
-
 const processParsingWithWorkers = async (
   graph: KnowledgeGraph,
   files: { path: string; content: string }[],
@@ -122,7 +93,7 @@ const processParsingWithWorkers = async (
   // Filter to parseable files only
   const parseableFiles: ParseWorkerInput[] = [];
   for (const file of files) {
-    const lang = getLanguageFromFilenameWithContent(file.path, file.content);
+    const lang = getLanguageFromFilename(file.path);
     if (lang) parseableFiles.push({ path: file.path, content: file.content });
   }
 
@@ -220,7 +191,7 @@ const processParsingWithWorkers = async (
     const summary = Array.from(skippedLanguages.entries())
       .map(([lang, count]) => `${lang}: ${count}`)
       .join(', ');
-    console.warn(`  Skipped unsupported languages: ${summary}`);
+    logger.warn(`  Skipped unsupported languages: ${summary}`);
   }
 
   // Final progress
@@ -357,7 +328,8 @@ const processParsingSequential = async (
 ) => {
   const parser = await loadParser();
   const total = files.length;
-  const skippedLanguages = new Map<string, number>();
+  const logSkipped = isVerboseIngestionEnabled();
+  const skippedByLang = logSkipped ? new Map<string, number>() : null;
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
@@ -373,22 +345,35 @@ const processParsingSequential = async (
 
     if (i % 20 === 0) await yieldToEventLoop();
 
-    const language = getLanguageFromFilenameWithContent(file.path, file.content);
+    const language = getLanguageFromFilename(file.path);
 
     if (!language) continue;
-
-    // Skip unsupported languages (e.g. Swift when tree-sitter-swift not installed)
     if (!isLanguageAvailable(language)) {
-      skippedLanguages.set(language, (skippedLanguages.get(language) || 0) + 1);
+      if (skippedByLang) {
+        skippedByLang.set(language, (skippedByLang.get(language) ?? 0) + 1);
+      }
       continue;
     }
 
     // Skip files larger than the max tree-sitter buffer (32 MB)
-    if (file.content.length > TREE_SITTER_MAX_BUFFER) continue;
+    if (getTreeSitterContentByteLength(file.content) > TREE_SITTER_MAX_BUFFER) continue;
 
-    const prepared = prepareParseContent(language, file.content);
-    if (!prepared) continue;
-    const { parseContent, lineOffset, isVueSetup } = prepared;
+    // Vue SFC preprocessing: extract <script> block content
+    let parseContent = file.content;
+    let lineOffset = 0;
+    let isVueSetup = false;
+    if (language === SupportedLanguages.Vue) {
+      const extracted = extractVueScript(file.content);
+      if (!extracted) continue; // skip .vue files with no script block
+      parseContent = extracted.scriptContent;
+      lineOffset = extracted.lineOffset;
+      isVueSetup = extracted.isSetup;
+    }
+
+    // Per-language source-text transform (e.g., UE macro stripping for C++).
+    // Length-preserving — see LanguageProvider.preprocessSource contract.
+    parseContent =
+      getProvider(language).preprocessSource?.(parseContent, file.path) ?? parseContent;
 
     try {
       await loadLanguage(language, file.path);
@@ -396,13 +381,13 @@ const processParsingSequential = async (
       continue; // parser unavailable — safety net
     }
 
-    let tree;
+    let tree: Parser.Tree;
     try {
-      tree = parser.parse(parseContent, undefined, {
-        bufferSize: getTreeSitterBufferSize(parseContent.length),
+      tree = parseSourceSafe(parser, parseContent, undefined, {
+        bufferSize: getTreeSitterBufferSize(parseContent),
       });
     } catch (parseError) {
-      console.warn(`Skipping unparseable file: ${file.path}`);
+      logger.warn(`Skipping unparseable file: ${file.path}`);
       continue;
     }
 
@@ -421,14 +406,14 @@ const processParsingSequential = async (
       continue;
     }
 
-    let query;
-    let matches;
+    let query: Parser.Query;
+    let matches: Parser.QueryMatch[];
     try {
       const language = parser.getLanguage();
       query = new Parser.Query(language, queryString);
       matches = query.matches(tree.rootNode);
     } catch (queryError) {
-      console.warn(`Query error for ${file.path}:`, queryError);
+      logger.warn({ queryError }, `Query error for ${file.path}:`);
       continue;
     }
 
@@ -562,10 +547,13 @@ const processParsingSequential = async (
         }
       }
 
-      // Append #<paramCount> to Method/Constructor IDs to disambiguate overloads.
-      // Functions are not suffixed — they don't overload by name in the same scope.
+      // Append #<paramCount> to owned callable IDs to disambiguate overloads.
+      // Top-level Function IDs stay stable; functions inside an owner may overload.
       // When same-arity collisions exist, append ~type1,type2 for further disambiguation.
-      const needsAritySuffix = nodeLabel === 'Method' || nodeLabel === 'Constructor';
+      const needsAritySuffix =
+        nodeLabel === 'Method' ||
+        nodeLabel === 'Constructor' ||
+        (nodeLabel === 'Function' && enclosingClassId !== null);
       let arityTag = needsAritySuffix && arityForId !== undefined ? `#${arityForId}` : '';
       if (arityTag && seqDefMethods && seqDefMethodInfo && seqClassNodeId !== undefined) {
         // Use cached method map + collision groups (built once per class, not per method)
@@ -716,11 +704,12 @@ const processParsingSequential = async (
     });
   }
 
-  if (skippedLanguages.size > 0) {
-    const summary = Array.from(skippedLanguages.entries())
-      .map(([lang, count]) => `${lang}: ${count}`)
-      .join(', ');
-    console.warn(`  Skipped unsupported languages: ${summary}`);
+  if (skippedByLang && skippedByLang.size > 0) {
+    for (const [lang, count] of skippedByLang.entries()) {
+      logger.warn(
+        `[ingestion] Skipped ${count} ${lang} file(s) in parsing processing — ${lang} parser not available.`,
+      );
+    }
   }
 };
 
@@ -744,13 +733,21 @@ export const processParsing = async (
   onFileProgress?: FileProgressCallback,
   workerPool?: WorkerPool,
 ): Promise<WorkerExtractedData | null> => {
+  let lastProgress = 0;
+  const reportProgress: FileProgressCallback | undefined = onFileProgress
+    ? (current, total, detail) => {
+        lastProgress = Math.max(lastProgress, current);
+        onFileProgress(lastProgress, total, detail);
+      }
+    : undefined;
+
   if (workerPool) {
     if (scopeTreeCache !== undefined && process.env.PROF_SCOPE_RESOLUTION === '1') {
       // Trees can't cross MessageChannels, so worker-parsed files land
       // in scope-resolution with an empty cache and get re-parsed.
       // Surfacing this in PROF mode prevents silent perf cliffs when
       // a repo crosses the worker-pool threshold.
-      console.warn(
+      logger.warn(
         `[scope-resolution prof] worker pool engaged for ${files.length} files — cross-phase tree cache will be empty; scope-resolution re-parses.`,
       );
     }
@@ -761,12 +758,15 @@ export const processParsing = async (
         symbolTable,
         astCache,
         workerPool,
-        onFileProgress,
+        reportProgress,
       );
     } catch (err) {
-      console.warn(
-        'Worker pool parsing failed, falling back to sequential:',
-        err instanceof Error ? err.message : err,
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn({ message }, 'Worker pool parsing stopped; continuing with sequential parser:');
+      reportProgress?.(
+        lastProgress,
+        files.length,
+        `Sequential fallback after worker issue: ${message}`,
       );
     }
   }
@@ -778,7 +778,7 @@ export const processParsing = async (
     symbolTable,
     astCache,
     scopeTreeCache,
-    onFileProgress,
+    reportProgress,
   );
   return null;
 };
