@@ -164,13 +164,13 @@ GitNexus 是一个**代码智能引擎**：通过 tree-sitter 解析 18 种编�
 │  gitnexus/   │gitnexus-web/ │gitnexus-     │   eval/          │
 │  CLI + Core  │  React SPA   │shared/       │  SWE-bench       │
 │  + MCP Server│  + WASM 图谱 │  共享类型     │  评估框架        │
-│  v1.5.3      │  Vite+Sigma  │              │  Python+Docker   │
+│  v1.6.4      │  Vite+Sigma  │              │  Python+Docker   │
 └──────────────┴──────────────┴──────────────┴──────────────────┘
 ```
 
 | 维度 | 数据 |
 |------|------|
-| 版本 | `1.5.3` (npm) |
+| 版本 | `1.6.4` (npm) |
 | License | PolyForm Noncommercial 1.0.0 |
 | Node 要求 | ≥ 20.0.0（v22+ 已兼容，已验证 v24.1） |
 | 主要技术栈 | TypeScript, Tree-sitter, LadybugDB, MCP SDK, React, Vite |
@@ -193,12 +193,12 @@ GitNexus 是一个**代码智能引擎**：通过 tree-sitter 解析 18 种编�
 │           │ query · impact · context · detect · rename      │
 │           │ route-tools · graph-tools · dataflow · overview  │
 ├───────────┼─────────────────────────────────────────────────┤
-│  分析层   │ 12-Phase Ingestion Pipeline                     │
+│  分析层   │ 14-Phase Ingestion Pipeline                     │
 │           │ BM25 + Vector Hybrid Search                     │
 │           │ Bug Detection (rule-engine · 9 rules)           │
 ├───────────┼─────────────────────────────────────────────────┤
 │  图谱层   │ KnowledgeGraph (in-memory) → LadybugDB (Cypher)│
-│           │ 15 Node Types · 20+ Edge Types                  │
+│           │ 36 Node Types · 30 Edge Types                   │
 ├───────────┼─────────────────────────────────────────────────┤
 │  解析层   │ Tree-sitter (18 languages) + COBOL regex        │
 │           │ WorkerPool 多线程 AST 提取                       │

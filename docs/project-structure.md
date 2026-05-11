@@ -4,9 +4,9 @@
 
 ## 1. 项目概述
 
-GitNexus 是一个**本地代码智能引擎**，通过 Tree-sitter 解析 + Neo4j 图数据库索引代码结构，为 AI 编码助手提供零服务端调用的代码理解能力。核心能力包括：代码符号查询、影响分析、数据流追溯、安全检测、跨仓库 Group 管理。
+GitNexus 是一个**本地代码智能引擎**，通过 Tree-sitter 解析 + LadybugDB 图数据库索引代码结构，为 AI 编码助手提供零服务端调用的代码理解能力。核心能力包括：代码符号查询、影响分析、数据流追溯、安全检测、跨仓库 Group 管理。
 
-**核心技术栈**: TypeScript (CLI + MCP + Web) | Python (Eval) | Neo4j | Tree-sitter
+**核心技术栈**: TypeScript (CLI + MCP + Web) | Python (Eval) | LadybugDB | Tree-sitter
 
 **支持语言**: TypeScript/JavaScript, Python, Java, Kotlin, Go, Rust, C/C++, C#, Swift, Objective-C, PHP, Ruby, Dart, COBOL, Vue, ArkTS 等 20+ 种语言
 
@@ -402,7 +402,7 @@ Pipeline (串行编排)
         └── DataflowPipeline    ──→ CFG + DFA + 污点分析
                 │
                 ▼
-        Neo4j Graph Storage ──→ 节点 (Symbol) + 边 (CALLS, IMPORTS, INHERITS...)
+        LadybugDB Graph Storage ──→ 节点 (Symbol) + 边 (CALLS, IMPORTS, INHERITS...)
 ```
 
 ### 4.2 MCP 查询流程 (Query Flow)
@@ -421,7 +421,7 @@ gitnexus mcp
         └── gitnexus_cypher("MATCH...") ─→ 自定义 Cypher 查询
         │
         ▼
-Neo4j 图数据库 ──→ 返回符号、关系、执行流
+LadybugDB 图数据库 ──→ 返回符号、关系、执行流
 ```
 
 ### 4.3 安全检测流程 (Detection Flow)
@@ -477,7 +477,7 @@ Stats + Report ─── 统计对比 + 生成报告
 
 | 存储层 | 技术 | 用途 |
 |--------|------|------|
-| 图数据库 | Neo4j | 代码实体 (Symbol, File, Cluster) + 关系 (CALLS, IMPORTS, INHERITS...) |
+| 图数据库 | LadybugDB | 代码实体 (Symbol, File, Cluster) + 关系 (CALLS, IMPORTS, INHERITS...) |
 | 文件快照 | `snapshots/` | 远程仓库索引快照 |
 | 向量索引 | 文件系统 | 嵌入向量 (如启用 `--embeddings`) |
 | 元数据 | `.gitnexus/meta.json` | 索引统计信息、嵌入数量 |
@@ -493,7 +493,7 @@ Stats + Report ─── 统计对比 + 生成报告
 | Cursor | Skill 文件 | 代码探索、调试、重构 |
 
 | Web UI | HTTP (`gitnexus serve`) | 图谱可视化、交互式分析 |
-| Neo4j | Bolt 协议 | 图数据库 |
+| LadybugDB | 嵌入式文件 | 图数据库 |
 | Anthropic API | HTTPS | 评估框架调用 Claude |
 
 ---
