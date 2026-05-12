@@ -152,10 +152,9 @@ export const initEmbedder = async (
   isInitializing = true;
 
   const finalConfig = resolveEmbeddingConfig(config);
-  // CUDA is probe-gated because ONNX Runtime can crash in native code when
-  // provider libraries are missing. DirectML stays opt-in for the same reason.
-  // Probe for CUDA first — ONNX Runtime crashes (uncatchable native error)
-  // if we attempt CUDA without the required shared libraries
+  // Windows uses DirectML for automatic local embeddings. CUDA remains
+  // probe-gated because ONNX Runtime can crash in native code when provider
+  // libraries are missing.
   const gpuDevice = process.platform === 'win32' ? 'dml' : isCudaAvailable() ? 'cuda' : 'cpu';
   const requestedDevice =
     forceDevice || (finalConfig.device === 'auto' ? gpuDevice : finalConfig.device);
