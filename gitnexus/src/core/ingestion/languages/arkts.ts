@@ -6,6 +6,7 @@ import { createImportResolver } from '../import-resolvers/resolver-factory.js';
 import { arktsImportConfig } from '../import-resolvers/configs/arkts.js';
 import { extractTsNamedBindings } from '../named-bindings/typescript.js';
 import { ARKTS_QUERIES } from '../tree-sitter-queries.js';
+import { preprocessArktsContent } from './arkts-preprocess.js';
 import { createCallExtractor } from '../call-extractors/generic.js';
 import { arktsCallConfig } from '../call-extractors/configs/arkts.js';
 import { createFieldExtractor } from '../field-extractors/generic.js';
@@ -48,6 +49,7 @@ export const arktsProvider = defineLanguage({
   id: SupportedLanguages.ArkTS,
   extensions: ['.ets'],
   treeSitterQueries: ARKTS_QUERIES,
+  preprocessSource: preprocessArktsContent,
   typeConfig: typescriptConfig,
   exportChecker: tsExportChecker,
   importResolver: createImportResolver(arktsImportConfig),

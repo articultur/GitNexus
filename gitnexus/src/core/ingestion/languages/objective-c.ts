@@ -6,6 +6,7 @@ import { createImportResolver } from '../import-resolvers/resolver-factory.js';
 import { objcImportConfig } from '../import-resolvers/configs/objective-c.js';
 import { extractObjCNamedBindings } from '../named-bindings/objective-c.js';
 import { OBJECTIVEC_QUERIES } from '../tree-sitter-queries.js';
+import { preprocessObjcContent } from './objc-preprocess.js';
 import { isObjcInsideContainer, type SyntaxNode } from '../utils/ast-helpers.js';
 import type { LanguageProvider } from '../language-provider.js';
 import { createCallExtractor } from '../call-extractors/generic.js';
@@ -101,6 +102,7 @@ export const objectiveCProvider = defineLanguage({
   id: SupportedLanguages.ObjectiveC,
   extensions: ['.m', '.mm'],
   treeSitterQueries: OBJECTIVEC_QUERIES,
+  preprocessSource: preprocessObjcContent,
   typeConfig: objcTypeConfig,
   exportChecker: cCppExportChecker,
   importResolver: createImportResolver(objcImportConfig),
