@@ -363,6 +363,90 @@ withTestLbugDB(
         expect(result.seed_symbols.length).toBeGreaterThanOrEqual(2);
       });
     });
+
+    describe('context tool — module field (Fix B)', () => {
+      let backend: LocalBackend;
+
+      beforeAll(async () => {
+        const ext = handle as typeof handle & { _backend?: LocalBackend };
+        if (!ext._backend) throw new Error('LocalBackend not initialized');
+        backend = ext._backend;
+      });
+
+      it('context() symbol includes module when MEMBER_OF community exists', async () => {
+        // func:login has MEMBER_OF → comm:auth (heuristicLabel: 'Authentication')
+        const result = await backend.callTool('context', { name: 'login' });
+        expect(result.status).toBe('found');
+        expect(result.symbol).toBeDefined();
+        // Must carry the community label as module
+        expect(result.symbol.module).toBe('Authentication');
+      });
+
+      it('context() symbol has no module field when no community edge exists', async () => {
+        // func:hash has no MEMBER_OF edge in the seed
+        const result = await backend.callTool('context', { name: 'hash' });
+        expect(result.status).toBe('found');
+        expect(result.symbol.module).toBeUndefined();
+      });
+    });
+
+    describe('context tool — incoming_note hint (Fix C)', () => {
+      let backend: LocalBackend;
+
+      beforeAll(async () => {
+        const ext = handle as typeof handle & { _backend?: LocalBackend };
+        if (!ext._backend) throw new Error('LocalBackend not initialized');
+        backend = ext._backend;
+      });
+
+      it('context() adds incoming_note when class has no direct callers', async () => {
+        // class:BaseService has no incoming CALLS/IMPORTS edges in the seed
+        const result = await backend.callTool('context', { name: 'BaseService' });
+        expect(result.status).toBe('found');
+        // No direct callers → incoming should be empty
+        expect(Object.keys(result.incoming)).toHaveLength(0);
+        // Must include an actionable note with a Cypher snippet
+        expect(result.incoming_note).toBeDefined();
+        expect(typeof result.incoming_note).toBe('string');
+        expect(result.incoming_note).toContain('BaseService');
+        expect(result.incoming_note).toContain('cypher(');
+      });
+
+      it('context() does NOT add incoming_note for a function', async () => {
+        // Functions never get incoming_note even when incoming is empty
+        const result = await backend.callTool('context', { name: 'hash' });
+        expect(result.status).toBe('found');
+        expect(result.incoming_note).toBeUndefined();
+      });
+    });
+
+    describe('query tool — community-hop process expansion (Fix D)', () => {
+      let backend: LocalBackend;
+
+      beforeAll(async () => {
+        const ext = handle as typeof handle & { _backend?: LocalBackend };
+        if (!ext._backend) throw new Error('LocalBackend not initialized');
+        backend = ext._backend;
+      });
+
+      it('query() surfaces a process via community-hop when direct BM25 would miss it', async () => {
+        // 'login' hits func:login via BM25. func:login is in comm:auth.
+        // func:xyzQux is also in comm:auth and participates in proc:auth-secondary.
+        // The name 'xyzQux' does NOT appear in the query string, so without
+        // community-hop expansion, proc:auth-secondary would never be returned.
+        const result = await backend.callTool('query', { query: 'login' });
+        expect(result).not.toHaveProperty('error');
+        const processIds: string[] = result.processes.map((p: any) => p.id);
+        // Direct match: proc:login-flow
+        expect(processIds).toContain('proc:login-flow');
+        // Community-hop expansion: proc:auth-secondary
+        expect(processIds).toContain('proc:auth-secondary');
+        // Community-hop entries must rank after direct hits (lower priority)
+        const loginFlowIdx = processIds.indexOf('proc:login-flow');
+        const secondaryIdx = processIds.indexOf('proc:auth-secondary');
+        expect(loginFlowIdx).toBeLessThan(secondaryIdx);
+      });
+    });
   },
   {
     seed: LOCAL_BACKEND_SEED_DATA,

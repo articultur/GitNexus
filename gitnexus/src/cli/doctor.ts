@@ -1,6 +1,7 @@
 import { getRuntimeCapabilities, getRuntimeFingerprint } from '../core/platform/capabilities.js';
 import { resolveEmbeddingConfig } from '../core/embeddings/config.js';
 import { isHttpMode } from '../core/embeddings/http-client.js';
+import { checkFTSHealth } from '../core/search/bm25-index.js';
 
 export const doctorCommand = async () => {
   const fingerprint = getRuntimeFingerprint();
@@ -22,6 +23,30 @@ export const doctorCommand = async () => {
   console.log(`  Semantic mode:   ${capabilities.semanticMode}`);
   console.log(`  Exact scan limit:${String(capabilities.exactScanLimit).padStart(9)} chunks`);
   if (capabilities.reason) console.log(`  Note:            ${capabilities.reason}`);
+
+  // Probe actual FTS index health (not just platform capability)
+  try {
+    const ftsHealth = await checkFTSHealth();
+    if (!ftsHealth.available) {
+      console.log('');
+      console.log('FTS Index Health');
+      console.log('  ⚠  No FTS indexes found — keyword search is unavailable.');
+      console.log('     Run: gitnexus analyze --force');
+    } else if (!ftsHealth.complete) {
+      console.log('');
+      console.log('FTS Index Health');
+      console.log(`  ⚠  Partial: ${ftsHealth.missingIndexes.length} index(es) missing`);
+      for (const idx of ftsHealth.missingIndexes) {
+        console.log(`     - ${idx}`);
+      }
+      console.log('     Run: gitnexus analyze --force');
+    } else {
+      console.log(`  FTS indexes:     all ${ftsHealth.indexStatus.length} OK`);
+    }
+  } catch {
+    // Non-fatal: doctor should still work without a database
+  }
+
   console.log('');
   console.log('Embeddings');
   console.log(`  Backend:   ${isHttpMode() ? 'http' : 'local'}`);

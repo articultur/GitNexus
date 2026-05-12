@@ -100,6 +100,15 @@ describe('GITNEXUS_TOOLS', () => {
     expect(queryTool.inputSchema.properties.query.type).toBe('string');
   });
 
+  it('query tool has optional granularity parameter with low/high enum', () => {
+    const queryTool = GITNEXUS_TOOLS.find((t) => t.name === 'query')!;
+    const granularity = queryTool.inputSchema.properties.granularity;
+    expect(granularity).toBeDefined();
+    expect(granularity.type).toBe('string');
+    expect(granularity.enum).toEqual(['low', 'high']);
+    expect(queryTool.inputSchema.required).not.toContain('granularity');
+  });
+
   it('cypher tool requires "query" parameter', () => {
     const cypherTool = GITNEXUS_TOOLS.find((t) => t.name === 'cypher')!;
     expect(cypherTool.inputSchema.required).toContain('query');
@@ -110,10 +119,10 @@ describe('GITNEXUS_TOOLS', () => {
     expect(contextTool.inputSchema.required).toEqual([]);
   });
 
-  it('impact tool requires target and direction', () => {
+  it('impact tool requires only direction (target optional for batch mode)', () => {
     const impactTool = GITNEXUS_TOOLS.find((t) => t.name === 'impact')!;
-    expect(impactTool.inputSchema.required).toContain('target');
     expect(impactTool.inputSchema.required).toContain('direction');
+    expect(impactTool.inputSchema.required).not.toContain('target');
   });
 
   it('rename tool requires new_name', () => {

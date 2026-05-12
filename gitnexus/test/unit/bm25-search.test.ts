@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { searchFTSFromLbug, type BM25SearchResult } from '../../src/core/search/bm25-index.js';
+import {
+  getFTSHealthWarning,
+  checkFTSHealth,
+  searchFTSFromLbug,
+  type BM25SearchResult,
+} from '../../src/core/search/bm25-index.js';
 
 vi.mock('../../src/core/lbug/lbug-adapter.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/core/lbug/lbug-adapter.js')>();
@@ -47,10 +52,36 @@ describe('BM25 search', () => {
       const { queryFTS } = await import('../../src/core/lbug/lbug-adapter.js');
       vi.mocked(queryFTS).mockRejectedValue(new Error('DB not initialized'));
 
-      const { results, ftsAvailable } = await searchFTSFromLbug('test query');
+      const { results, ftsAvailable, ftsComplete, missingIndexes } =
+        await searchFTSFromLbug('test query');
       expect(Array.isArray(results)).toBe(true);
       expect(results).toHaveLength(0);
       expect(ftsAvailable).toBe(false);
+      expect(ftsComplete).toBe(false);
+      expect(missingIndexes).toHaveLength(5);
+    });
+
+    it('reports partial FTS health when only some indexes can be queried', async () => {
+      const { queryFTS } = await import('../../src/core/lbug/lbug-adapter.js');
+      vi.mocked(queryFTS)
+        .mockResolvedValueOnce([]) // File
+        .mockResolvedValueOnce([
+          { filePath: 'src/auth.ts', score: 8, nodeId: 'func:login', name: 'login' },
+        ]) // Function
+        .mockRejectedValueOnce(new Error('missing class index'))
+        .mockRejectedValueOnce(new Error('missing method index'))
+        .mockRejectedValueOnce(new Error('missing interface index'));
+
+      const response = await searchFTSFromLbug('login');
+
+      expect(response.ftsAvailable).toBe(true);
+      expect(response.ftsComplete).toBe(false);
+      expect(response.missingIndexes).toEqual([
+        'Class.class_fts',
+        'Method.method_fts',
+        'Interface.interface_fts',
+      ]);
+      expect(getFTSHealthWarning(response)).toMatch(/partially missing/);
     });
 
     it('handles empty query', async () => {
@@ -249,6 +280,69 @@ describe('BM25 search', () => {
         'Method',
         'Interface',
       ]);
+    });
+  });
+
+  // ─── checkFTSHealth ──────────────────────────────────────────────────────
+
+  describe('checkFTSHealth', () => {
+    it('reports all indexes healthy when every index responds', async () => {
+      // All 5 FTS indexes return results (even empty arrays = index exists)
+      mockExecuteQuery.mockResolvedValue([]);
+
+      const report = await checkFTSHealth('test-repo');
+
+      expect(report.available).toBe(true);
+      expect(report.complete).toBe(true);
+      expect(report.missingIndexes).toHaveLength(0);
+      expect(report.warning).toBeUndefined();
+      expect(report.indexStatus).toHaveLength(5);
+      expect(report.indexStatus.every((s) => s.available)).toBe(true);
+    });
+
+    it('reports partial degradation when some indexes fail', async () => {
+      // First 2 succeed, next 3 throw (index missing)
+      mockExecuteQuery
+        .mockResolvedValueOnce([])   // File
+        .mockResolvedValueOnce([])   // Function
+        .mockRejectedValueOnce(new Error('no such table: Class.class_fts'))
+        .mockRejectedValueOnce(new Error('no such table: Method.method_fts'))
+        .mockRejectedValueOnce(new Error('no such table: Interface.interface_fts'));
+
+      const report = await checkFTSHealth('test-repo');
+
+      expect(report.available).toBe(true);
+      expect(report.complete).toBe(false);
+      expect(report.missingIndexes).toHaveLength(3);
+      expect(report.missingIndexes).toEqual(
+        expect.arrayContaining(['Class.class_fts', 'Method.method_fts', 'Interface.interface_fts']),
+      );
+      expect(report.warning).toMatch(/partially missing/);
+    });
+
+    it('reports total degradation when all indexes fail', async () => {
+      mockExecuteQuery.mockRejectedValue(new Error('no such table'));
+
+      const report = await checkFTSHealth('test-repo');
+
+      expect(report.available).toBe(false);
+      expect(report.complete).toBe(false);
+      expect(report.missingIndexes).toHaveLength(5);
+      expect(report.warning).toMatch(/missing or unavailable/);
+    });
+
+    it('falls back to core lbug adapter when no repoId provided', async () => {
+      // When repoId is undefined, checkFTSHealth calls queryFTS from lbug-adapter directly.
+      // Mock it to return [] (success) so all 5 indexes report as available.
+      const { queryFTS } = await import('../../src/core/lbug/lbug-adapter.js');
+      vi.mocked(queryFTS).mockResolvedValue([]);
+
+      const report = await checkFTSHealth();
+
+      expect(report.indexStatus).toHaveLength(5);
+      expect(report.indexStatus.every((s) => s.available)).toBe(true);
+      expect(report.available).toBe(true);
+      expect(report.complete).toBe(true);
     });
   });
 });

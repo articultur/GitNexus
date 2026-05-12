@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // local-backend.ts imports from core/lbug/pool-adapter.js; the mcp/core/lbug-adapter.js
 // re-exports from the same module, so we mock the canonical source.
 // vi.hoisted runs before vi.mock hoisting, making the fns available to both factories.
-const { lbugMocks, platformMocks } = vi.hoisted(() => ({
+const { lbugMocks, platformMocks, repoManagerMocks } = vi.hoisted(() => ({
   lbugMocks: {
     initLbug: vi.fn().mockResolvedValue(undefined),
     executeQuery: vi.fn().mockResolvedValue([]),
@@ -23,6 +23,9 @@ const { lbugMocks, platformMocks } = vi.hoisted(() => ({
   },
   platformMocks: {
     isVectorExtensionSupportedByPlatform: vi.fn().mockReturnValue(true),
+  },
+  repoManagerMocks: {
+    canonicalizePath: vi.fn((input: string) => input),
   },
 }));
 
@@ -38,6 +41,7 @@ vi.mock('../../src/mcp/core/lbug-adapter.js', async (importOriginal) => {
 });
 
 vi.mock('../../src/storage/repo-manager.js', () => ({
+  canonicalizePath: repoManagerMocks.canonicalizePath,
   listRegisteredRepos: vi.fn().mockResolvedValue([]),
   cleanupOldKuzuFiles: vi.fn().mockResolvedValue({ found: false, needsReindex: false }),
   findSiblingClones: vi.fn().mockResolvedValue([]),
@@ -63,6 +67,15 @@ vi.mock('../../src/core/platform/capabilities.js', async (importOriginal) => {
 // Also mock the search modules to avoid loading onnxruntime
 vi.mock('../../src/core/search/bm25-index.js', () => ({
   searchFTSFromLbug: vi.fn().mockResolvedValue({ results: [], ftsAvailable: true }),
+  getFTSHealthWarning: (response: any) => {
+    if (response?.ftsAvailable === false) {
+      return 'FTS indexes missing or unavailable — keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.';
+    }
+    if (response?.ftsComplete === false || response?.missingIndexes?.length) {
+      return 'FTS indexes partially missing — keyword search may miss results. Run: gitnexus analyze --force to rebuild indexes.';
+    }
+    return undefined;
+  },
 }));
 
 vi.mock('../../src/mcp/core/embedder.js', () => ({
@@ -71,7 +84,11 @@ vi.mock('../../src/mcp/core/embedder.js', () => ({
 }));
 
 import { LocalBackend } from '../../src/mcp/local/local-backend.js';
-import { listRegisteredRepos, cleanupOldKuzuFiles } from '../../src/storage/repo-manager.js';
+import {
+  canonicalizePath,
+  listRegisteredRepos,
+  cleanupOldKuzuFiles,
+} from '../../src/storage/repo-manager.js';
 import { _captureLogger } from '../../src/core/logger.js';
 import {
   initLbug,
@@ -195,6 +212,90 @@ describe('LocalBackend.callTool', () => {
     expect(result).toHaveProperty('definitions');
   });
 
+  it('batches query symbol enrichment instead of issuing per-symbol lookups', async () => {
+    const { searchFTSFromLbug } = await import('../../src/core/search/bm25-index.js');
+    vi.mocked(searchFTSFromLbug).mockResolvedValueOnce({
+      ftsAvailable: true,
+      results: [
+        {
+          filePath: 'src/auth.ts',
+          score: 1,
+          nodeIds: ['Function:src/auth.ts:login', 'Function:src/auth.ts:logout'],
+        },
+      ],
+    });
+    (executeParameterized as any)
+      .mockResolvedValueOnce([
+        {
+          id: 'Function:src/auth.ts:login',
+          name: 'login',
+          type: 'Function',
+          filePath: 'src/auth.ts',
+          startLine: 1,
+          endLine: 5,
+        },
+        {
+          id: 'Function:src/auth.ts:logout',
+          name: 'logout',
+          type: 'Function',
+          filePath: 'src/auth.ts',
+          startLine: 7,
+          endLine: 10,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          nodeId: 'Function:src/auth.ts:login',
+          pid: 'Process:auth',
+          label: 'Auth flow',
+          heuristicLabel: 'Auth flow',
+          processType: 'user_flow',
+          stepCount: 2,
+          step: 1,
+        },
+        {
+          nodeId: 'Function:src/auth.ts:logout',
+          pid: 'Process:auth',
+          label: 'Auth flow',
+          heuristicLabel: 'Auth flow',
+          processType: 'user_flow',
+          stepCount: 2,
+          step: 2,
+        },
+      ])
+      .mockResolvedValueOnce([
+        { nodeId: 'Function:src/auth.ts:login', cohesion: 0.8, module: 'auth' },
+        { nodeId: 'Function:src/auth.ts:logout', cohesion: 0.7, module: 'auth' },
+      ])
+      .mockResolvedValue([]);
+
+    const result = await backend.callTool('query', { query: 'auth' });
+
+    expect(result.processes).toHaveLength(1);
+    expect(result.process_symbols).toHaveLength(2);
+    const cypherCalls = (executeParameterized as any).mock.calls.map(
+      ([, cypher]: [string, string]) => cypher,
+    );
+    expect(cypherCalls.filter((cypher: string) => cypher.includes('STEP_IN_PROCESS'))).toHaveLength(
+      1,
+    );
+    expect(cypherCalls.filter((cypher: string) => cypher.includes('MEMBER_OF'))).toHaveLength(1);
+    expect(cypherCalls.some((cypher: string) => cypher.includes('MATCH (n {id: $nodeId})'))).toBe(
+      false,
+    );
+    const [, processQuery, cohesionQuery] = (executeParameterized as any).mock.calls as Array<
+      [string, string, Record<string, unknown>]
+    >;
+    expect(processQuery[2].nodeIds).toEqual([
+      'Function:src/auth.ts:login',
+      'Function:src/auth.ts:logout',
+    ]);
+    expect(cohesionQuery[2].nodeIds).toEqual([
+      'Function:src/auth.ts:login',
+      'Function:src/auth.ts:logout',
+    ]);
+  });
+
   it('includes FTS-unavailable warning when ftsAvailable is false (#1403)', async () => {
     const { searchFTSFromLbug } = await import('../../src/core/search/bm25-index.js');
     vi.mocked(searchFTSFromLbug).mockResolvedValueOnce({ results: [], ftsAvailable: false });
@@ -214,6 +315,23 @@ describe('LocalBackend.callTool', () => {
     const result = await backend.callTool('query', { query: 'nonexistent' });
 
     expect(result).not.toHaveProperty('warning');
+  });
+
+  it('includes partial FTS warning when some indexes are missing', async () => {
+    const { searchFTSFromLbug } = await import('../../src/core/search/bm25-index.js');
+    vi.mocked(searchFTSFromLbug).mockResolvedValueOnce({
+      results: [],
+      ftsAvailable: true,
+      ftsComplete: false,
+      missingIndexes: ['Method.method_fts'],
+      ftsIndexStatus: [],
+    });
+    (executeParameterized as any).mockResolvedValue([]);
+
+    const result = await backend.callTool('query', { query: 'ProcessActivity' });
+
+    expect((result as any).warning).toMatch(/partially missing/);
+    expect((result as any).warning).toMatch(/gitnexus analyze --force/);
   });
 
   it('skips vector index query when VECTOR is unsupported by the platform', async () => {
@@ -322,6 +440,34 @@ describe('LocalBackend.callTool', () => {
     expect(result.error).toContain('not found');
   });
 
+  it('context tool returns suffix candidates when exact name misses', async () => {
+    (executeParameterized as any).mockImplementation(async (_repoId: string, query: string) => {
+      if (query.includes('WHERE n.name = $symName')) return [];
+      if (query.includes('ENDS WITH $symName')) {
+        return [
+          {
+            id: 'Function:androidProject/core/src/main/cpp/jni/B2HAppEngineFixJNI.cpp:Java_com_alipay_android_phone_xriver_bundlex_B2HPageEngineNative_nativeCreatePage',
+            name: 'Java_com_alipay_android_phone_xriver_bundlex_B2HPageEngineNative_nativeCreatePage',
+            type: 'Function',
+            filePath: 'androidProject/core/src/main/cpp/jni/B2HAppEngineFixJNI.cpp',
+            startLine: 382,
+            endLine: 435,
+          },
+        ];
+      }
+      return [];
+    });
+
+    const result = await backend.callTool('context', {
+      name: 'B2HPageEngineNative_nativeCreatePage',
+    });
+
+    expect(result.status).toBe('ambiguous');
+    expect(result.message).toMatch(/Use uid/);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].uid).toContain('nativeCreatePage');
+  });
+
   it('context tool returns disambiguation for multiple matches', async () => {
     (executeParameterized as any).mockResolvedValue([
       {
@@ -353,6 +499,58 @@ describe('LocalBackend.callTool', () => {
       expect(c.score).toBeLessThanOrEqual(1);
     }
     expect(result.candidates[0].score).toBeGreaterThanOrEqual(result.candidates[1].score);
+  });
+
+  it('context tool prefers source symbols over matching compiled JS artifacts', async () => {
+    (executeParameterized as any).mockResolvedValue([
+      {
+        id: 'func:src/symbols.ts:createSymbol',
+        name: 'createSymbol',
+        type: 'Function',
+        filePath: 'src/symbols.ts',
+        startLine: 10,
+        endLine: 20,
+      },
+      {
+        id: 'func:dist/symbols.js:createSymbol',
+        name: 'createSymbol',
+        type: 'Function',
+        filePath: 'dist/symbols.js',
+        startLine: 30,
+        endLine: 40,
+      },
+    ]);
+
+    const result = await backend.callTool('context', { name: 'createSymbol' });
+
+    expect(result.status).toBe('found');
+    expect(result.symbol.filePath).toBe('src/symbols.ts');
+  });
+
+  it('context tool keeps pure JS candidates when no source counterpart exists', async () => {
+    (executeParameterized as any).mockResolvedValue([
+      {
+        id: 'func:lib/runtime.js:bootstrap',
+        name: 'bootstrap',
+        type: 'Function',
+        filePath: 'lib/runtime.js',
+        startLine: 1,
+        endLine: 5,
+      },
+      {
+        id: 'func:dist/runtime.js:bootstrap',
+        name: 'bootstrap',
+        type: 'Function',
+        filePath: 'dist/runtime.js',
+        startLine: 1,
+        endLine: 5,
+      },
+    ]);
+
+    const result = await backend.callTool('context', { name: 'bootstrap' });
+
+    expect(result.status).toBe('ambiguous');
+    expect(result.candidates).toHaveLength(2);
   });
 
   it('context tool ranks file_path match higher than non-match (#470)', async () => {
@@ -809,6 +1007,69 @@ describe('LocalBackend.resolveRepo', () => {
       repo: 'test-project',
     });
     expect(result).toHaveProperty('processes');
+  });
+
+  it('throws for duplicate repo name instead of silently choosing one', async () => {
+    (listRegisteredRepos as any).mockResolvedValue([
+      MOCK_REPO_ENTRY,
+      {
+        ...MOCK_REPO_ENTRY,
+        name: 'test-project',
+        path: '/tmp/other-test-project',
+        storagePath: '/tmp/.gitnexus/other-test-project',
+      },
+    ]);
+    await backend.init();
+
+    await expect(
+      backend.callTool('query', { query: 'auth', repo: 'test-project' }),
+    ).rejects.toThrow(/ambiguous/);
+  });
+
+  it('resolves duplicate repo names by exact path', async () => {
+    (listRegisteredRepos as any).mockResolvedValue([
+      MOCK_REPO_ENTRY,
+      {
+        ...MOCK_REPO_ENTRY,
+        name: 'test-project',
+        path: '/tmp/other-test-project',
+        storagePath: '/tmp/.gitnexus/other-test-project',
+      },
+    ]);
+    await backend.init();
+    (executeParameterized as any).mockResolvedValue([]);
+
+    const result = await backend.callTool('query', {
+      query: 'auth',
+      repo: '/tmp/other-test-project',
+    });
+
+    expect(result).toHaveProperty('processes');
+  });
+
+  it('resolves repo path using canonical path comparison', async () => {
+    vi.mocked(canonicalizePath).mockImplementation((input: string) =>
+      input.replace(/^\/tmp\//, '/private/tmp/'),
+    );
+    (listRegisteredRepos as any).mockResolvedValue([
+      {
+        ...MOCK_REPO_ENTRY,
+        path: '/private/tmp/test-project',
+      },
+    ]);
+    await backend.init();
+    (executeParameterized as any).mockResolvedValue([]);
+
+    try {
+      const result = await backend.callTool('query', {
+        query: 'auth',
+        repo: '/tmp/test-project',
+      });
+
+      expect(result).toHaveProperty('processes');
+    } finally {
+      vi.mocked(canonicalizePath).mockImplementation((input: string) => input);
+    }
   });
 
   it('throws for unknown repo name', async () => {

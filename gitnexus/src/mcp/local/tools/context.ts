@@ -19,6 +19,7 @@ export async function contextTool(
     uid?: string;
     file_path?: string;
     include_content?: boolean;
+    include_callers_content?: boolean;
     /** When false, omit the `evidence` block from the response. Default: true */
     include_evidence?: boolean;
   },
@@ -26,7 +27,7 @@ export async function contextTool(
 ): Promise<any> {
   await ensureInitialized(repo.id);
 
-  const { name, uid, file_path, include_content, include_evidence = true } = params;
+  const { name, uid, file_path, include_content, include_callers_content, include_evidence = true } = params;
 
   if (!name && !uid) {
     return { error: 'Either "name" or "uid" parameter is required.' };
@@ -127,7 +128,7 @@ export async function contextTool(
   if (symbols.length > 1 && !uid) {
     return {
       status: 'ambiguous',
-      message: `Found ${symbols.length} symbols matching '${name}'. Use uid or file_path to disambiguate.`,
+      message: `Found ${symbols.length} symbols matching '${name}'. Call context({uid: "<uid>"}) with one of the candidate uids below for zero-ambiguity lookup. Alternatively narrow with file_path or kind.`,
       candidates: symbols.map((s: any) => ({
         uid: s.id || s[0],
         name: s.name || s[1],
@@ -253,13 +254,14 @@ export async function contextTool(
     logQueryError('context:process-participation', e);
   }
 
-  // Helper to categorize refs
-  const categorize = (rows: any[]) => {
+  // Helper to categorize refs; optionally injects caller source content from a Map.
+  const categorize = (rows: any[], contentMap?: Map<string, string | null>) => {
     const cats: Record<string, any[]> = {};
     for (const row of rows) {
       const relType = (row.relType || row[0] || '').toLowerCase();
-      const entry = {
-        uid: row.uid || row[1],
+      const uid = row.uid || row[1];
+      const entry: Record<string, any> = {
+        uid,
         name: row.name || row[2],
         filePath: row.filePath || row[3],
         kind: row.kind || row[4],
@@ -268,13 +270,39 @@ export async function contextTool(
         startLine: row.startLine ?? row[7] ?? null,
         endLine: row.endLine ?? row[8] ?? null,
       };
+      if (contentMap && uid) {
+        const c = contentMap.get(uid);
+        if (c != null) entry.content = c;
+      }
       if (!cats[relType]) cats[relType] = [];
       cats[relType].push(entry);
     }
     return cats;
   };
 
-  const incoming = categorize(incomingRows);
+  // Optionally batch-fetch source content for all incoming callers.
+  let callerContentMap: Map<string, string | null> | undefined;
+  if (include_callers_content) {
+    const callerUids = [
+      ...new Set(incomingRows.map((r: any) => r.uid || r[1]).filter(Boolean) as string[]),
+    ];
+    if (callerUids.length > 0) {
+      try {
+        const contentRows = await executeParameterized(
+          repo.id,
+          'MATCH (n) WHERE n.id IN $uids RETURN n.id AS uid, n.content AS content',
+          { uids: callerUids },
+        );
+        callerContentMap = new Map(
+          contentRows.map((r: any) => [r.uid ?? r[0], r.content ?? r[1] ?? null]),
+        );
+      } catch {
+        /* content fetch failed — omit silently */
+      }
+    }
+  }
+
+  const incoming = categorize(incomingRows, callerContentMap);
   const outgoing = categorize(outgoingRows);
   const relationEvidence = [...incomingRows, ...outgoingRows].map((row: any) => ({
     relationType: row.relType || row[0],
@@ -345,6 +373,7 @@ export async function contextTool(
       name: r.label || r[1],
       step_index: r.step || r[2],
       step_count: r.stepCount || r[3],
+      resource_url: `gitnexus://repo/${repo.name}/process/${encodeURIComponent(r.label || r[1])}`,
     })),
     ...(include_evidence && {
       evidence: {

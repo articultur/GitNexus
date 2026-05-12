@@ -23,6 +23,15 @@ vi.mock('../../src/core/lbug/pool-adapter.js', () => ({
 // bm25SearchHelper does: await import('../../../core/search/bm25-index.js')
 vi.mock('../../src/core/search/bm25-index.js', () => ({
   searchFTSFromLbug: (...args: any[]) => mockSearchFTSFromLbug(...args),
+  getFTSHealthWarning: (response: any) => {
+    if (response?.ftsAvailable === false) {
+      return 'FTS indexes missing or unavailable - keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.';
+    }
+    if (response?.ftsComplete === false || response?.missingIndexes?.length) {
+      return 'FTS indexes partially missing - keyword search may miss results. Run: gitnexus analyze --force to rebuild indexes.';
+    }
+    return undefined;
+  },
 }));
 
 // semanticSearchHelper does: await import('../../core/embedder.js')
@@ -223,6 +232,20 @@ describe('queryTool — FTS degraded warning', () => {
     expect(result).toHaveProperty('processes');
     expect(result).toHaveProperty('definitions');
   });
+
+  it('includes warning when only some FTS indexes are available', async () => {
+    mockSearchFTSFromLbug.mockResolvedValue({
+      results: [],
+      ftsAvailable: true,
+      ftsComplete: false,
+      missingIndexes: ['Method.method_fts'],
+      ftsIndexStatus: [],
+    });
+
+    const result = await queryTool(REPO, { query: 'foo' }, ensureInit);
+
+    expect(result.warning).toMatch(/partially missing/);
+  });
 });
 
 // ─── method parameter ─────────────────────────────────────────────────────
@@ -246,11 +269,103 @@ describe('queryTool — method selection', () => {
 
 // ─── limit parameter ─────────────────────────────────────────────────────
 
-describe('queryTool — limit/max_symbols options', () => {
-  it('respects limit param and returns at most N processes', async () => {
-    // No BM25 hits so processes will be empty regardless; just validates no crash
-    const result = await queryTool(REPO, { query: 'test', limit: 3 }, ensureInit);
-
-    expect(result.processes.length).toBeLessThanOrEqual(3);
+  describe('queryTool — limit/max_symbols options', () => {
+    it('respects limit param and returns at most N processes', async () => {
+      const result = await queryTool(REPO, { query: 'test', limit: 3 }, ensureInit);
+      expect(result.processes.length).toBeLessThanOrEqual(3);
+    });
   });
-});
+
+  // ─── granularity parameter ────────────────────────────────────────────────
+
+  describe('queryTool — granularity parameter', () => {
+    it('defaults to low granularity (no aggregation)', async () => {
+      // Low granularity is the default; just verify the function runs without error
+      const result = await queryTool(REPO, { query: 'app lifecycle' }, ensureInit);
+      expect(result).toHaveProperty('processes');
+      expect(result).toHaveProperty('definitions');
+      // With no data, both should be empty
+      expect(result.processes).toHaveLength(0);
+    });
+  });
+
+  // ─── aggregateProcesses (pure function unit tests) ────────────────────────
+
+  describe('aggregateProcesses', () => {
+    it('merges two processes sharing the same entry point symbol', async () => {
+      const { aggregateProcesses } = await import('../../src/mcp/local/tools/query.js');
+
+      // Both processes share the same entry point symbol (same symbol ID 's1' at step 1)
+      const processes = [
+        { id: 'p1', summary: 'Create Config', priority: 1, symbol_count: 2, process_type: 'Lifecycle', step_count: 2 },
+        { id: 'p2', summary: 'Create Logger', priority: 1, symbol_count: 1, process_type: 'Lifecycle', step_count: 1 },
+      ];
+      const symbols = [
+        { id: 's1', process_id: 'p1', step_index: 1, name: 'onCreate', filePath: 'src/app.ts' },
+        { id: 's2', process_id: 'p1', step_index: 2, name: 'initConfig', filePath: 'src/app.ts' },
+        { id: 's1', process_id: 'p2', step_index: 1, name: 'onCreate', filePath: 'src/app.ts' },
+      ];
+
+      const result = aggregateProcesses(processes, symbols);
+
+      expect(result.processes).toHaveLength(1);
+      expect(result.processes[0].process_type).toBe('aggregated');
+      expect(result.processes[0].summary).toMatch(/onCreate/);
+      expect(result.processes[0].step_count).toBe(3); // 2+1
+    });
+
+    it('leaves single-entry-point processes unchanged', async () => {
+      const { aggregateProcesses } = await import('../../src/mcp/local/tools/query.js');
+
+      const processes = [
+        { id: 'p1', summary: 'Solo Flow', priority: 1, symbol_count: 2, process_type: 'HTTP', step_count: 3 },
+      ];
+      const symbols = [
+        { id: 's1', process_id: 'p1', step_index: 1, name: 'uniqueEntry', filePath: 'src/solo.ts' },
+        { id: 's2', process_id: 'p1', step_index: 2, name: 'nextStep', filePath: 'src/solo.ts' },
+      ];
+
+      const result = aggregateProcesses(processes, symbols);
+
+      expect(result.processes).toHaveLength(1);
+      expect(result.processes[0].process_type).not.toBe('aggregated');
+    });
+
+    it('keeps processes with different entry points separate', async () => {
+      const { aggregateProcesses } = await import('../../src/mcp/local/tools/query.js');
+
+      const processes = [
+        { id: 'p1', summary: 'OnCreate', priority: 1, symbol_count: 1, process_type: 'Lifecycle', step_count: 1 },
+        { id: 'p2', summary: 'OnDestroy', priority: 1, symbol_count: 1, process_type: 'Lifecycle', step_count: 1 },
+      ];
+      const symbols = [
+        { id: 's1', process_id: 'p1', step_index: 1, name: 'onCreate', filePath: 'src/app.ts' },
+        { id: 's2', process_id: 'p2', step_index: 1, name: 'onDestroy', filePath: 'src/app.ts' },
+      ];
+
+      const result = aggregateProcesses(processes, symbols);
+
+      expect(result.processes).toHaveLength(2);
+      expect(result.processes.every((p: any) => p.process_type !== 'aggregated')).toBe(true);
+    });
+
+    it('falls back to process ID when entry symbol has no step_index 0/1', async () => {
+      const { aggregateProcesses } = await import('../../src/mcp/local/tools/query.js');
+
+      const processes = [
+        { id: 'p1', summary: 'A', priority: 1, symbol_count: 1, process_type: 'A', step_count: 1 },
+        { id: 'p2', summary: 'B', priority: 1, symbol_count: 1, process_type: 'B', step_count: 1 },
+      ];
+      // No step_index 0 or 1 → each process keeps its own entry point key
+      const symbols = [
+        { id: 's1', process_id: 'p1', step_index: 2, name: 'middle', filePath: 'src/a.ts' },
+        { id: 's2', process_id: 'p2', step_index: 3, name: 'end', filePath: 'src/b.ts' },
+      ];
+
+      const result = aggregateProcesses(processes, symbols);
+
+      // Without step_index 0/1, entry point key falls back to pid
+      // Since p1 and p2 are different, no aggregation occurs
+      expect(result.processes).toHaveLength(2);
+    });
+  });

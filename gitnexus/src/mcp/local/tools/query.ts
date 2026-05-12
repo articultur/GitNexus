@@ -7,6 +7,114 @@ import { logQueryError, VALID_NODE_LABELS, isTestFilePath } from './shared.js';
 import type { RepoHandle } from './shared.js';
 
 /**
+ * Merge micro-flows that share the same entry point into aggregated high-level flows.
+ *
+ * When granularity is "high", processes sharing an entry point symbol are merged
+ * into a single flow. Steps are deduplicated and sorted. The heuristicLabel is
+ * derived from the entry point name to give a meaningful end-to-end description.
+ */
+export function aggregateProcesses(
+  processes: Array<{
+    id: string;
+    summary: string;
+    priority: number;
+    symbol_count: number;
+    process_type: string;
+    step_count: number;
+  }>,
+  processSymbols: Array<{ id: string; process_id: string; step_index?: number; name: string; filePath: string; type?: string; startLine?: number; endLine?: number; module?: string; content?: string }>,
+): { processes: typeof processes; process_symbols: typeof processSymbols } {
+  // Group by entry point (first symbol in each process by step_index)
+  const processFirstSymbol = new Map<string, { symbolId: string; symbolName: string }>();
+  for (const sym of processSymbols) {
+    if (sym.step_index === 1 || sym.step_index === 0) {
+      processFirstSymbol.set(sym.process_id, { symbolId: sym.id, symbolName: sym.name });
+    }
+  }
+
+  // Build entry-point → process IDs mapping
+  const entryPointGroups = new Map<string, string[]>();
+  for (const proc of processes) {
+    const first = processFirstSymbol.get(proc.id);
+    const key = first?.symbolId ?? proc.id; // fallback to process ID if no step-1 symbol
+    if (!entryPointGroups.has(key)) entryPointGroups.set(key, []);
+    entryPointGroups.get(key)!.push(proc.id);
+  }
+
+  // Only aggregate when multiple processes share an entry point
+  const aggregated = new Map<string, {
+    proc: typeof processes[0];
+    symbolIds: Set<string>;
+  }>();
+
+  const usedProcessIds = new Set<string>();
+
+  for (const [_entryKey, procIds] of entryPointGroups) {
+    if (procIds.length <= 1) {
+      // Single process — keep as-is
+      continue;
+    }
+
+    // Merge: combine symbols, sum priority, use first process as template
+    const procs = procIds.map((id) => processes.find((p) => p.id === id)!).filter(Boolean);
+    if (procs.length === 0) continue;
+
+    const mergedId = `flow_${procs[0].id}`;
+    const mergedPriority = procs.reduce((sum, p) => sum + p.priority, 0);
+    const totalSymbols = new Set<string>();
+    for (const pid of procIds) {
+      for (const sym of processSymbols) {
+        if (sym.process_id === pid) totalSymbols.add(sym.id);
+      }
+    }
+
+    // Build a meaningful label from the entry point
+    const firstSym = processFirstSymbol.get(procs[0].id);
+    const entryLabel = firstSym?.symbolName ?? procs[0].summary;
+    const stepTotal = procs.reduce((sum, p) => sum + p.step_count, 0);
+
+    aggregated.set(mergedId, {
+      proc: {
+        id: mergedId,
+        summary: `Flow: ${entryLabel} (+${procs.length - 1} traces)`,
+        priority: mergedPriority,
+        symbol_count: totalSymbols.size,
+        process_type: 'aggregated',
+        step_count: stepTotal,
+      },
+      symbolIds: totalSymbols,
+    });
+
+    for (const pid of procIds) usedProcessIds.add(pid);
+  }
+
+  // Build final results: aggregated flows first, then unaggregated singletons
+  const resultProcesses: typeof processes = [];
+  const resultSymbols: typeof processSymbols = [];
+
+  // Add aggregated flows
+  for (const [mergedId, { proc, symbolIds }] of aggregated) {
+    resultProcesses.push(proc);
+    for (const sym of processSymbols) {
+      if (symbolIds.has(sym.id)) {
+        resultSymbols.push({ ...sym, process_id: mergedId });
+      }
+    }
+  }
+
+  // Add remaining singletons
+  for (const proc of processes) {
+    if (usedProcessIds.has(proc.id)) continue;
+    resultProcesses.push(proc);
+    for (const sym of processSymbols) {
+      if (sym.process_id === proc.id) resultSymbols.push(sym);
+    }
+  }
+
+  return { processes: resultProcesses, process_symbols: resultSymbols };
+}
+
+/**
  * Query tool — process-grouped search.
  *
  * 1. Hybrid search (BM25 + semantic) to find matching symbols
@@ -25,6 +133,7 @@ export async function queryTool(
     include_content?: boolean;
     method?: string;
     relevance_threshold?: number;
+    granularity?: 'low' | 'high';
   },
   ensureInitialized: (id: string) => Promise<void>,
 ): Promise<any> {
@@ -45,12 +154,12 @@ export async function queryTool(
   const searchLimit = processLimit * maxSymbolsPerProcess; // fetch enough raw results
   let bm25Results: any[] = [];
   let semanticResults: any[] = [];
-  let ftsUsed = false;
+  let ftsWarning: string | undefined;
 
   if (method === 'fulltext' || method === 'bm25') {
     const bm25SearchResult = await bm25SearchHelper(repo, searchQuery, searchLimit);
     bm25Results = bm25SearchResult.results;
-    ftsUsed = bm25SearchResult.ftsUsed;
+    ftsWarning = bm25SearchResult.ftsWarning;
   } else if (method === 'vector' || method === 'semantic') {
     semanticResults = await semanticSearchHelper(repo, searchQuery, searchLimit);
   } else {
@@ -60,7 +169,7 @@ export async function queryTool(
       semanticSearchHelper(repo, searchQuery, searchLimit),
     ]);
     bm25Results = bm25SearchResult.results;
-    ftsUsed = bm25SearchResult.ftsUsed;
+    ftsWarning = bm25SearchResult.ftsWarning;
     semanticResults = semResults;
   }
 
@@ -274,14 +383,23 @@ export async function queryTool(
     return true;
   });
 
+  // Step 5: Apply flow aggregation when granularity is "high"
+  const granularity = params.granularity ?? 'low';
+  if (granularity === 'high' && processes.length > 1) {
+    const aggregated = aggregateProcesses(processes, dedupedSymbols);
+    return {
+      processes: aggregated.processes,
+      process_symbols: aggregated.process_symbols,
+      definitions: definitions.slice(0, 20),
+      ...(ftsWarning ? { warning: ftsWarning } : {}),
+    };
+  }
+
   return {
     processes,
     process_symbols: dedupedSymbols,
     definitions: definitions.slice(0, 20), // cap standalone definitions
-    ...(!ftsUsed && {
-      warning:
-        'FTS extension unavailable - keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.',
-    }),
+    ...(ftsWarning ? { warning: ftsWarning } : {}),
   };
 }
 
@@ -292,18 +410,26 @@ async function bm25SearchHelper(
   repo: RepoHandle,
   query: string,
   limit: number,
-): Promise<{ results: any[]; ftsUsed: boolean }> {
-  const { searchFTSFromLbug } = await import('../../../core/search/bm25-index.js');
+): Promise<{ results: any[]; ftsUsed: boolean; ftsWarning?: string }> {
+  const { searchFTSFromLbug, getFTSHealthWarning } =
+    await import('../../../core/search/bm25-index.js');
   let bm25Results;
   try {
     bm25Results = await searchFTSFromLbug(query, limit, repo.id);
   } catch (err: any) {
     console.error('GitNexus: BM25/FTS search failed (FTS indexes may not exist) -', err.message);
-    return { results: [], ftsUsed: false };
+    return {
+      results: [],
+      ftsUsed: false,
+      ftsWarning:
+        'FTS indexes missing or unavailable - keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.',
+    };
   }
 
-  const ftsUsed = bm25Results.ftsAvailable !== false;
-  const bm25List = bm25Results.results ?? [];
+  const ftsResponse = bm25Results as any;
+  const ftsUsed = ftsResponse.ftsAvailable !== false;
+  const ftsWarning = getFTSHealthWarning(ftsResponse);
+  const bm25List: any[] = ftsResponse.results ?? bm25Results;
 
   const results: any[] = [];
 
@@ -354,7 +480,7 @@ async function bm25SearchHelper(
     }
   }
 
-  return { results, ftsUsed };
+  return { results, ftsUsed, ftsWarning };
 }
 
 /**
