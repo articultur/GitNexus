@@ -17,10 +17,13 @@ function extractObjCMessageSend(callNode: SyntaxNode): ExtractedCallSite | null 
   // In tree-sitter-objc the selector can be:
   //   - identifier (unary message): [obj description]
   //   - keyword_expression / message_keyword for multi-arg: [obj setFoo:bar]
-  let calledName: string | undefined;
+  let calledName = callNode.childForFieldName('method')?.text;
+  const receiver = callNode.childForFieldName('receiver');
   for (let i = 0; i < callNode.namedChildCount; i++) {
+    if (calledName) break;
     const child = callNode.namedChild(i);
     if (!child) continue;
+    if (receiver && child.id === receiver.id) continue;
     if (child.type === 'identifier') {
       calledName = child.text;
       break;
@@ -40,7 +43,6 @@ function extractObjCMessageSend(callNode: SyntaxNode): ExtractedCallSite | null 
   if (!calledName) return null;
 
   // Extract receiver for member call form
-  const receiver = callNode.childForFieldName('receiver');
   const receiverName = receiver?.type === 'identifier' ? receiver.text : undefined;
 
   return {

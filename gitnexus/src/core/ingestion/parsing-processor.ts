@@ -53,6 +53,7 @@ import {
   getTreeSitterContentByteLength,
   TREE_SITTER_MAX_BUFFER,
 } from './constants.js';
+import { detectLanguageForContent } from './parse-content.js';
 
 export type FileProgressCallback = (current: number, total: number, filePath: string) => void;
 
@@ -93,7 +94,7 @@ const processParsingWithWorkers = async (
   // Filter to parseable files only
   const parseableFiles: ParseWorkerInput[] = [];
   for (const file of files) {
-    const lang = getLanguageFromFilename(file.path);
+    const lang = detectLanguageForContent(file.path, file.content);
     if (lang) parseableFiles.push({ path: file.path, content: file.content });
   }
 
@@ -345,7 +346,7 @@ const processParsingSequential = async (
 
     if (i % 20 === 0) await yieldToEventLoop();
 
-    const language = getLanguageFromFilename(file.path);
+    const language = detectLanguageForContent(file.path, file.content);
 
     if (!language) continue;
     if (!isLanguageAvailable(language)) {

@@ -62,6 +62,7 @@ import {
 import { buildTypeEnv, isSubclassOf } from './type-env.js';
 import type { ConstructorBinding, TypeEnvironment } from './type-env.js';
 import type { BindingAccumulator } from './binding-accumulator.js';
+import { detectLanguageForContent } from './parse-content.js';
 import { getTreeSitterBufferSize } from './constants.js';
 import type {
   ExtractedCall,
@@ -751,7 +752,7 @@ export const processCalls = async (
     const file = files[i];
     if (i % 20 === 0) await yieldToEventLoop();
 
-    const language = getLanguageFromFilename(file.path);
+    const language = detectLanguageForContent(file.path, file.content);
     if (!language) continue;
     // Registry-primary gate: scope-based phase owns CALLS for this lang.
     if (isRegistryPrimary(language)) continue;
@@ -3270,7 +3271,7 @@ export const extractFetchCallsFromFiles = async (
   const result: ExtractedFetchCall[] = [];
 
   for (const file of files) {
-    const language = getLanguageFromFilename(file.path);
+    const language = detectLanguageForContent(file.path, file.content);
     if (!language) continue;
     if (!isLanguageAvailable(language)) continue;
 

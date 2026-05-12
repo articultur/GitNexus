@@ -91,6 +91,83 @@ export function extractORMQueriesInline(
       });
     }
   }
+
+  extractHarmonyQueries(filePath, content, lineOffsets, out);
+}
+
+function extractHarmonyQueries(
+  filePath: string,
+  content: string,
+  lineOffsets: readonly number[],
+  out: ExtractedORMQuery[],
+): void {
+  const predicateTables = new Map<string, string>();
+  HARMONY_RDB_PREDICATE_RE.lastIndex = 0;
+  let m;
+  while ((m = HARMONY_RDB_PREDICATE_RE.exec(content)) !== null) {
+    predicateTables.set(m[1], m[2]);
+  }
+
+  HARMONY_RDB_QUERY_RE.lastIndex = 0;
+  while ((m = HARMONY_RDB_QUERY_RE.exec(content)) !== null) {
+    const model = predicateTables.get(m[2]);
+    if (model === undefined) continue;
+    out.push({
+      filePath,
+      orm: 'harmony-rdb',
+      model,
+      method: m[1],
+      lineNumber: lineNumberAtOffset(lineOffsets, m.index),
+    });
+  }
+
+  HARMONY_RDB_INLINE_QUERY_RE.lastIndex = 0;
+  while ((m = HARMONY_RDB_INLINE_QUERY_RE.exec(content)) !== null) {
+    out.push({
+      filePath,
+      orm: 'harmony-rdb',
+      model: m[2],
+      method: m[1],
+      lineNumber: lineNumberAtOffset(lineOffsets, m.index),
+    });
+  }
+
+  HARMONY_RDB_SQL_RE.lastIndex = 0;
+  while ((m = HARMONY_RDB_SQL_RE.exec(content)) !== null) {
+    const model = extractSqlTableName(m[3]);
+    if (model === null) continue;
+    out.push({
+      filePath,
+      orm: 'harmony-rdb',
+      model,
+      method: m[1],
+      lineNumber: lineNumberAtOffset(lineOffsets, m.index),
+    });
+  }
+
+  const preferenceStores = new Set<string>();
+  HARMONY_PREFERENCES_STORE_RE.lastIndex = 0;
+  while ((m = HARMONY_PREFERENCES_STORE_RE.exec(content)) !== null) {
+    preferenceStores.add(m[1]);
+  }
+
+  HARMONY_PREFERENCES_GET_RE.lastIndex = 0;
+  while ((m = HARMONY_PREFERENCES_GET_RE.exec(content)) !== null) {
+    if (!preferenceStores.has(m[1])) continue;
+    out.push({
+      filePath,
+      orm: 'harmony-preferences',
+      model: m[3],
+      method: 'get',
+      lineNumber: lineNumberAtOffset(lineOffsets, m.index),
+    });
+  }
+}
+
+function extractSqlTableName(sql: string): string | null {
+  const normalized = sql.replace(/\s+/g, ' ').trim();
+  const match = normalized.match(/\b(?:FROM|JOIN|UPDATE|INTO)\s+[`"\[]?([\w$.-]+)/i);
+  return match?.[1]?.replace(/[\]`"].*$/, '') ?? null;
 }
 
 // ── Line offset helpers ───────────────────────────────────────────────────
@@ -111,7 +188,7 @@ function buildLineOffsets(content: string): number[] {
  * which is the 0-based line number. When `offset` is beyond the last newline,
  * returns `lineOffsets.length` (i.e., the last line index).
  */
-function lineNumberAtOffset(lineOffsets: number[], offset: number): number {
+function lineNumberAtOffset(lineOffsets: readonly number[], offset: number): number {
   let lo = 0;
   let hi = lineOffsets.length;
   while (lo < hi) {

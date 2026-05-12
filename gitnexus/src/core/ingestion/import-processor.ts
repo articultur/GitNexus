@@ -27,6 +27,7 @@ import type { NamedBinding } from './named-bindings/types.js';
 import type { SyntaxNode } from './utils/ast-helpers.js';
 import { isDev } from './utils/env.js';
 import { isRegistryPrimary } from './registry-primary-flag.js';
+import { detectLanguageForContent } from './parse-content.js';
 
 import { logger } from '../logger.js';
 // Type: Map<FilePath, Set<ResolvedFilePath>>
@@ -285,7 +286,7 @@ export const processImports = async (
     if (i % 20 === 0) await yieldToEventLoop();
 
     // 1. Check language support first
-    const language = getLanguageFromFilename(file.path);
+    const language = detectLanguageForContent(file.path, file.content);
     if (!language) continue;
     if (!isLanguageAvailable(language)) {
       if (skippedByLang) {

@@ -13,7 +13,11 @@ import Rust from 'tree-sitter-rust';
 import PHP from 'tree-sitter-php';
 import Ruby from 'tree-sitter-ruby';
 import { createRequire } from 'node:module';
-import { SupportedLanguages } from 'gitnexus-shared';
+import {
+  detectOCHeaderLanguage,
+  getLanguageFromFilename,
+  SupportedLanguages,
+} from 'gitnexus-shared';
 import { getProvider } from '../languages/index.js';
 import {
   getTreeSitterBufferSize,
@@ -52,7 +56,6 @@ try {
   ObjectiveC = _require('tree-sitter-objc');
 } catch {}
 
-import { getLanguageFromFilename } from 'gitnexus-shared';
 import {
   FUNCTION_NODE_TYPES,
   getDefinitionNodeFromCaptures,
@@ -228,7 +231,7 @@ export interface ExtractedToolDef {
 
 export interface ExtractedORMQuery {
   filePath: string;
-  orm: 'prisma' | 'supabase';
+  orm: 'prisma' | 'supabase' | 'harmony-rdb' | 'harmony-preferences';
   model: string;
   method: string;
   lineNumber: number;
@@ -762,7 +765,7 @@ const processBatch = (
   // Group by language to minimize setLanguage calls
   const byLanguage = new Map<SupportedLanguages, ParseWorkerInput[]>();
   for (const file of files) {
-    const lang = getLanguageFromFilename(file.path);
+    const lang = detectWorkerLanguage(file.path, file.content);
     if (!lang) continue;
     let list = byLanguage.get(lang);
     if (!list) {
@@ -1335,6 +1338,28 @@ const PRISMA_QUERY_RE =
   /\bprisma\.(\w+)\.(findMany|findFirst|findUnique|findUniqueOrThrow|findFirstOrThrow|create|createMany|update|updateMany|delete|deleteMany|upsert|count|aggregate|groupBy)\s*\(/g;
 const SUPABASE_QUERY_RE =
   /\bsupabase\.from\s*\(\s*['"](\w+)['"]\s*\)\s*\.(select|insert|update|delete|upsert)\s*\(/g;
+const HARMONY_RDB_PREDICATE_RE =
+  /\b(?:const|let|var)\s+(\w+)\s*=\s*new\s+(?:rdb|relationalStore)\.RdbPredicates\s*\(\s*['"]([\w$-]+)['"]\s*\)/g;
+const HARMONY_RDB_QUERY_RE = /\b\w+\.(query|querySync)\s*\(\s*(\w+)/g;
+const HARMONY_RDB_INLINE_QUERY_RE =
+  /\b\w+\.(query|querySync)\s*\(\s*new\s+(?:rdb|relationalStore)\.RdbPredicates\s*\(\s*['"]([\w$-]+)['"]\s*\)/g;
+const HARMONY_RDB_SQL_RE = /\b\w+\.(querySql|executeSql)\s*\(\s*(['"`])([\s\S]*?)\2/g;
+const HARMONY_PREFERENCES_STORE_RE =
+  /\b(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?preferences\.getPreferences(?:Sync)?\s*\(/g;
+const HARMONY_PREFERENCES_GET_RE = /\b(\w+)\.(get|getSync)\s*\(\s*['"]([^'"]+)['"]/g;
+
+const HEADER_EXTENSIONS = new Set(['.h', '.hh', '.hpp', '.hxx']);
+
+function detectWorkerLanguage(filePath: string, content: string): SupportedLanguages | null {
+  const language = getLanguageFromFilename(filePath);
+  if (language !== SupportedLanguages.CPlusPlus) return language;
+
+  const dot = filePath.lastIndexOf('.');
+  const ext = dot === -1 ? '' : filePath.slice(dot).toLowerCase();
+  if (!HEADER_EXTENSIONS.has(ext)) return language;
+
+  return detectOCHeaderLanguage(content);
+}
 
 /**
  * Extract ORM query calls from file content via regex.
@@ -1347,7 +1372,14 @@ export function extractORMQueries(
 ): void {
   const hasPrisma = content.includes('prisma.');
   const hasSupabase = content.includes('supabase.from');
-  if (!hasPrisma && !hasSupabase) return;
+  const hasRdb =
+    content.includes('RdbPredicates') ||
+    content.includes('.querySql(') ||
+    content.includes('.executeSql(');
+  const hasPreferences = content.includes('preferences.getPreferences');
+  if (!hasPrisma && !hasSupabase && !hasRdb && !hasPreferences) return;
+
+  const lineOffsets = buildLineOffsets(content);
 
   if (hasPrisma) {
     PRISMA_QUERY_RE.lastIndex = 0;
@@ -1360,7 +1392,7 @@ export function extractORMQueries(
         orm: 'prisma',
         model,
         method: m[2],
-        lineNumber: content.substring(0, m.index).split('\n').length - 1,
+        lineNumber: lineNumberAtOffset(lineOffsets, m.index),
       });
     }
   }
@@ -1374,10 +1406,106 @@ export function extractORMQueries(
         orm: 'supabase',
         model: m[1],
         method: m[2],
-        lineNumber: content.substring(0, m.index).split('\n').length - 1,
+        lineNumber: lineNumberAtOffset(lineOffsets, m.index),
       });
     }
   }
+
+  extractHarmonyQueries(filePath, content, lineOffsets, out);
+}
+
+function extractHarmonyQueries(
+  filePath: string,
+  content: string,
+  lineOffsets: readonly number[],
+  out: ExtractedORMQuery[],
+): void {
+  const predicateTables = new Map<string, string>();
+  HARMONY_RDB_PREDICATE_RE.lastIndex = 0;
+  let m;
+  while ((m = HARMONY_RDB_PREDICATE_RE.exec(content)) !== null) {
+    predicateTables.set(m[1], m[2]);
+  }
+
+  HARMONY_RDB_QUERY_RE.lastIndex = 0;
+  while ((m = HARMONY_RDB_QUERY_RE.exec(content)) !== null) {
+    const model = predicateTables.get(m[2]);
+    if (model === undefined) continue;
+    out.push({
+      filePath,
+      orm: 'harmony-rdb',
+      model,
+      method: m[1],
+      lineNumber: lineNumberAtOffset(lineOffsets, m.index),
+    });
+  }
+
+  HARMONY_RDB_INLINE_QUERY_RE.lastIndex = 0;
+  while ((m = HARMONY_RDB_INLINE_QUERY_RE.exec(content)) !== null) {
+    out.push({
+      filePath,
+      orm: 'harmony-rdb',
+      model: m[2],
+      method: m[1],
+      lineNumber: lineNumberAtOffset(lineOffsets, m.index),
+    });
+  }
+
+  HARMONY_RDB_SQL_RE.lastIndex = 0;
+  while ((m = HARMONY_RDB_SQL_RE.exec(content)) !== null) {
+    const model = extractSqlTableName(m[3]);
+    if (model === null) continue;
+    out.push({
+      filePath,
+      orm: 'harmony-rdb',
+      model,
+      method: m[1],
+      lineNumber: lineNumberAtOffset(lineOffsets, m.index),
+    });
+  }
+
+  const preferenceStores = new Set<string>();
+  HARMONY_PREFERENCES_STORE_RE.lastIndex = 0;
+  while ((m = HARMONY_PREFERENCES_STORE_RE.exec(content)) !== null) {
+    preferenceStores.add(m[1]);
+  }
+
+  HARMONY_PREFERENCES_GET_RE.lastIndex = 0;
+  while ((m = HARMONY_PREFERENCES_GET_RE.exec(content)) !== null) {
+    if (!preferenceStores.has(m[1])) continue;
+    out.push({
+      filePath,
+      orm: 'harmony-preferences',
+      model: m[3],
+      method: 'get',
+      lineNumber: lineNumberAtOffset(lineOffsets, m.index),
+    });
+  }
+}
+
+function extractSqlTableName(sql: string): string | null {
+  const normalized = sql.replace(/\s+/g, ' ').trim();
+  const match = normalized.match(/\b(?:FROM|JOIN|UPDATE|INTO)\s+[`"\[]?([\w$.-]+)/i);
+  return match?.[1]?.replace(/[\]`"].*$/, '') ?? null;
+}
+
+function buildLineOffsets(content: string): number[] {
+  const offsets: number[] = [];
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '\n') offsets.push(i);
+  }
+  return offsets;
+}
+
+function lineNumberAtOffset(lineOffsets: readonly number[], offset: number): number {
+  let lo = 0;
+  let hi = lineOffsets.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (lineOffsets[mid] < offset) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 const processFileGroup = (
