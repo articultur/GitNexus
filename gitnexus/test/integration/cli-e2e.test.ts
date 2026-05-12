@@ -50,7 +50,7 @@ beforeAll(() => {
   // `--repo mini-repo` CLI arg (which matches by basename) still works.
   tmpParent = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-cli-e2e-'));
   MINI_REPO = path.join(tmpParent, 'mini-repo');
-  fs.cpSync(FIXTURE_SRC, MINI_REPO, { recursive: true });
+  copyMiniRepoFixture(MINI_REPO);
 
   // Initialize mini-repo as a git repo so the CLI analyze command
   // can run the full pipeline (it requires a .git directory).
@@ -142,7 +142,7 @@ function runCliWithEnv(
 function makeMiniRepoCopy(basename: string, prefix: string): string {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const repo = path.join(parent, basename);
-  fs.cpSync(FIXTURE_SRC, repo, { recursive: true });
+  copyMiniRepoFixture(repo);
   spawnSync('git', ['init'], { cwd: repo, stdio: 'pipe' });
   spawnSync('git', ['add', '-A'], { cwd: repo, stdio: 'pipe' });
   spawnSync('git', ['commit', '-m', 'initial commit'], {
@@ -157,6 +157,22 @@ function makeMiniRepoCopy(basename: string, prefix: string): string {
     },
   });
   return repo;
+}
+
+function copyMiniRepoFixture(dest: string): void {
+  fs.cpSync(FIXTURE_SRC, dest, {
+    recursive: true,
+    filter: (src) => {
+      const relative = path.relative(FIXTURE_SRC, src).replace(/\\/g, '/');
+      return (
+        relative !== '.gitignore' &&
+        relative !== 'AGENTS.md' &&
+        relative !== 'CLAUDE.md' &&
+        relative !== '.claude' &&
+        !relative.startsWith('.claude/')
+      );
+    },
+  });
 }
 
 describe('CLI end-to-end', () => {

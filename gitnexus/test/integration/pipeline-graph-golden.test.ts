@@ -139,7 +139,13 @@ describe('pipeline graph golden', () => {
     // cpSync stays as a belt-and-suspenders guarantee that any future
     // test adding files to the source won't pollute the golden snapshot.
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-golden-'));
-    fs.cpSync(FIXTURE_SRC, tmpDir, { recursive: true });
+    fs.cpSync(FIXTURE_SRC, tmpDir, {
+      recursive: true,
+      filter: (src) => {
+        const relative = path.relative(FIXTURE_SRC, src).replace(/\\/g, '/');
+        return relative !== '.claude' && !relative.startsWith('.claude/') && !relative.endsWith('.md');
+      },
+    });
 
     result = await runPipelineFromRepo(tmpDir, () => {});
     snapshot = buildSnapshot(result);
