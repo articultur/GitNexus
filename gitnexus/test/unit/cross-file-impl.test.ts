@@ -48,17 +48,24 @@ vi.mock('../../src/core/tree-sitter/parser-loader.js', async (importOriginal) =>
   };
 });
 
+vi.mock('../../src/core/ingestion/registry-primary-flag.js', () => ({
+  isRegistryPrimary: vi.fn(() => false),
+}));
+
 import { runCrossFileBindingPropagation } from '../../src/core/ingestion/pipeline-phases/cross-file-impl.js';
 import { processCalls } from '../../src/core/ingestion/call-processor.js';
+import { isRegistryPrimary } from '../../src/core/ingestion/registry-primary-flag.js';
 import { createResolutionContext } from '../../src/core/ingestion/model/resolution-context.js';
 import { createKnowledgeGraph } from '../../src/core/graph/graph.js';
 import type { ExportedTypeMap } from '../../src/core/ingestion/call-processor.js';
 
 const processCallsMock = vi.mocked(processCalls);
+const isRegistryPrimaryMock = vi.mocked(isRegistryPrimary);
 
 describe('runCrossFileBindingPropagation', () => {
   beforeEach(() => {
     processCallsMock.mockClear();
+    isRegistryPrimaryMock.mockReturnValue(false);
   });
 
   it('returns 0 immediately when namedImportMap is empty', async () => {
@@ -198,6 +205,71 @@ describe('runCrossFileBindingPropagation', () => {
     expect(importedRawReturnTypes?.get('downstream.ts')?.get('makeUsers')).toBe(
       'Promise<User>',
     );
+  });
+
+  it('does not reprocess registry-primary language files', async () => {
+    isRegistryPrimaryMock.mockReturnValue(true);
+
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+    const exportedTypeMap: ExportedTypeMap = new Map([
+      ['upstream.ts', new Map([['User', 'User']])],
+    ]);
+
+    const bindings = new Map();
+    bindings.set('User', { sourcePath: 'upstream.ts', exportedName: 'User' });
+    ctx.namedImportMap.set('downstream.ts', bindings);
+    ctx.importMap.set('upstream.ts', new Set());
+    ctx.importMap.set('downstream.ts', new Set(['upstream.ts']));
+
+    const result = await runCrossFileBindingPropagation(
+      graph,
+      ctx,
+      exportedTypeMap,
+      new Set(['downstream.ts', 'upstream.ts']),
+      2,
+      '/repo',
+      Date.now(),
+      () => {},
+    );
+
+    expect(result).toBe(0);
+    expect(processCallsMock).not.toHaveBeenCalled();
+  });
+
+  it('still starts cross-file propagation for legacy files in mixed registry-primary repos', async () => {
+    isRegistryPrimaryMock.mockImplementation((lang: any) => lang === 'typescript');
+
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+    const exportedTypeMap: ExportedTypeMap = new Map([
+      ['upstream.ts', new Map([['User', 'User']])],
+    ]);
+
+    ctx.importMap.set('upstream.ts', new Set());
+    const allPaths = ['upstream.ts'];
+    for (const file of ['registry-a.ts', 'registry-b.ts', 'legacy.rb']) {
+      allPaths.push(file);
+      const bindings = new Map();
+      bindings.set('User', { sourcePath: 'upstream.ts', exportedName: 'User' });
+      ctx.namedImportMap.set(file, bindings);
+      ctx.importMap.set(file, new Set(['upstream.ts']));
+    }
+
+    const result = await runCrossFileBindingPropagation(
+      graph,
+      ctx,
+      exportedTypeMap,
+      new Set(allPaths),
+      100,
+      '/repo',
+      Date.now(),
+      () => {},
+    );
+
+    expect(result).toBe(1);
+    expect(processCallsMock).toHaveBeenCalledTimes(1);
+    expect(processCallsMock.mock.calls[0]?.[1]).toEqual([{ path: 'legacy.rb', content: '// stub' }]);
   });
 
   it('caps processing at MAX_CROSS_FILE_REPROCESS (2000)', async () => {

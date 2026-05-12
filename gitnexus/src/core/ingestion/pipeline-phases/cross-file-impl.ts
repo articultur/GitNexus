@@ -24,6 +24,7 @@ import type { KnowledgeGraph } from '../../graph/types.js';
 import { isDev } from '../utils/env.js';
 
 import { logger } from '../../logger.js';
+import { isRegistryPrimary } from '../registry-primary-flag.js';
 /** Max AST trees to keep in LRU cache for cross-file binding propagation. */
 const AST_CACHE_CAP = 50;
 
@@ -73,6 +74,19 @@ function buildImportedReturnInfo(
   return { importedReturns, importedRawReturns };
 }
 
+function shouldRunLegacyCrossFilePass(filePath: string): boolean {
+  const lang = getLanguageFromFilename(filePath);
+  if (!lang) return false;
+  if (isRegistryPrimary(lang)) return false;
+  return isLanguageAvailable(lang);
+}
+
+function hasLanguageParser(filePath: string): boolean {
+  const lang = getLanguageFromFilename(filePath);
+  if (!lang) return false;
+  return isLanguageAvailable(lang);
+}
+
 /**
  * Cross-file binding propagation.
  * Returns the number of files re-processed.
@@ -111,6 +125,7 @@ export async function runCrossFileBindingPropagation(
     for (const filePath of level) {
       const imports = ctx.namedImportMap.get(filePath);
       if (!imports) continue;
+      if (!hasLanguageParser(filePath)) continue;
       for (const [, binding] of imports) {
         const upstream = exportedTypeMap.get(binding.sourcePath);
         if (upstream?.has(binding.exportedName)) {
@@ -213,8 +228,7 @@ export async function runCrossFileBindingPropagation(
       if (seeded.size === 0 && importedReturns.size === 0) continue;
       if (!allPathSet.has(filePath)) continue;
 
-      const lang = getLanguageFromFilename(filePath);
-      if (!lang || !isLanguageAvailable(lang)) continue;
+      if (!shouldRunLegacyCrossFilePass(filePath)) continue;
 
       levelCandidates.push({ filePath, seeded, importedReturns, importedRawReturns });
     }
