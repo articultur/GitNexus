@@ -11,10 +11,9 @@
  *
  * Note: `processCalls`, `readFileContents`, and `isLanguageAvailable` are
  * mocked so the test doesn't require tree-sitter or filesystem access.
- * `buildImportedReturnTypes` and `buildImportedRawReturnTypes` are preserved
- * via `importOriginal`. The graph-fallback enrichment that used to live here
- * was moved into parse-impl's `runChunkedParseAndResolve` so the parse phase
- * hands crossFile a fully-populated, truly read-only map.
+ * The graph-fallback enrichment that used to live here was moved into
+ * parse-impl's `runChunkedParseAndResolve` so the parse phase hands crossFile
+ * a fully-populated, truly read-only map.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -162,6 +161,45 @@ describe('runCrossFileBindingPropagation', () => {
     }
   });
 
+  it('passes both simple and raw imported return types to re-resolution', async () => {
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+
+    ctx.model.symbols.add('upstream.ts', 'makeUsers', 'def:upstream.makeUsers', 'Function', {
+      returnType: 'Promise<User>',
+      qualifiedName: 'upstream.makeUsers',
+    });
+
+    const exportedTypeMap: ExportedTypeMap = new Map([['upstream.ts', new Map()]]);
+    const bindings = new Map();
+    bindings.set('makeUsers', { sourcePath: 'upstream.ts', exportedName: 'makeUsers' });
+    ctx.namedImportMap.set('downstream.ts', bindings);
+    ctx.importMap.set('upstream.ts', new Set());
+    ctx.importMap.set('downstream.ts', new Set(['upstream.ts']));
+
+    const result = await runCrossFileBindingPropagation(
+      graph,
+      ctx,
+      exportedTypeMap,
+      new Set(['downstream.ts', 'upstream.ts']),
+      2,
+      '/repo',
+      Date.now(),
+      () => {},
+    );
+
+    expect(result).toBe(1);
+    const call = processCallsMock.mock.calls[0];
+    expect(call).toBeDefined();
+    const importedReturnTypes = call?.[7];
+    const importedRawReturnTypes = call?.[8];
+
+    expect(importedReturnTypes?.get('downstream.ts')?.get('makeUsers')).toBe('User');
+    expect(importedRawReturnTypes?.get('downstream.ts')?.get('makeUsers')).toBe(
+      'Promise<User>',
+    );
+  });
+
   it('caps processing at MAX_CROSS_FILE_REPROCESS (2000)', async () => {
     const graph = createKnowledgeGraph();
     const ctx = createResolutionContext();
@@ -202,5 +240,55 @@ describe('runCrossFileBindingPropagation', () => {
     // equals MAX_CROSS_FILE_REPROCESS once the cap is hit.
     expect(result).toBe(2000);
     expect(processCallsMock).toHaveBeenCalledTimes(2000);
+  });
+
+  it('emits incremental progress while reprocessing cross-file candidates', async () => {
+    const graph = createKnowledgeGraph();
+    const ctx = createResolutionContext();
+    const onProgress = vi.fn();
+
+    const exportedTypeMap: ExportedTypeMap = new Map([
+      ['upstream.ts', new Map([['User', 'User']])],
+    ]);
+
+    ctx.importMap.set('upstream.ts', new Set());
+    const allPaths = ['upstream.ts'];
+    for (let i = 0; i < 21; i++) {
+      const file = `downstream${i}.ts`;
+      allPaths.push(file);
+      const bindings = new Map();
+      bindings.set('User', { sourcePath: 'upstream.ts', exportedName: 'User' });
+      ctx.namedImportMap.set(file, bindings);
+      ctx.importMap.set(file, new Set(['upstream.ts']));
+    }
+
+    const result = await runCrossFileBindingPropagation(
+      graph,
+      ctx,
+      exportedTypeMap,
+      new Set(allPaths),
+      allPaths.length,
+      '/repo',
+      Date.now(),
+      onProgress,
+    );
+
+    expect(result).toBe(21);
+    expect(onProgress).toHaveBeenCalled();
+    expect(onProgress.mock.calls[0]?.[0]).toMatchObject({
+      phase: 'parsing',
+      percent: 82,
+    });
+    expect(
+      onProgress.mock.calls.some(
+        ([progress]) =>
+          typeof progress.detail === 'string' && progress.detail.includes('files reprocessed'),
+      ),
+    ).toBe(true);
+    expect(onProgress.mock.calls.at(-1)?.[0]).toMatchObject({
+      phase: 'parsing',
+      percent: 93,
+      detail: '21 files reprocessed',
+    });
   });
 });

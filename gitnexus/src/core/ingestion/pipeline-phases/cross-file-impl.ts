@@ -10,8 +10,6 @@
 
 import {
   processCalls,
-  buildImportedReturnTypes,
-  buildImportedRawReturnTypes,
   type ExportedTypeMap,
 } from '../call-processor.js';
 import type { createResolutionContext } from '../model/resolution-context.js';
@@ -19,6 +17,8 @@ import { createASTCache } from '../ast-cache.js';
 import { type PipelineProgress, getLanguageFromFilename } from 'gitnexus-shared';
 import { readFileContents } from '../filesystem-walker.js';
 import { isLanguageAvailable } from '../../tree-sitter/parser-loader.js';
+import { extractReturnTypeName } from '../type-extractors/shared.js';
+import { yieldToEventLoop } from '../utils/event-loop.js';
 import { topologicalLevelSort } from '../utils/graph-sort.js';
 import type { KnowledgeGraph } from '../../graph/types.js';
 import { isDev } from '../utils/env.js';
@@ -31,6 +31,47 @@ const AST_CACHE_CAP = 50;
 const CROSS_FILE_SKIP_THRESHOLD = 0.03;
 /** Hard cap on files re-processed during cross-file propagation. */
 const MAX_CROSS_FILE_REPROCESS = 2000;
+/** Progress window reserved for live cross-file re-resolution updates. */
+const CROSS_FILE_PROGRESS_START = 82;
+const CROSS_FILE_PROGRESS_ACTIVE_END = 92;
+const CROSS_FILE_PROGRESS_END = 93;
+/** Frequency for progress refreshes and event-loop yields in the hot loop. */
+const CROSS_FILE_PROGRESS_INTERVAL = 20;
+const CROSS_FILE_YIELD_INTERVAL = 20;
+
+type NamedImportBindingMap = ReadonlyMap<
+  string,
+  ReadonlyMap<string, { sourcePath: string; exportedName: string }>
+>;
+
+type ReturnTypeLookup = {
+  lookupExactFull(filePath: string, name: string): { returnType?: string } | undefined;
+};
+
+function buildImportedReturnInfo(
+  filePath: string,
+  namedImportMap: NamedImportBindingMap,
+  symbolTable: ReturnTypeLookup,
+): {
+  importedReturns: ReadonlyMap<string, string>;
+  importedRawReturns: ReadonlyMap<string, string>;
+} {
+  const importedReturns = new Map<string, string>();
+  const importedRawReturns = new Map<string, string>();
+  const fileImports = namedImportMap.get(filePath);
+  if (!fileImports) return { importedReturns, importedRawReturns };
+
+  for (const [localName, binding] of fileImports) {
+    const returnType = symbolTable.lookupExactFull(binding.sourcePath, binding.exportedName)
+      ?.returnType;
+    if (!returnType) continue;
+    importedRawReturns.set(localName, returnType);
+    const simpleReturn = extractReturnTypeName(returnType);
+    if (simpleReturn) importedReturns.set(localName, simpleReturn);
+  }
+
+  return { importedReturns, importedRawReturns };
+}
 
 /**
  * Cross-file binding propagation.
@@ -106,14 +147,42 @@ export async function runCrossFileBindingPropagation(
   // progress events accordingly.
   onProgress({
     phase: 'parsing',
-    percent: 82,
+    percent: CROSS_FILE_PROGRESS_START,
     message: `Cross-file type propagation (${filesWithGaps}+ files)...`,
+    detail: `0/${Math.max(1, Math.min(MAX_CROSS_FILE_REPROCESS, filesWithGaps))} files reprocessed`,
     stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
   });
 
   let crossFileResolved = 0;
+  let estimatedCandidates = 0;
+  let lastProgressPercent = CROSS_FILE_PROGRESS_START;
   const crossFileStart = Date.now();
   const astCache = createASTCache(AST_CACHE_CAP);
+
+  const reportCrossFileProgress = (detail?: string, forcePercent?: number): void => {
+    const denominator = Math.min(
+      MAX_CROSS_FILE_REPROCESS,
+      Math.max(1, filesWithGaps, estimatedCandidates, crossFileResolved),
+    );
+    const computedPercent =
+      CROSS_FILE_PROGRESS_START +
+      Math.floor(
+        (Math.min(crossFileResolved, denominator) / denominator) *
+          (CROSS_FILE_PROGRESS_ACTIVE_END - CROSS_FILE_PROGRESS_START),
+      );
+    const percent = Math.min(
+      forcePercent ?? CROSS_FILE_PROGRESS_ACTIVE_END,
+      Math.max(lastProgressPercent, forcePercent ?? computedPercent),
+    );
+    lastProgressPercent = percent;
+    onProgress({
+      phase: 'parsing',
+      percent,
+      message: `Cross-file type propagation (${filesWithGaps}+ files)...`,
+      detail: detail ?? `${crossFileResolved}/${denominator} files reprocessed`,
+      stats: { filesProcessed: totalFiles, totalFiles, nodesCreated: graph.nodeCount },
+    });
+  };
 
   for (const level of levels) {
     const levelCandidates: {
@@ -136,12 +205,7 @@ export async function runCrossFileBindingPropagation(
         }
       }
 
-      const importedReturns = buildImportedReturnTypes(
-        filePath,
-        ctx.namedImportMap,
-        ctx.model.symbols,
-      );
-      const importedRawReturns = buildImportedRawReturnTypes(
+      const { importedReturns, importedRawReturns } = buildImportedReturnInfo(
         filePath,
         ctx.namedImportMap,
         ctx.model.symbols,
@@ -156,6 +220,10 @@ export async function runCrossFileBindingPropagation(
     }
 
     if (levelCandidates.length === 0) continue;
+    estimatedCandidates = Math.min(
+      MAX_CROSS_FILE_REPROCESS,
+      estimatedCandidates + levelCandidates.length,
+    );
 
     const levelPaths = levelCandidates.map((c) => c.filePath);
     const contentMap = await readFileContents(repoPath, levelPaths);
@@ -190,6 +258,16 @@ export async function runCrossFileBindingPropagation(
         importedRawReturnTypesMap.size > 0 ? importedRawReturnTypesMap : undefined,
       );
       crossFileResolved++;
+      if (
+        crossFileResolved % CROSS_FILE_PROGRESS_INTERVAL === 0 ||
+        crossFileResolved === estimatedCandidates ||
+        crossFileResolved >= MAX_CROSS_FILE_REPROCESS
+      ) {
+        reportCrossFileProgress();
+      }
+      if (crossFileResolved % CROSS_FILE_YIELD_INTERVAL === 0) {
+        await yieldToEventLoop();
+      }
     }
 
     if (crossFileResolved >= MAX_CROSS_FILE_REPROCESS) {
@@ -200,6 +278,7 @@ export async function runCrossFileBindingPropagation(
   }
 
   astCache.clear();
+  reportCrossFileProgress(`${crossFileResolved} files reprocessed`, CROSS_FILE_PROGRESS_END);
 
   if (isDev) {
     const elapsed = Date.now() - crossFileStart;

@@ -333,17 +333,50 @@ function collectOwnedMembers(
   memberName: string,
   ctx: RegistryContext,
 ): readonly SymbolDefinition[] {
-  // An owner's members are defs whose `ownerId === ownerDefId` and whose
-  // simple name matches `memberName`. We iterate `defs.byId` — O(D) per
-  // call today. A future by-owner index would make this O(K); tracked as
-  // a follow-up optimization before Ring 3 flips go production.
-  const out: SymbolDefinition[] = [];
+  return getOwnerMemberIndex(ctx).get(ownerDefId)?.get(memberName) ?? EMPTY_DEFS;
+}
+
+const EMPTY_DEFS: readonly SymbolDefinition[] = Object.freeze([]);
+const OWNER_MEMBER_INDEX = new WeakMap<
+  RegistryContext,
+  ReadonlyMap<DefId, ReadonlyMap<string, readonly SymbolDefinition[]>>
+>();
+
+function getOwnerMemberIndex(
+  ctx: RegistryContext,
+): ReadonlyMap<DefId, ReadonlyMap<string, readonly SymbolDefinition[]>> {
+  const cached = OWNER_MEMBER_INDEX.get(ctx);
+  if (cached !== undefined) return cached;
+
+  const mutable = new Map<DefId, Map<string, SymbolDefinition[]>>();
   for (const def of ctx.defs.byId.values()) {
-    if (def.ownerId !== ownerDefId) continue;
-    if (simpleNameOf(def) !== memberName) continue;
-    out.push(def);
+    if (def.ownerId === undefined) continue;
+    const name = simpleNameOf(def);
+    if (name === undefined) continue;
+    let byName = mutable.get(def.ownerId);
+    if (byName === undefined) {
+      byName = new Map();
+      mutable.set(def.ownerId, byName);
+    }
+    let defs = byName.get(name);
+    if (defs === undefined) {
+      defs = [];
+      byName.set(name, defs);
+    }
+    defs.push(def);
   }
-  return out;
+
+  const frozen = new Map<DefId, ReadonlyMap<string, readonly SymbolDefinition[]>>();
+  for (const [ownerId, byName] of mutable) {
+    const frozenByName = new Map<string, readonly SymbolDefinition[]>();
+    for (const [name, defs] of byName) {
+      frozenByName.set(name, Object.freeze([...defs]));
+    }
+    frozen.set(ownerId, frozenByName);
+  }
+
+  OWNER_MEMBER_INDEX.set(ctx, frozen);
+  return frozen;
 }
 
 function simpleNameOf(def: SymbolDefinition): string | undefined {
