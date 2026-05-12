@@ -43,6 +43,7 @@ import {
 import { PhaseTimer } from '../../core/search/phase-timer.js';
 import { checkStalenessAsync, checkCwdMatch } from '../../core/git-staleness.js';
 import { logger } from '../../core/logger.js';
+import { detectChangesTool } from './tools/detect.js';
 import { testImpactTool } from './tools/test-impact.js';
 // AI context generation is CLI-only (gitnexus analyze)
 // import { generateAIContextFiles } from '../../cli/ai-context.js';
@@ -692,7 +693,7 @@ export class LocalBackend {
       case 'test_impact':
         return testImpactTool(repo, params, (repoId) => this.ensureInitialized(repoId));
       case 'detect_changes':
-        return this.detectChanges(repo, params);
+        return detectChangesTool(repo, params, (repoId) => this.ensureInitialized(repoId));
       case 'rename':
         return this.rename(repo, params);
       // Legacy aliases for backwards compatibility

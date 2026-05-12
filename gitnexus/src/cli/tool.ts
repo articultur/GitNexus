@@ -170,21 +170,37 @@ function formatDetectChangesResult(result: any): string {
   if (result?.error) return `Error: ${result.error}`;
 
   const summary = result?.summary || {};
-  if ((summary.changed_count || 0) === 0) {
+  const changedFileCount = summary.changed_files || 0;
+  const changedSymbolCount = summary.changed_count || 0;
+  if (changedSymbolCount === 0 && changedFileCount === 0) {
     return 'No changes detected.';
   }
 
   const lines: string[] = [];
-  lines.push(`Changes: ${summary.changed_files || 0} files, ${summary.changed_count || 0} symbols`);
+  lines.push(`Changes: ${changedFileCount} files, ${changedSymbolCount} symbols`);
+  if (
+    typeof summary.risk_relevant_count === 'number' &&
+    summary.risk_relevant_count !== changedSymbolCount
+  ) {
+    lines.push(`Risk-relevant symbols: ${summary.risk_relevant_count}`);
+  }
   lines.push(`Affected processes: ${summary.affected_count || 0}`);
   lines.push(`Risk level: ${summary.risk_level || 'unknown'}`);
+  if (summary.documentation_files) {
+    lines.push(`Documentation-only files ignored for risk: ${summary.documentation_files}`);
+  }
+  if (summary.message) {
+    lines.push(String(summary.message));
+  }
   lines.push('');
 
   const changed = result?.changed_symbols || [];
   if (changed.length > 0) {
     lines.push('Changed symbols:');
     for (const symbol of changed.slice(0, 15)) {
-      lines.push(`  ${symbol.type} ${symbol.name} → ${symbol.filePath}`);
+      lines.push(
+        `  ${formatSymbolKind(symbol)} ${formatSymbolName(symbol)} → ${formatSymbolFile(symbol)}`,
+      );
     }
     if (changed.length > 15) {
       lines.push(`  ... and ${changed.length - 15} more`);
@@ -202,6 +218,24 @@ function formatDetectChangesResult(result: any): string {
   }
 
   return lines.join('\n').trim();
+}
+
+function formatSymbolKind(symbol: any): string {
+  return nonEmptyString(symbol?.type) ?? nonEmptyString(symbol?.kind) ?? 'Symbol';
+}
+
+function formatSymbolName(symbol: any): string {
+  return nonEmptyString(symbol?.name) ?? nonEmptyString(symbol?.id) ?? nonEmptyString(symbol?.uid) ?? '(unnamed symbol)';
+}
+
+function formatSymbolFile(symbol: any): string {
+  return nonEmptyString(symbol?.filePath) ?? nonEmptyString(symbol?.file) ?? '(unknown file)';
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export async function detectChangesCommand(options?: {

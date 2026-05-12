@@ -307,6 +307,24 @@ describe('formatDetectChangesResult', () => {
     expect(result).toBe('No changes detected.');
   });
 
+  it('handles doc-only file changes', () => {
+    const result = formatDetectChangesResult({
+      summary: {
+        changed_files: 2,
+        changed_count: 0,
+        affected_count: 0,
+        risk_level: 'low',
+        risk_relevant_count: 0,
+        documentation_files: 2,
+        message: 'No indexed code symbols changed.',
+      },
+    });
+    expect(result).toContain('Changes: 2 files, 0 symbols');
+    expect(result).not.toContain('Risk-relevant symbols: 0');
+    expect(result).toContain('Documentation-only files ignored for risk: 2');
+    expect(result).not.toContain('No changes detected.');
+  });
+
   it('formats changes with affected processes', () => {
     const result = formatDetectChangesResult({
       summary: { changed_files: 2, changed_count: 3, affected_count: 1, risk_level: 'MEDIUM' },
@@ -332,6 +350,23 @@ describe('formatDetectChangesResult', () => {
       affected_processes: [],
     });
     expect(result).toContain('and 5 more');
+  });
+
+  it('does not print undefined for missing changed symbol fields', () => {
+    const result = formatDetectChangesResult({
+      summary: {
+        changed_files: 1,
+        changed_count: 1,
+        risk_relevant_count: 0,
+        affected_count: 0,
+        risk_level: 'low',
+      },
+      changed_symbols: [{ id: 'Function:src/a.ts:fallbackName', file: 'src/a.ts' }],
+      affected_processes: [],
+    });
+    expect(result).toContain('Risk-relevant symbols: 0');
+    expect(result).toContain('Symbol Function:src/a.ts:fallbackName → src/a.ts');
+    expect(result).not.toContain('undefined');
   });
 });
 
