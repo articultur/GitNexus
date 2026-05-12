@@ -3,7 +3,7 @@
  *
  * Requires tree-sitter-dart.  Tests are skipped if the parser is unavailable.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { extractDartNamedBindings } from '../../../src/core/ingestion/named-bindings/dart.js';
 
 let Parser: typeof import('tree-sitter').default;
@@ -11,17 +11,15 @@ let Dart: any;
 let dartAvailable = false;
 
 // tree-sitter-dart is an optional dependency — skip tests if absent
-beforeAll(async () => {
-  try {
-    const tsModule = await import('tree-sitter');
-    Parser = tsModule.default;
-    const dartModule = await import('tree-sitter-dart');
-    Dart = dartModule.default ?? dartModule;
-    dartAvailable = true;
-  } catch {
-    dartAvailable = false;
-  }
-});
+try {
+  const tsModule = await import('tree-sitter');
+  Parser = tsModule.default;
+  const dartModule = await import('tree-sitter-dart');
+  Dart = dartModule.default ?? dartModule;
+  dartAvailable = true;
+} catch {
+  dartAvailable = false;
+}
 
 /** Walk a tree depth-first, collect all nodes of a given type. */
 function findAll(node: any, type: string): any[] {
