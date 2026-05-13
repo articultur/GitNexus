@@ -112,4 +112,22 @@ describe('community-processor', () => {
       }
     });
   });
+
+  describe('heuristicLabel uniqueness', () => {
+    it('should produce unique heuristicLabels across communities', async () => {
+      // Build a graph where two separate cliques share the same folder name,
+      // which causes generateHeuristicLabel to return the same label for both.
+      const graph = createKnowledgeGraph();
+
+      // Clique 1: 4 nodes in folder "components"
+      addClique(graph, 'a', 'components', 4);
+      // Clique 2: 3 nodes in the same folder "components"
+      addClique(graph, 'b', 'components', 3);
+
+      const result = await processCommunities(graph);
+      const labels = result.communities.map((c) => c.heuristicLabel);
+      const uniqueLabels = new Set(labels);
+      expect(labels.length).toBe(uniqueLabels.size);
+    });
+  });
 });

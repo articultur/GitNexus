@@ -309,6 +309,7 @@ const createCommunityNodes = (
   // Create community nodes - SKIP SINGLETONS (isolated nodes)
   const communityNodes: CommunityNode[] = [];
   const validCommunityIds = new Set<string>();
+  const usedLabels = new Map<string, number>();
 
   communityMembers.forEach((memberIds, commNum) => {
     // Skip singleton communities - they're just isolated nodes
@@ -317,7 +318,10 @@ const createCommunityNodes = (
     const id = `comm_${commNum}`;
     validCommunityIds.add(id);
 
-    const heuristicLabel = generateHeuristicLabel(memberIds, nodePathMap, graph, commNum);
+    const baseLabel = generateHeuristicLabel(memberIds, nodePathMap, graph, commNum);
+    const count = usedLabels.get(baseLabel) || 0;
+    usedLabels.set(baseLabel, count + 1);
+    const heuristicLabel = count > 0 ? `${baseLabel}-${count + 1}` : baseLabel;
 
     communityNodes.push({
       id,
