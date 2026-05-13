@@ -86,8 +86,8 @@ export const dataflowPhase: PipelinePhase<DataflowOutput> = {
 
     await processDataflow(
       ctx.graph,
-      undefined as any, // resolutionContext - legacy, unused
-      [], // memberships - legacy, unused
+      undefined, // resolutionContext - legacy, unused
+      undefined, // memberships - legacy, unused
       options,
       (message, percent) => {
         ctx.onProgress({

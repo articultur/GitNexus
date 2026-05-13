@@ -134,8 +134,8 @@ function convertCFGResultToCFG(result: CFGResult): import('./types.js').CFG {
  */
 export async function processDataflow(
   knowledgeGraph: KnowledgeGraph,
-  _resolutionContext: ResolutionContext,
-  _memberships: CommunityMembership[],
+  _resolutionContext?: ResolutionContext,
+  _memberships?: CommunityMembership[],
   options: Partial<DataflowOptions> = {},
   onProgress?: (message: string, progress: number) => void,
 ): Promise<void> {
