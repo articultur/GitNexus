@@ -1660,7 +1660,7 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
       const job = embedJobManager.createJob({ repoPath: entry.storagePath });
       embedJobManager.updateJob(job.id, {
         repoName: entry.name,
-        status: 'analyzing' as any,
+        status: 'analyzing',
         progress: { phase: 'analyzing', percent: 0, message: 'Starting embedding generation...' },
       });
 

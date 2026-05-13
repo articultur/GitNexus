@@ -302,9 +302,8 @@ async function bm25SearchHelper(
     return { results: [], ftsUsed: false };
   }
 
-  const ftsResponse = bm25Results as any;
-  const ftsUsed = ftsResponse.ftsAvailable !== false;
-  const bm25List: any[] = ftsResponse.results ?? bm25Results;
+  const ftsUsed = bm25Results.ftsAvailable !== false;
+  const bm25List = bm25Results.results ?? [];
 
   const results: any[] = [];
 

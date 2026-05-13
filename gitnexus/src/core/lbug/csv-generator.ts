@@ -523,7 +523,7 @@ export const streamAllCSVsToDisk = async (
         escapeCSVField(rel.type),
         escapeCSVNumber(rel.confidence, 1.0),
         escapeCSVField(rel.reason),
-        escapeCSVNumber((rel as any).step, 0),
+        escapeCSVNumber(rel.step, 0),
       ].join(','),
     );
   }

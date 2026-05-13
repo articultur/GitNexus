@@ -7,13 +7,7 @@
  */
 
 import type { GraphNode, GraphRelationship } from 'gitnexus-shared';
-import type {
-  Rule,
-  RuleContext,
-  RuleDefinition,
-  LanguageScope,
-  DetectionResult,
-} from './types.js';
+import type { Rule, RuleContext, RuleDefinition, LanguageScope, DetectionResult } from './types.js';
 
 // ── Language detection from file path ───────────────────────────────────────
 
@@ -138,7 +132,7 @@ export class RuleEngine {
         outgoingRelationships: outgoing,
         incomingRelationships: incoming,
         outgoingTargets,
-        language: languageFromPath((node.properties as any).filePath ?? ''),
+        language: languageFromPath(node.properties.filePath ?? ''),
       };
 
       const results = this.evaluateNode(ctx);

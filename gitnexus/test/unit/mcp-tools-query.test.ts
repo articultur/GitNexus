@@ -61,7 +61,7 @@ beforeEach(() => {
   // Default: no embeddings available
   mockExecuteQuery.mockResolvedValue([]);
   // Default: BM25 returns nothing
-  mockSearchFTSFromLbug.mockResolvedValue([]);
+  mockSearchFTSFromLbug.mockResolvedValue({ results: [], ftsAvailable: true });
   // Default: all DB queries return empty
   mockExecuteParameterized.mockResolvedValue([]);
 });
@@ -110,7 +110,10 @@ describe('queryTool — definitions fallback', () => {
     const symId = 'Function:src/auth/login.ts/handleLogin';
 
     // BM25 returns one file hit
-    mockSearchFTSFromLbug.mockResolvedValue([makeBM25Row(filePath)]);
+    mockSearchFTSFromLbug.mockResolvedValue({
+      results: [makeBM25Row(filePath)],
+      ftsAvailable: true,
+    });
     // Symbol lookup for that file
     mockExecuteParameterized
       .mockResolvedValueOnce([makeSymbolRow(symId, 'handleLogin', filePath)])
@@ -136,7 +139,10 @@ describe('queryTool — process grouping', () => {
     const symId = 'Function:src/auth/login.ts/handleLogin';
     const procId = 'proc:loginFlow';
 
-    mockSearchFTSFromLbug.mockResolvedValue([makeBM25Row(filePath)]);
+    mockSearchFTSFromLbug.mockResolvedValue({
+      results: [makeBM25Row(filePath)],
+      ftsAvailable: true,
+    });
     mockExecuteParameterized
       .mockResolvedValueOnce([makeSymbolRow(symId, 'handleLogin', filePath)]) // symbol lookup
       .mockResolvedValueOnce([
@@ -163,10 +169,13 @@ describe('queryTool — process grouping', () => {
     const filePath = 'src/auth/login.ts';
     const symId = 'Function:src/auth/login.ts/handleLogin';
 
-    mockSearchFTSFromLbug.mockResolvedValue([
-      makeBM25Row(filePath, 1.5),
-      // Same file listed again with slightly lower score (should be merged by RRF)
-    ]);
+    mockSearchFTSFromLbug.mockResolvedValue({
+      results: [
+        makeBM25Row(filePath, 1.5),
+        // Same file listed again with slightly lower score (should be merged by RRF)
+      ],
+      ftsAvailable: true,
+    });
     mockExecuteParameterized
       .mockResolvedValueOnce([makeSymbolRow(symId, 'handleLogin', filePath)])
       .mockResolvedValueOnce([
@@ -194,7 +203,10 @@ describe('queryTool — process grouping', () => {
 describe('queryTool — FTS degraded warning', () => {
   it('does NOT include warning when FTS works', async () => {
     // ftsUsed=true means FTS was available
-    mockSearchFTSFromLbug.mockResolvedValue([{ ...makeBM25Row('src/foo.ts'), ftsUsed: true }]);
+    mockSearchFTSFromLbug.mockResolvedValue({
+      results: [{ ...makeBM25Row('src/foo.ts'), ftsUsed: true }],
+      ftsAvailable: true,
+    });
     mockExecuteParameterized.mockResolvedValue([]);
 
     const result = await queryTool(REPO, { query: 'foo' }, ensureInit);

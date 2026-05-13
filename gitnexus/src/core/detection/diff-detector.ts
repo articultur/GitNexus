@@ -15,9 +15,9 @@ import type { GraphNode, GraphRelationship } from 'gitnexus-shared';
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export type ChangeType =
-  | 'added_edge'       // New CALLS/IMPORTS edge — new dependency introduced
-  | 'removed_edge'     // Edge removed — caller may break
-  | 'guard_removed'    // Error handling removed from function content
+  | 'added_edge' // New CALLS/IMPORTS edge — new dependency introduced
+  | 'removed_edge' // Edge removed — caller may break
+  | 'guard_removed' // Error handling removed from function content
   | 'signature_changed'; // Function/method signature changed
 
 export type RiskSeverity = 'critical' | 'high' | 'medium' | 'low';
@@ -79,8 +79,8 @@ function classifyEdgeChange(
 ): { severity: RiskSeverity; message: string } {
   const sourceNode = nodeLookup.get(rel.sourceId);
   const targetNode = nodeLookup.get(rel.targetId);
-  const sourceName = (sourceNode?.properties as any)?.name ?? rel.sourceId;
-  const targetName = (targetNode?.properties as any)?.name ?? rel.targetId;
+  const sourceName = sourceNode?.properties.name ?? rel.sourceId;
+  const targetName = targetNode?.properties.name ?? rel.targetId;
 
   if (rel.type === 'CALLS') {
     if (change === 'removed') {
@@ -134,7 +134,10 @@ function detectGuardRemoval(
     const hadBefore = pattern.test(beforeContent);
     const hasAfter = pattern.test(afterContent);
     if (hadBefore && !hasAfter) {
-      const guardName = pattern.source.replace(/\\b/g, '').replace(/\\s\*/g, ' ').replace(/\\/g, '');
+      const guardName = pattern.source
+        .replace(/\\b/g, '')
+        .replace(/\\s\*/g, ' ')
+        .replace(/\\/g, '');
       results.push({
         description: `${functionName}: ${guardName} guard removed`,
         before: `had ${guardName}`,
@@ -156,8 +159,8 @@ function detectSignatureChange(
   afterNode: GraphNode,
 ): Array<{ description: string; before: string; after: string }> {
   const results: Array<{ description: string; before: string; after: string }> = [];
-  const bp = beforeNode.properties as any;
-  const ap = afterNode.properties as any;
+  const bp = beforeNode.properties;
+  const ap = afterNode.properties;
 
   // Parameter count change
   if (bp.parameterCount !== undefined && ap.parameterCount !== undefined) {
@@ -216,8 +219,8 @@ export class DiffDetector {
         const sourceNode = allNodeLookup.get(rel.sourceId);
         changes.push({
           symbolId: rel.sourceId,
-          symbolName: (sourceNode?.properties as any)?.name ?? rel.sourceId,
-          filePath: (sourceNode?.properties as any)?.filePath ?? '',
+          symbolName: sourceNode?.properties.name ?? rel.sourceId,
+          filePath: sourceNode?.properties.filePath ?? '',
           changeType: 'added_edge',
           severity,
           message,
@@ -236,8 +239,8 @@ export class DiffDetector {
         const sourceNode = allNodeLookup.get(rel.sourceId);
         changes.push({
           symbolId: rel.sourceId,
-          symbolName: (sourceNode?.properties as any)?.name ?? rel.sourceId,
-          filePath: (sourceNode?.properties as any)?.filePath ?? '',
+          symbolName: sourceNode?.properties.name ?? rel.sourceId,
+          filePath: sourceNode?.properties.filePath ?? '',
           changeType: 'removed_edge',
           severity,
           message,
@@ -256,12 +259,12 @@ export class DiffDetector {
         const node = allNodeLookup.get(symbolId);
         if (!node) continue;
 
-        const guardChanges = detectGuardRemoval(before, after, (node.properties as any)?.name ?? symbolId);
+        const guardChanges = detectGuardRemoval(before, after, node.properties.name ?? symbolId);
         for (const gc of guardChanges) {
           changes.push({
             symbolId,
-            symbolName: (node.properties as any)?.name ?? symbolId,
-            filePath: (node.properties as any)?.filePath ?? '',
+            symbolName: node.properties.name ?? symbolId,
+            filePath: node.properties.filePath ?? '',
             changeType: 'guard_removed',
             severity: 'high',
             message: gc.description,
@@ -281,8 +284,8 @@ export class DiffDetector {
       for (const sc of sigChanges) {
         changes.push({
           symbolId: id,
-          symbolName: (headNode.properties as any)?.name ?? id,
-          filePath: (headNode.properties as any)?.filePath ?? '',
+          symbolName: headNode.properties.name ?? id,
+          filePath: headNode.properties.filePath ?? '',
           changeType: 'signature_changed',
           severity: 'medium',
           message: sc.description,
