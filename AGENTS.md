@@ -62,7 +62,7 @@ Commands and gotchas live under **Repo reference** below and in **[CONTRIBUTING.
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **gitnexus** (21817 symbols, 30657 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **GitNexus** (44 symbols, 43 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -85,10 +85,10 @@ This project is indexed by GitNexus as **gitnexus** (21817 symbols, 30657 relati
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/gitnexus/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/gitnexus/clusters` | All functional areas |
-| `gitnexus://repo/gitnexus/processes` | All execution flows |
-| `gitnexus://repo/gitnexus/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/GitNexus/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/GitNexus/clusters` | All functional areas |
+| `gitnexus://repo/GitNexus/processes` | All execution flows |
+| `gitnexus://repo/GitNexus/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
@@ -100,10 +100,6 @@ This project is indexed by GitNexus as **gitnexus** (21817 symbols, 30657 relati
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-| Refactoring | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools/resources/schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| CLI commands (index, status, clean, wiki) | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
->>>>>>> fork/main
 
 <!-- gitnexus:end -->
 
