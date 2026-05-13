@@ -173,7 +173,7 @@ export const processCommunities = async (
   onProgress?.(`Found ${details.count} communities...`, 60);
 
   // Step 3: Create community nodes with heuristic labels
-  const communityNodes = createCommunityNodes(
+  const { communityNodes, validCommunityIds } = createCommunityNodes(
     details.communities as Record<string, number>,
     details.count,
     graph,
@@ -182,13 +182,16 @@ export const processCommunities = async (
 
   onProgress?.('Creating membership edges...', 80);
 
-  // Step 4: Create membership mappings
+  // Step 4: Create membership mappings (only for non-singleton communities)
   const memberships: CommunityMembership[] = [];
   Object.entries(details.communities).forEach(([nodeId, communityNum]) => {
-    memberships.push({
-      nodeId,
-      communityId: `comm_${communityNum}`,
-    });
+    const communityId = `comm_${communityNum}`;
+    if (validCommunityIds.has(communityId)) {
+      memberships.push({
+        nodeId,
+        communityId,
+      });
+    }
   });
 
   onProgress?.('Community detection complete!', 100);
@@ -271,6 +274,11 @@ const buildGraphologyGraph = (knowledgeGraph: KnowledgeGraph, isLarge: boolean):
 // HELPER: Create community nodes with heuristic labels
 // ============================================================================
 
+interface CreateCommunityNodesResult {
+  communityNodes: CommunityNode[];
+  validCommunityIds: Set<string>;
+}
+
 /**
  * Create Community nodes with auto-generated labels based on member file paths
  */
@@ -279,7 +287,7 @@ const createCommunityNodes = (
   communityCount: number,
   graph: GraphInstance,
   knowledgeGraph: KnowledgeGraph,
-): CommunityNode[] => {
+): CreateCommunityNodesResult => {
   // Group node IDs by community
   const communityMembers = new Map<number, string[]>();
 
@@ -300,15 +308,19 @@ const createCommunityNodes = (
 
   // Create community nodes - SKIP SINGLETONS (isolated nodes)
   const communityNodes: CommunityNode[] = [];
+  const validCommunityIds = new Set<string>();
 
   communityMembers.forEach((memberIds, commNum) => {
     // Skip singleton communities - they're just isolated nodes
     if (memberIds.length < 2) return;
 
+    const id = `comm_${commNum}`;
+    validCommunityIds.add(id);
+
     const heuristicLabel = generateHeuristicLabel(memberIds, nodePathMap, graph, commNum);
 
     communityNodes.push({
-      id: `comm_${commNum}`,
+      id,
       label: heuristicLabel,
       heuristicLabel,
       cohesion: calculateCohesion(memberIds, graph),
@@ -319,7 +331,7 @@ const createCommunityNodes = (
   // Sort by size descending
   communityNodes.sort((a, b) => b.symbolCount - a.symbolCount);
 
-  return communityNodes;
+  return { communityNodes, validCommunityIds };
 };
 
 // ============================================================================
