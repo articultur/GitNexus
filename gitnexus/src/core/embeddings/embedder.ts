@@ -156,7 +156,7 @@ export const initEmbedder = async (
   // provider libraries are missing. DirectML stays opt-in for the same reason.
   // Probe for CUDA first — ONNX Runtime crashes (uncatchable native error)
   // if we attempt CUDA without the required shared libraries
-  const gpuDevice = isCudaAvailable() ? 'cuda' : 'cpu';
+  const gpuDevice = process.platform === 'win32' ? 'dml' : isCudaAvailable() ? 'cuda' : 'cpu';
   const requestedDevice =
     forceDevice || (finalConfig.device === 'auto' ? gpuDevice : finalConfig.device);
 
