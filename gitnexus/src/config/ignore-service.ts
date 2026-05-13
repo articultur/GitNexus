@@ -46,6 +46,7 @@ const DEFAULT_IGNORE_LIST = new Set([
 
   // Build Outputs
   'dist',
+  'esm',
   'build',
   'out',
   'output',
