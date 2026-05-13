@@ -36,7 +36,10 @@ describe('storage/git', () => {
     it('returns the current commit hash trimmed', () => {
       mockExecSync.mockReturnValue(Buffer.from('abc123def456\n'));
       expect(gitModule.getCurrentCommit('/repo')).toBe('abc123def456');
-      expect(mockExecSync).toHaveBeenCalledWith('git rev-parse HEAD', { cwd: '/repo' });
+      expect(mockExecSync).toHaveBeenCalledWith('git rev-parse HEAD', {
+        cwd: '/repo',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
     });
 
     it('returns empty string when git command fails', () => {
