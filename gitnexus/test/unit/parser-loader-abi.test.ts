@@ -117,6 +117,17 @@ const SMOKE_CASES: Record<string, SmokeCase> = {
     snippet: 'fun main() {}\n',
     rootType: 'source_file',
   },
+  [SupportedLanguages.ArkTS]: {
+    language: SupportedLanguages.ArkTS,
+    snippet: 'export const x: number = 1;\n',
+    rootType: 'program',
+  },
+  [SupportedLanguages.ObjectiveC]: {
+    language: SupportedLanguages.ObjectiveC,
+    filePath: 'a.m',
+    snippet: '@interface Foo\n@end\n',
+    rootType: 'translation_unit',
+  },
 };
 
 describe('parser-loader ABI load-smoke (#1922)', () => {

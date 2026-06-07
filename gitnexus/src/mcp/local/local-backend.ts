@@ -26,35 +26,107 @@ export { isWriteQuery };
  * Catches property-not-found and label-not-found errors and suggests alternatives.
  */
 const KNOWN_NODE_LABELS = [
-  'File', 'Folder', 'Function', 'Class', 'Interface', 'Method', 'CodeElement',
-  'Community', 'Process', 'Route', 'Tool', 'Section',
-  'Struct', 'Enum', 'Trait', 'Impl', 'TypeAlias', 'Const', 'Static',
-  'Property', 'Record', 'Delegate', 'Annotation', 'Constructor', 'Template', 'Module',
+  'File',
+  'Folder',
+  'Function',
+  'Class',
+  'Interface',
+  'Method',
+  'CodeElement',
+  'Community',
+  'Process',
+  'Route',
+  'Tool',
+  'Section',
+  'Struct',
+  'Enum',
+  'Trait',
+  'Impl',
+  'TypeAlias',
+  'Const',
+  'Static',
+  'Property',
+  'Record',
+  'Delegate',
+  'Annotation',
+  'Constructor',
+  'Template',
+  'Module',
 ];
 
 const KNOWN_REL_TYPES = [
-  'CONTAINS', 'DEFINES', 'CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS',
-  'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'METHOD_OVERRIDES', 'METHOD_IMPLEMENTS',
-  'MEMBER_OF', 'STEP_IN_PROCESS', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL',
-  'ENTRY_POINT_OF', 'WRAPS', 'QUERIES', 'DATA_FLOW', 'PROPAGATES',
-  'RETURNS', 'TAINTED', 'SANITIZES', 'SINK_REACHABLE', 'ALIASES', 'CFG_EDGE',
+  'CONTAINS',
+  'DEFINES',
+  'CALLS',
+  'IMPORTS',
+  'EXTENDS',
+  'IMPLEMENTS',
+  'HAS_METHOD',
+  'HAS_PROPERTY',
+  'ACCESSES',
+  'METHOD_OVERRIDES',
+  'METHOD_IMPLEMENTS',
+  'MEMBER_OF',
+  'STEP_IN_PROCESS',
+  'HANDLES_ROUTE',
+  'FETCHES',
+  'HANDLES_TOOL',
+  'ENTRY_POINT_OF',
+  'WRAPS',
+  'QUERIES',
+  'DATA_FLOW',
+  'PROPAGATES',
+  'RETURNS',
+  'TAINTED',
+  'SANITIZES',
+  'SINK_REACHABLE',
+  'ALIASES',
+  'CFG_EDGE',
 ];
 
 function getCypherErrorHint(msg: string): string | undefined {
   // Property not found on node
-  const propMatch = msg.match(/Cannot find property\s+'(\w+)'/i) ?? msg.match(/property\s+'(\w+)'\s+does not exist/i);
+  const propMatch =
+    msg.match(/Cannot find property\s+'(\w+)'/i) ??
+    msg.match(/property\s+'(\w+)'\s+does not exist/i);
   if (propMatch) {
     const prop = propMatch[1];
-    const commonProps = ['name', 'filePath', 'startLine', 'endLine', 'parameterCount', 'returnType',
-      'visibility', 'isStatic', 'isAsync', 'heuristicLabel', 'processType', 'stepCount',
-      'communities', 'cohesion', 'symbolCount', 'keywords', 'description', 'confidence', 'reason', 'step',
-      'url', 'method', 'declaredType', 'isOverride', 'isFinal', 'isVirtual', 'isAbstract'];
+    const commonProps = [
+      'name',
+      'filePath',
+      'startLine',
+      'endLine',
+      'parameterCount',
+      'returnType',
+      'visibility',
+      'isStatic',
+      'isAsync',
+      'heuristicLabel',
+      'processType',
+      'stepCount',
+      'communities',
+      'cohesion',
+      'symbolCount',
+      'keywords',
+      'description',
+      'confidence',
+      'reason',
+      'step',
+      'url',
+      'method',
+      'declaredType',
+      'isOverride',
+      'isFinal',
+      'isVirtual',
+      'isAbstract',
+    ];
     const suggestion = closestMatch(prop, commonProps);
     return `Property '${prop}' not found.${suggestion ? ` Did you mean '${suggestion}'?` : ''} READ gitnexus://repo/{name}/schema for full property list.`;
   }
 
   // Label not found
-  const labelMatch = msg.match(/label\s+'(\w+)'\s+does not exist/i) ?? msg.match(/unknown label\s+'(\w+)'/i);
+  const labelMatch =
+    msg.match(/label\s+'(\w+)'\s+does not exist/i) ?? msg.match(/unknown label\s+'(\w+)'/i);
   if (labelMatch) {
     const label = labelMatch[1];
     const suggestion = closestMatch(label, KNOWN_NODE_LABELS);
@@ -89,13 +161,17 @@ function closestMatch(input: string, candidates: string[]): string | undefined {
     // Prefix match
     if (cl.startsWith(lower) || lower.startsWith(cl)) {
       const dist = Math.abs(cl.length - lower.length);
-      if (dist < bestDist) { bestDist = dist; best = c; }
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = c;
+      }
     }
     // Levenshtein for close matches (only if short enough)
     if (input.length <= 20 && c.length <= 20) {
       const d = levenshtein(lower, cl);
       if (d < bestDist && d <= Math.max(2, Math.floor(lower.length / 3))) {
-        bestDist = d; best = c;
+        bestDist = d;
+        best = c;
       }
     }
   }
@@ -103,15 +179,17 @@ function closestMatch(input: string, candidates: string[]): string | undefined {
 }
 
 function levenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length;
+  const m = a.length,
+    n = b.length;
   const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
   for (let i = 0; i <= m; i++) dp[i][0] = i;
   for (let j = 0; j <= n; j++) dp[0][j] = j;
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
     }
   }
   return dp[m][n];
@@ -1288,7 +1366,7 @@ export class LocalBackend {
       entryPointGroups.get(key)!.push(proc.id);
     }
 
-    const aggregated = new Map<string, { proc: typeof processes[0]; symbolIds: Set<string> }>();
+    const aggregated = new Map<string, { proc: (typeof processes)[0]; symbolIds: Set<string> }>();
     const usedProcessIds = new Set<string>();
 
     for (const [_entryKey, procIds] of entryPointGroups) {
@@ -1756,9 +1834,8 @@ export class LocalBackend {
     let searchFTSFromLbug: (query: string, limit: number, repoId?: string) => Promise<any>;
     let getFTSHealthWarning: ((response: any) => string | undefined) | undefined;
     try {
-      ({ searchFTSFromLbug, getFTSHealthWarning } = await import(
-        '../../core/search/bm25-index.js'
-      ));
+      ({ searchFTSFromLbug, getFTSHealthWarning } =
+        await import('../../core/search/bm25-index.js'));
     } catch (err: any) {
       // Module import can fail in sandboxed MCP contexts (#1489)
       logger.warn(
@@ -2391,15 +2468,17 @@ export class LocalBackend {
     if (rows.length === 0) return { kind: 'not_found' };
 
     // Normalise row shape across object / tuple returns from LadybugDB.
-    const normalized = preferSourceArtifacts(rows.map((r: any) => ({
-      id: (r.id ?? r[0]) as string,
-      name: (r.name ?? r[1]) as string,
-      type: (r.type ?? r[2] ?? '') as string,
-      filePath: (r.filePath ?? r[3]) as string,
-      startLine: (r.startLine ?? r[4]) as number,
-      endLine: (r.endLine ?? r[5]) as number,
-      ...(include_content ? { content: (r.content ?? r[6]) as string | undefined } : {}),
-    })));
+    const normalized = preferSourceArtifacts(
+      rows.map((r: any) => ({
+        id: (r.id ?? r[0]) as string,
+        name: (r.name ?? r[1]) as string,
+        type: (r.type ?? r[2] ?? '') as string,
+        filePath: (r.filePath ?? r[3]) as string,
+        startLine: (r.startLine ?? r[4]) as number,
+        endLine: (r.endLine ?? r[5]) as number,
+        ...(include_content ? { content: (r.content ?? r[6]) as string | undefined } : {}),
+      })),
+    );
 
     // Enrich labels for any candidates where `labels(n)[0]` came back empty.
     // LadybugDB returns an empty string for that projection on certain node
@@ -2816,9 +2895,7 @@ export class LocalBackend {
     let callerContentMap: Map<string, string | null> | undefined;
     if (include_callers_content) {
       const callerUids = [
-        ...new Set(
-          (incomingRows as any[]).map((r) => r.uid || r[1]).filter(Boolean) as string[],
-        ),
+        ...new Set((incomingRows as any[]).map((r) => r.uid || r[1]).filter(Boolean) as string[]),
       ];
       if (callerUids.length > 0) {
         try {
@@ -3443,11 +3520,12 @@ export class LocalBackend {
   }
 
   private async impact(repo: RepoHandle, params: ImpactParams): Promise<any> {
+    const resolvedTarget = params.target ?? params.target_uid;
     // Batch mode when targets[] is provided and non-empty.
     if (params.targets && params.targets.length > 0) {
       return this._batchImpact(repo, params, params.targets);
     }
-    if (!params.target) {
+    if (!resolvedTarget) {
       return {
         error: 'Either target or targets must be provided',
         direction: params.direction,
@@ -3456,12 +3534,14 @@ export class LocalBackend {
       };
     }
     try {
-      return await this._impactImpl(repo, params as ImpactParams & { target: string });
+      return await this._impactImpl(repo, { ...params, target: resolvedTarget } as ImpactParams & {
+        target: string;
+      });
     } catch (err: any) {
       // Return structured error instead of crashing (#321)
       return {
         error: (err instanceof Error ? err.message : String(err)) || 'Impact analysis failed',
-        target: { name: params.target },
+        target: { name: resolvedTarget },
         direction: params.direction,
         impactedCount: 0,
         risk: 'UNKNOWN',
