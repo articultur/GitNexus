@@ -6,7 +6,13 @@
  */
 
 import fs from 'fs/promises';
+import path from 'path';
 import { logger } from '../core/logger.js';
+import {
+  cleanQuarantinedMissingShadowWals,
+  inspectLbugSidecars,
+  listQuarantinedMissingShadowWals,
+} from '../core/lbug/sidecar-recovery.js';
 import {
   findRepo,
   unregisterRepo,
@@ -15,7 +21,7 @@ import {
   UnsafeStoragePathError,
 } from '../storage/repo-manager.js';
 
-type CleanOptions = { force?: boolean; all?: boolean };
+type CleanOptions = { force?: boolean; all?: boolean; lbugSidecars?: boolean };
 
 const normalizeCleanOptions = (value: unknown): CleanOptions => {
   if (!value || typeof value !== 'object') return {};
@@ -34,6 +40,37 @@ export const cleanCommand = async (
     typeof nameOrOptions === 'object'
       ? normalizeCleanOptions(nameOrOptions)
       : normalizeCleanOptions(commandOrOptions);
+
+  if (options?.lbugSidecars) {
+    const repo = await findRepo(process.cwd());
+    if (!repo) {
+      console.log('No indexed repository found in this directory.');
+      return;
+    }
+
+    const lbugPath = path.join(repo.storagePath, 'lbug');
+    const state = await inspectLbugSidecars(lbugPath);
+    const quarantined = await listQuarantinedMissingShadowWals(lbugPath);
+
+    console.log(`LadybugDB sidecar state: ${state.kind}`);
+    if (quarantined.length === 0) {
+      console.log('No quarantined LadybugDB sidecars found.');
+      return;
+    }
+
+    if (!options.force) {
+      console.log(`This will delete ${quarantined.length} quarantined sidecar file(s):`);
+      for (const file of quarantined) {
+        console.log(`  - ${file}`);
+      }
+      console.log('\nRun with --force to confirm deletion.');
+      return;
+    }
+
+    const deleted = await cleanQuarantinedMissingShadowWals(lbugPath);
+    console.log(`Deleted ${deleted.length} quarantined sidecar file(s).`);
+    return;
+  }
 
   // --all flag: clean all indexed repos
   if (options?.all) {

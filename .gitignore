@@ -34,7 +34,8 @@ eval/.coverage
 eval/.hypothesis/
 
 # Claude Code
-.claude/
+!.claude/
+!gitnexus/.claude/
 !.claude/skills/gitnexus/
 .claude-flow/
 .history/
@@ -46,6 +47,18 @@ HANDOFF*.md
 
 # Generated files
 repomix-output*
+
+# Playwright artifacts
+gitnexus-web/playwright-report/
+gitnexus-web/test-results/
+
+# Python test artifacts
+eval/.coverage
+eval/.hypothesis/
+
+# Local docs
+docs/
+
 gitnexus/test/fixtures/mini-repo/*.md
 gitnexus/test/fixtures/mini-repo/.claude
 gitnexus/test/fixtures/mini-repo/.gitignore
@@ -80,6 +93,14 @@ eval/data/
 docs/plans/
 docs/superpowers/
 local_docs/
+
+.claude/agents/*
+!.claude/agents/gitnexus-*.md
+.claude/commands/
+.claude/helpers
+.claude/skills/*
+!.claude/skills/gitnexus/
+!.claude/skills/gitnexus-pr-swarm-review/
 
 # Vercel
 .vercel

@@ -73,11 +73,6 @@ const CSHARP_DECL_TYPES = new Set([
   'struct_declaration',
   'enum_declaration',
   'record_declaration',
-  // tree-sitter-c-sharp absorbs 'record struct' and 'record class' into
-  // record_declaration — these two node types are listed defensively but
-  // never emitted by the grammar in practice (verified against ^0.23.1).
-  'record_struct_declaration',
-  'record_class_declaration',
   'delegate_declaration',
   'property_declaration',
   'field_declaration',
@@ -175,7 +170,7 @@ export const kotlinExportChecker: ExportChecker = (node, _name) => {
  * making them globally accessible (equivalent to exported). Only functions explicitly
  * marked 'static' or 'inline' are file-scoped (not exported). C++ anonymous namespaces
  * (namespace { ... }) also give internal linkage.
- * 
+ *
  * Note: inline functions with external linkage in C++17+ may still be exported,
  * but we treat them conservatively as non-exported for the purpose of static analysis.
  */

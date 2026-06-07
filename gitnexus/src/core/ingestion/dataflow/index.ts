@@ -13,7 +13,6 @@
 import { readFileSync } from 'fs';
 import { join, isAbsolute } from 'path';
 import type { KnowledgeGraph } from '../../graph/types.js';
-import type { ResolutionContext } from '../model/resolution-context.js';
 import type { CommunityMembership } from '../community-processor.js';
 import { buildCFGFromStatements, cfgToResult, parseStatements } from './cfg-builder.js';
 import { buildCFGFromTSG, isTSGAvailable } from './cfg-from-tsg.js';
@@ -134,7 +133,7 @@ function convertCFGResultToCFG(result: CFGResult): import('./types.js').CFG {
  */
 export async function processDataflow(
   knowledgeGraph: KnowledgeGraph,
-  _resolutionContext?: ResolutionContext,
+  _resolutionContext?: unknown,
   _memberships?: CommunityMembership[],
   options: Partial<DataflowOptions> = {},
   onProgress?: (message: string, progress: number) => void,

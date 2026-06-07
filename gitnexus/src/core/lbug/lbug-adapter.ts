@@ -1,9 +1,11 @@
 import fs from 'fs/promises';
-import { createReadStream, createWriteStream } from 'fs';
+import { createReadStream, createWriteStream, constants as fsConstants } from 'fs';
 import { createInterface } from 'readline';
 import { once } from 'events';
 import { finished } from 'stream/promises';
 import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
 import lbug from '@ladybugdb/core';
 import { KnowledgeGraph } from '../graph/types.js';
 import {
@@ -14,11 +16,6 @@ import {
   STALE_HASH_SENTINEL,
   NodeTableName,
 } from './schema.js';
-import {
-  CURRENT_SCHEMA_VERSION,
-  attemptIncrementalMigration,
-  formatSchemaRebuildInstructions,
-} from './schema-version.js';
 import { streamAllCSVsToDisk } from './csv-generator.js';
 import type { CachedEmbedding } from '../embeddings/types.js';
 import { extensionManager, type ExtensionEnsureOptions } from './extension-loader.js';
@@ -26,10 +23,23 @@ import {
   closeLbugConnection,
   isDbBusyError,
   isOpenRetryExhausted,
+  isWalCorruptionError,
   openLbugConnection,
+  toNativeSafePath,
+  WAL_RECOVERY_SUGGESTION,
   waitForWindowsHandleRelease,
   type LbugConnectionHandle,
 } from './lbug-config.js';
+import {
+  finalizeLbugSidecarsAfterClose,
+  inspectLbugSidecars,
+  isMissingShadowSidecarError,
+  isReadOnlyShadowReplayError,
+  preflightLbugSidecars,
+  quarantineWalForMissingShadow,
+  renameFailureMessage,
+  shadowSidecarRecoveryMessage,
+} from './sidecar-recovery.js';
 import { isVectorExtensionSupportedByPlatform } from '../platform/capabilities.js';
 
 import { logger } from '../logger.js';
@@ -157,6 +167,7 @@ export const splitRelCsvByLabelPair = async (
 let db: lbug.Database | null = null;
 let conn: lbug.Connection | null = null;
 let currentDbPath: string | null = null;
+let currentDbReadOnly = false;
 let ftsLoaded = false;
 let vectorExtensionLoaded = false;
 
@@ -206,22 +217,431 @@ export const isReadOnlyDbError = (err: unknown): boolean => {
   return /read-only database/i.test(msg);
 };
 
+const isMissingFileError = (err: unknown): boolean => {
+  const errno = err as NodeJS.ErrnoException;
+  return errno?.code === 'ENOENT';
+};
+
+const extractErrnoCode = (err: unknown): string | undefined => {
+  const errno = err as NodeJS.ErrnoException;
+  return errno?.code;
+};
+
+const MAX_LOGGED_ERROR_MESSAGE_LENGTH = 160;
+
+const summarizeError = (err: unknown): string =>
+  (err instanceof Error ? err.message : String(err)).slice(0, MAX_LOGGED_ERROR_MESSAGE_LENGTH);
+
+// ---------------------------------------------------------------------------
+// Cross-process init lock
+//
+// Prevents a TOCTOU race in orphan sidecar cleanup: between checking that
+// the main DB file is missing and unlinking sidecars, another process could
+// create a fresh DB. The lock file (`${dbPath}.init.lock`) is created with
+// O_CREAT | O_EXCL (atomic create-or-fail) and contains the owning PID +
+// timestamp so stale locks from crashed processes can be reclaimed.
+// ---------------------------------------------------------------------------
+
+/** Maximum age (ms) before an init lock is considered stale. */
+const INIT_LOCK_STALE_MS = 30_000;
+/** Maximum attempts to acquire the init lock before giving up. */
+const INIT_LOCK_MAX_ATTEMPTS = 6;
+/** Delay between lock-acquisition retries (ms). */
+const INIT_LOCK_RETRY_DELAY_MS = 500;
+
+const initLockPath = (dbPath: string): string => `${dbPath}.init.lock`;
+
+/**
+ * Returns true when the process identified by `pid` is still running.
+ * Uses `process.kill(pid, 0)` which sends signal 0 (a no-op probe) —
+ * it throws ESRCH when the process does not exist.
+ */
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Try to break a stale lock whose owning process has exited.
+ * Returns `true` if the stale lock was removed (caller should retry acquire).
+ * Returns `false` if the lock is still valid (another live process owns it).
+ */
+const tryBreakStaleLock = async (lockPath: string): Promise<boolean> => {
+  try {
+    const content = await fs.readFile(lockPath, 'utf-8');
+    const parsed = JSON.parse(content) as { pid?: number; ts?: number };
+
+    // If the owning process is still alive AND the lock is not stale, don't break.
+    if (typeof parsed.pid === 'number' && isProcessAlive(parsed.pid)) {
+      // Even a live process's lock can be stale if it's been held too long
+      // (e.g. the process is hung). Check the timestamp.
+      if (typeof parsed.ts === 'number' && Date.now() - parsed.ts < INIT_LOCK_STALE_MS) {
+        return false;
+      }
+    }
+
+    // PID is gone or lock exceeded INIT_LOCK_STALE_MS — reclaim it.
+    await fs.unlink(lockPath);
+    logger.warn(
+      `GitNexus: removed stale init lock (pid=${parsed.pid ?? '?'}, age=${typeof parsed.ts === 'number' ? `${Date.now() - parsed.ts}ms` : '?'})`,
+    );
+    return true;
+  } catch (err) {
+    // Lock file disappeared between our read and unlink, or is unreadable.
+    // Either way, let the caller retry the acquire.
+    if (isMissingFileError(err)) return true;
+    // Permission error or corrupt content — log and let caller retry.
+    const code = extractErrnoCode(err);
+    logger.warn(
+      `GitNexus: unable to inspect init lock (${code ?? 'UNKNOWN'}): ${summarizeError(err)}`,
+    );
+    return false;
+  }
+};
+
+/**
+ * Acquire a cross-process init lock for `dbPath`.
+ * Uses `O_CREAT | O_EXCL` for atomic create-or-fail semantics.
+ *
+ * Returns a release function that removes the lock file. The release
+ * function is idempotent and safe to call even if the lock was already
+ * cleaned up externally.
+ *
+ * Throws if the lock cannot be acquired after `INIT_LOCK_MAX_ATTEMPTS`.
+ */
+export const acquireInitLock = async (dbPath: string): Promise<() => Promise<void>> => {
+  const lockPath = initLockPath(dbPath);
+  const payload = JSON.stringify({ pid: process.pid, ts: Date.now() });
+
+  // Ensure the parent directory exists before creating the lock file.
+  // On a fresh repo the `.gitnexus/` directory may not exist yet, and
+  // fs.open with O_CREAT | O_EXCL would fail with ENOENT.
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
+
+  for (let attempt = 1; attempt <= INIT_LOCK_MAX_ATTEMPTS; attempt++) {
+    try {
+      const handle = await fs.open(
+        lockPath,
+        fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY,
+      );
+      await handle.writeFile(payload);
+      await handle.close();
+
+      // Return the idempotent release function
+      return async () => {
+        try {
+          await fs.unlink(lockPath);
+        } catch (err) {
+          if (!isMissingFileError(err)) {
+            const code = extractErrnoCode(err);
+            logger.warn(
+              `GitNexus: failed to release init lock (${code ?? 'UNKNOWN'}): ${summarizeError(err)}`,
+            );
+          }
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+        throw err; // Unexpected error — propagate immediately
+      }
+
+      // Lock file exists — check if it's stale
+      const broken = await tryBreakStaleLock(lockPath);
+      if (broken && attempt < INIT_LOCK_MAX_ATTEMPTS) {
+        continue; // Stale lock removed — retry immediately
+      }
+
+      if (attempt === INIT_LOCK_MAX_ATTEMPTS) {
+        throw new Error(
+          `GitNexus: unable to acquire init lock after ${INIT_LOCK_MAX_ATTEMPTS} attempts — ` +
+            `another gitnexus process may be initializing the same database (${lockPath})`,
+        );
+      }
+
+      // Live process holds the lock — wait and retry
+      await new Promise((resolve) => setTimeout(resolve, INIT_LOCK_RETRY_DELAY_MS));
+    }
+  }
+
+  // Unreachable — loop always throws or returns
+  throw new Error('GitNexus: init lock acquisition failed unexpectedly');
+};
+
+/** Exported for testing — returns the lock file path for a given dbPath. */
+export const _initLockPathForTest = initLockPath;
+
 const runWithSessionLock = async <T>(operation: () => Promise<T>): Promise<T> => {
   const previous = sessionLock;
-  let releaseFn: (() => void) | undefined = undefined;
+  let release!: () => void;
   sessionLock = new Promise<void>((resolve) => {
-    releaseFn = resolve;
+    release = resolve;
   });
 
   await previous;
   try {
     return await operation();
   } finally {
-    if (releaseFn !== undefined) (releaseFn as () => void)();
+    release();
   }
 };
 
-const normalizeCopyPath = (filePath: string): string => filePath.replace(/\\/g, '/');
+const normalizeCopyPath = (filePath: string): string =>
+  toNativeSafePath(filePath).replace(/\\/g, '/');
+
+const closeQueryResult = async (result: lbug.QueryResult): Promise<void> => {
+  try {
+    await result.close();
+  } catch {
+    // Best-effort cleanup only.
+  }
+};
+
+const drainQueryResult = async (
+  queryResult: lbug.QueryResult | lbug.QueryResult[],
+): Promise<void> => {
+  const results = Array.isArray(queryResult) ? queryResult : [queryResult];
+  let firstError: unknown;
+  let hasError = false;
+  for (const result of results) {
+    try {
+      await result.getAll();
+    } catch (err) {
+      if (!hasError) {
+        firstError = err;
+        hasError = true;
+      }
+    } finally {
+      await closeQueryResult(result);
+    }
+  }
+  if (hasError) throw firstError;
+};
+
+const readQueryRows = async (
+  queryResult: lbug.QueryResult | lbug.QueryResult[],
+): Promise<any[]> => {
+  const results = Array.isArray(queryResult) ? queryResult : [queryResult];
+  let rows: any[] = [];
+  let firstError: unknown;
+  let hasError = false;
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    try {
+      const resultRows = await result.getAll();
+      if (i === 0) rows = resultRows;
+    } catch (err) {
+      if (!hasError) {
+        firstError = err;
+        hasError = true;
+      }
+    } finally {
+      await closeQueryResult(result);
+    }
+  }
+  if (hasError) throw firstError;
+  return rows;
+};
+
+const queryAndDrain = async (targetConn: lbug.Connection, cypher: string): Promise<void> => {
+  const queryResult = await targetConn.query(cypher);
+  await drainQueryResult(queryResult);
+};
+
+const READ_ONLY_SHADOW_REPLAY_PROBE = 'MATCH (n) RETURN n LIMIT 1';
+
+/**
+ * Reject the quarantine path when the orphan WAL is too large to safely
+ * discard (>TINY_ORPHAN_WAL_BYTES). Mirrors the preflight policy at
+ * sidecar-recovery.ts:153-160 ("warn, do not quarantine"). Symmetric across
+ * read-only and writable recovery paths (PR #1747 review D2).
+ *
+ * Throws shadowSidecarRecoveryMessage immediately when the WAL is large,
+ * preserving the uncheckpointed pages for explicit operator recovery.
+ * Returns silently when the WAL is absent, tiny, or in any other state
+ * where the existing recovery path is safe to proceed.
+ */
+const refuseLargeWalQuarantine = async (
+  dbPath: string,
+  mode: 'read-only' | 'writable',
+  triggeringErr: unknown,
+): Promise<void> => {
+  const state = await inspectLbugSidecars(dbPath);
+  if (state.kind === 'orphan-wal') {
+    logger.warn(
+      `GitNexus: refusing to quarantine large WAL (${state.walBytes} bytes) at ${dbPath}.wal during ${mode} recovery; ` +
+        'manual recovery required — run `gitnexus analyze --force <repo-path> --index-only`.',
+    );
+    throw new Error(shadowSidecarRecoveryMessage(dbPath, triggeringErr));
+  }
+};
+
+const reopenReadOnlyAfterMissingShadow = async (
+  dbPath: string,
+  err: unknown,
+): Promise<LbugConnectionHandle> => {
+  await refuseLargeWalQuarantine(dbPath, 'read-only', err);
+  try {
+    await quarantineWalForMissingShadow(dbPath, {
+      logger,
+      level: 'warn',
+      reason: 'read-only recovery',
+    });
+  } catch (renameErr) {
+    throw new Error(renameFailureMessage(dbPath, renameErr));
+  }
+
+  const reopened = await openLbugConnection(lbug, dbPath, { readOnly: true });
+  try {
+    await queryAndDrain(reopened.conn, READ_ONLY_SHADOW_REPLAY_PROBE);
+    return reopened;
+  } catch (retryErr) {
+    await closeLbugConnection(reopened);
+    if (isMissingShadowSidecarError(retryErr) || isReadOnlyShadowReplayError(retryErr)) {
+      throw new Error(shadowSidecarRecoveryMessage(dbPath, retryErr));
+    }
+    throw retryErr;
+  }
+};
+
+const reopenWritableAfterMissingShadow = async (
+  dbPath: string,
+  err: unknown,
+): Promise<LbugConnectionHandle> => {
+  await refuseLargeWalQuarantine(dbPath, 'writable', err);
+  try {
+    await quarantineWalForMissingShadow(dbPath, {
+      logger,
+      level: 'warn',
+      reason: 'writable recovery',
+    });
+  } catch (renameErr) {
+    throw new Error(renameFailureMessage(dbPath, renameErr));
+  }
+
+  return await openLbugConnection(lbug, dbPath);
+};
+
+const ensureReadOnlyConnectionUsable = async (
+  dbPath: string,
+  handle: LbugConnectionHandle,
+): Promise<LbugConnectionHandle> => {
+  let shadowReplayErr: unknown;
+  try {
+    await queryAndDrain(handle.conn, READ_ONLY_SHADOW_REPLAY_PROBE);
+    return handle;
+  } catch (err) {
+    if (isMissingShadowSidecarError(err)) {
+      await closeLbugConnection(handle);
+      return await reopenReadOnlyAfterMissingShadow(dbPath, err);
+    }
+    if (!isReadOnlyShadowReplayError(err)) {
+      await closeLbugConnection(handle);
+      throw err;
+    }
+    shadowReplayErr = err;
+  }
+
+  await closeLbugConnection(handle);
+
+  let writable: LbugConnectionHandle;
+  try {
+    writable = await openLbugConnection(lbug, dbPath);
+  } catch (openErr) {
+    const code = extractErrnoCode(openErr);
+    if (code === 'EROFS' || code === 'EACCES' || code === 'EPERM') {
+      throw new Error(
+        shadowSidecarRecoveryMessage(dbPath, shadowReplayErr) +
+          '\n  The workspace appears to be read-only — mount it read-write to perform shadow replay recovery,' +
+          ' or re-run `gitnexus analyze` on a writable filesystem to rebuild the index.',
+      );
+    }
+    throw openErr;
+  }
+  let missingShadowError: unknown;
+  try {
+    await queryAndDrain(writable.conn, READ_ONLY_SHADOW_REPLAY_PROBE);
+  } catch (err) {
+    if (isMissingShadowSidecarError(err)) {
+      missingShadowError = err;
+    } else {
+      throw err;
+    }
+  } finally {
+    await closeLbugConnection(writable);
+  }
+  if (missingShadowError) {
+    return await reopenReadOnlyAfterMissingShadow(dbPath, missingShadowError);
+  }
+
+  const reopened = await openLbugConnection(lbug, dbPath, { readOnly: true });
+  try {
+    await queryAndDrain(reopened.conn, READ_ONLY_SHADOW_REPLAY_PROBE);
+    return reopened;
+  } catch (err) {
+    await closeLbugConnection(reopened);
+    if (isMissingShadowSidecarError(err)) {
+      throw new Error(shadowSidecarRecoveryMessage(dbPath, err));
+    }
+    throw err;
+  }
+};
+
+const resetOpenConnectionState = (): void => {
+  currentDbPath = null;
+  ftsLoaded = false;
+  vectorExtensionLoaded = false;
+  ensuredFTSIndexes.clear();
+};
+
+const runSchemaCreationQueries = async (
+  dbPath: string,
+  targetConn: lbug.Connection,
+): Promise<unknown | null> => {
+  for (const schemaQuery of SCHEMA_QUERIES) {
+    try {
+      await queryAndDrain(targetConn, schemaQuery);
+    } catch (err) {
+      if (isMissingShadowSidecarError(err)) {
+        return err;
+      }
+
+      const msg = err instanceof Error ? err.message : String(err);
+      // Suppression list:
+      //   - "already exists": expected idempotent re-create on existing DBs
+      //   - "could not set lock on file": LadybugDB v0.16.1 emits this on
+      //     Windows when CREATE NODE TABLE runs against a path that was
+      //     just opened (the WAL handle from a fresh Database briefly
+      //     contests the table's first-write lock). The table is created
+      //     anyway and any genuine cross-process lock contention surfaces
+      //     on the next operation via withLbugDb's retry. Logging it here
+      //     would just be noise in CI.
+      //
+      // WAL corruption: the first DDL write after DB open triggers WAL
+      // replay — if the WAL file was left in a corrupt state by an
+      // interrupted previous run, the native engine throws here. Rather
+      // than logging a WARN and continuing in a broken state, close the
+      // DB cleanly and surface an actionable error so the caller (serve,
+      // MCP, analyze) can exit with a clear recovery message.
+      if (isWalCorruptionError(err)) {
+        await safeClose();
+        resetOpenConnectionState();
+        throw new Error(
+          `LadybugDB WAL corruption detected at ${dbPath}. ${WAL_RECOVERY_SUGGESTION}\n` +
+            `  Original error: ${msg.slice(0, 200)}`,
+        );
+      }
+      if (!msg.includes('already exists') && !isDbBusyError(err) && !isReadOnlyDbError(err)) {
+        logger.warn(`⚠️ Schema creation warning: ${msg.slice(0, 120)}`);
+      }
+    }
+  }
+
+  return null;
+};
 
 export const initLbug = async (dbPath: string) => {
   return runWithSessionLock(() => ensureLbugInitialized(dbPath));
@@ -235,12 +655,17 @@ export const initLbug = async (dbPath: string) => {
  * database is busy (e.g. `gitnexus analyze` holds the write lock).
  * Each retry waits DB_LOCK_RETRY_DELAY_MS * attempt milliseconds.
  */
-export const withLbugDb = async <T>(dbPath: string, operation: () => Promise<T>): Promise<T> => {
+export const withLbugDb = async <T>(
+  dbPath: string,
+  operation: () => Promise<T>,
+  options: { readOnly?: boolean } = {},
+): Promise<T> => {
   let lastError: unknown;
+  const readOnly = options.readOnly === true;
   for (let attempt = 1; attempt <= DB_LOCK_RETRY_ATTEMPTS; attempt++) {
     try {
       return await runWithSessionLock(async () => {
-        await ensureLbugInitialized(dbPath);
+        await ensureLbugInitialized(dbPath, readOnly);
         return operation();
       });
     } catch (err) {
@@ -270,15 +695,15 @@ export const withLbugDb = async <T>(dbPath: string, operation: () => Promise<T>)
   throw lastError;
 };
 
-const ensureLbugInitialized = async (dbPath: string) => {
-  if (conn && currentDbPath === dbPath) {
+const ensureLbugInitialized = async (dbPath: string, readOnly: boolean = false) => {
+  if (conn && currentDbPath === dbPath && currentDbReadOnly === readOnly) {
     return { db, conn };
   }
-  await doInitLbug(dbPath);
+  await doInitLbug(dbPath, readOnly);
   return { db, conn };
 };
 
-const doInitLbug = async (dbPath: string) => {
+const doInitLbug = async (dbPath: string, readOnly: boolean = false) => {
   // Different database requested — close the old one first
   if (conn || db) {
     await safeClose();
@@ -288,83 +713,143 @@ const doInitLbug = async (dbPath: string) => {
     ensuredFTSIndexes.clear();
   }
 
-  // LadybugDB stores the database as a single file (not a directory).
-  // If the path already exists, it must be a valid LadybugDB database file.
-  // Remove stale empty directories or files from older versions.
-  try {
-    const stat = await fs.lstat(dbPath);
-    if (stat.isSymbolicLink()) {
-      // Never follow symlinks — just remove the link itself
-      await fs.unlink(dbPath);
-    } else if (stat.isDirectory()) {
-      // Verify path is within expected storage directory before deleting
-      const realPath = await fs.realpath(dbPath);
-      const parentDir = path.dirname(dbPath);
-      const realParent = await fs.realpath(parentDir);
-      if (!realPath.startsWith(realParent + path.sep) && realPath !== realParent) {
-        throw new Error(
-          `Refusing to delete ${dbPath}: resolved path ${realPath} is outside storage directory`,
-        );
-      }
-      // Old-style directory database or empty leftover - remove it
-      await fs.rm(dbPath, { recursive: true, force: true });
-    }
-    // If it's a file, assume it's an existing LadybugDB database - LadybugDB will open it
-  } catch {
-    // Path doesn't exist, which is what LadybugDB wants for a new database
-  }
+  // ---------------------------------------------------------------------------
+  // Read-only fast path: skip all filesystem mutations (path cleanup, init
+  // lock, orphan sidecar removal, mkdir) so the open succeeds on read-only
+  // filesystems such as Docker `:ro` bind mounts. The init lock exists to
+  // prevent a TOCTOU race during DB *creation* — read-only opens never
+  // create databases and don't need the lock.
+  // ---------------------------------------------------------------------------
+  if (readOnly) {
+    await preflightLbugSidecars(dbPath, {
+      mode: 'read-only',
+      logger,
+      allowQuarantine: false,
+    });
 
-  // Ensure parent directory exists
-  const parentDir = path.dirname(dbPath);
-  await fs.mkdir(parentDir, { recursive: true });
-
-  const opened = await openLbugConnection(lbug, dbPath);
-  db = opened.db;
-  conn = opened.conn;
-
-  // ── Schema migration ────────────────────────────────────────────────────
-  // Read the stored schema version from meta.json (if present) and compare
-  // with the current schema fingerprint. Apply incremental migration when the
-  // schema changed additively; warn and request rebuild on breaking changes.
-  const metaPath = path.join(path.dirname(dbPath), 'meta.json');
-  let storedSchemaVersion = '';
-  try {
-    const raw = await fs.readFile(metaPath, 'utf-8');
-    const meta = JSON.parse(raw) as { schemaVersion?: string };
-    storedSchemaVersion = meta.schemaVersion ?? '';
-  } catch {
-    // meta.json missing or unreadable — treat as fresh DB
-  }
-
-  if (storedSchemaVersion && storedSchemaVersion !== CURRENT_SCHEMA_VERSION) {
-    const result = await attemptIncrementalMigration(conn, storedSchemaVersion);
-    if (result.needsRebuild) {
-      const repoRoot = path.dirname(path.dirname(dbPath));
-      throw new Error(
-        `LadybugDB schema mismatch: stored=${storedSchemaVersion} current=${CURRENT_SCHEMA_VERSION}.\n` +
-          `${result.message}\n` +
-          `${formatSchemaRebuildInstructions(repoRoot)}`,
-      );
-    } else if (result.message !== 'Schema is up-to-date.') {
-      logger.info(`LadybugDB schema migrated: ${result.message}`);
-    }
+    const opened = await openLbugConnection(lbug, dbPath, { readOnly: true });
+    const usable = await ensureReadOnlyConnectionUsable(dbPath, opened);
+    db = usable.db;
+    conn = usable.conn;
+    currentDbReadOnly = true;
   } else {
-    // Fresh DB or same version — apply schema normally (ignore "already exists")
-    for (const schemaQuery of SCHEMA_QUERIES) {
+    // LadybugDB stores the database as a single file (not a directory).
+    // If the path already exists, it must be a valid LadybugDB database file.
+    // Remove stale empty directories or files from older versions.
+    try {
+      const stat = await fs.lstat(dbPath);
+      if (stat.isSymbolicLink()) {
+        // Never follow symlinks — just remove the link itself
+        await fs.unlink(dbPath);
+      } else if (stat.isDirectory()) {
+        // Verify path is within expected storage directory before deleting
+        const realPath = await fs.realpath(dbPath);
+        const parentDir = path.dirname(dbPath);
+        const realParent = await fs.realpath(parentDir);
+        if (!realPath.startsWith(realParent + path.sep) && realPath !== realParent) {
+          throw new Error(
+            `Refusing to delete ${dbPath}: resolved path ${realPath} is outside storage directory`,
+          );
+        }
+        // Old-style directory database or empty leftover - remove it
+        await fs.rm(dbPath, { recursive: true, force: true });
+      }
+      // If it's a file, assume it's an existing LadybugDB database - LadybugDB will open it
+    } catch (err) {
+      if (!isMissingFileError(err)) {
+        throw err;
+      }
+      // Path doesn't exist, which is what LadybugDB wants for a new database
+    }
+
+    // -------------------------------------------------------------------------
+    // Cross-process critical section: acquire init lock, clean orphan sidecars,
+    // and open the database. The lock prevents a TOCTOU race where another
+    // process could create a fresh DB between our access() check and the
+    // unlink() of stale sidecars.
+    // -------------------------------------------------------------------------
+    const releaseInitLock = await acquireInitLock(dbPath);
+    try {
+      // Crash-recovery cleanup: if the main DB file is missing, stale sidecars
+      // from an interrupted run can block fresh opens indefinitely.
       try {
-        await conn.query(schemaQuery);
+        await fs.access(dbPath);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes('already exists') && !isDbBusyError(err)) {
-          logger.error(`Schema creation warning: ${msg.slice(0, 120)}`);
+        if (isMissingFileError(err)) {
+          // `.shadow` is documented by LadybugDB checkpointing and `.wal.checkpoint`
+          // was observed in the #1618 crash loop that motivated this recovery path.
+          const orphanSidecars = [`${dbPath}.shadow`, `${dbPath}.wal.checkpoint`];
+          for (const sidecar of orphanSidecars) {
+            try {
+              await fs.unlink(sidecar);
+              logger.warn(
+                `GitNexus: removed orphan sidecar ${path.basename(sidecar)} (no main DB file present)`,
+              );
+            } catch (err) {
+              if (isMissingFileError(err)) {
+                continue;
+              }
+              const code = extractErrnoCode(err);
+              logger.warn(
+                `GitNexus: failed to remove orphan sidecar ${path.basename(sidecar)} (${code ?? 'UNKNOWN'}) while main DB file is missing; LadybugDB open may still fail: ${summarizeError(err)}`,
+              );
+            }
+          }
+        } else {
+          const code = extractErrnoCode(err);
+          logger.warn(
+            `GitNexus: unable to verify main DB file before orphan sidecar cleanup (${code ?? 'UNKNOWN'}); skipping cleanup: ${summarizeError(err)}`,
+          );
         }
       }
+
+      // Ensure parent directory exists
+      const parentDir = path.dirname(dbPath);
+      await fs.mkdir(parentDir, { recursive: true });
+      await preflightLbugSidecars(dbPath, {
+        mode: 'write',
+        logger,
+        allowQuarantine: true,
+      });
+
+      const opened = await openLbugConnection(lbug, dbPath);
+      db = opened.db;
+      conn = opened.conn;
+      currentDbReadOnly = false;
+    } finally {
+      await releaseInitLock();
     }
   }
 
-  // FTS powers baseline search, so initialize it with the core DB. VECTOR is
-  // only required for semantic embeddings and is probed lazily there.
-  await loadFTSExtension();
+  if (!readOnly) {
+    if (conn === null) {
+      throw new Error('LadybugDB connection was not initialized before schema creation.');
+    }
+    const missingShadowError = await runSchemaCreationQueries(dbPath, conn);
+    if (missingShadowError) {
+      await safeClose();
+      resetOpenConnectionState();
+      const reopened = await reopenWritableAfterMissingShadow(dbPath, missingShadowError);
+      db = reopened.db;
+      conn = reopened.conn;
+      currentDbReadOnly = false;
+
+      if (conn === null) {
+        throw new Error('LadybugDB connection was not initialized before schema creation retry.');
+      }
+      const retryMissingShadowError = await runSchemaCreationQueries(dbPath, conn);
+      if (retryMissingShadowError) {
+        await safeClose();
+        resetOpenConnectionState();
+        throw new Error(shadowSidecarRecoveryMessage(dbPath, retryMissingShadowError));
+      }
+    }
+  }
+
+  // FTS powers baseline search, so initialize it with the core DB. Read-only
+  // serve/MCP paths must never run DDL or trigger network INSTALL; analyze owns
+  // schema/index creation and extension installation.
+  await loadFTSExtension(undefined, readOnly ? { policy: 'load-only' } : {});
 
   currentDbPath = dbPath;
   return { db, conn };
@@ -384,7 +869,13 @@ export const loadGraphToLbug = async (
 
   const log = onProgress || (() => {});
 
-  const csvDir = path.join(storagePath, 'csv');
+  let csvDir: string;
+  if (process.platform === 'win32' && /[^\x00-\x7F]/.test(storagePath)) {
+    const hash = crypto.createHash('sha256').update(storagePath).digest('hex').slice(0, 16);
+    csvDir = toNativeSafePath(path.join(os.tmpdir(), `gitnexus-csv-${hash}`));
+  } else {
+    csvDir = path.join(storagePath, 'csv');
+  }
 
   log('Streaming CSVs to disk...');
   const csvResult = await streamAllCSVsToDisk(graph, repoPath, csvDir);
@@ -409,14 +900,14 @@ export const loadGraphToLbug = async (
     const copyQuery = getCopyQuery(table, normalizedPath);
 
     try {
-      await conn.query(copyQuery);
+      await queryAndDrain(conn, copyQuery);
     } catch (err) {
       try {
         const retryQuery = copyQuery.replace(
           'auto_detect=false)',
           'auto_detect=false, IGNORE_ERRORS=true)',
         );
-        await conn.query(retryQuery);
+        await queryAndDrain(conn, retryQuery);
       } catch (retryErr) {
         const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
         throw new Error(`COPY failed for ${table}: ${retryMsg.slice(0, 200)}`);
@@ -458,14 +949,14 @@ export const loadGraphToLbug = async (
       }
 
       try {
-        await conn.query(copyQuery);
+        await queryAndDrain(conn, copyQuery);
       } catch (err) {
         try {
           const retryQuery = copyQuery.replace(
             'auto_detect=false)',
             'auto_detect=false, IGNORE_ERRORS=true)',
           );
-          await conn.query(retryQuery);
+          await queryAndDrain(conn, retryQuery);
         } catch (retryErr) {
           const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
           warnings.push(`${fromLabel}->${toLabel} (${rows} edges): ${retryMsg.slice(0, 80)}`);
@@ -587,11 +1078,14 @@ const fallbackRelationshipInserts = async (
 
       const esc = (s: string) =>
         s.replace(/'/g, "''").replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-      await conn.query(`
+      await queryAndDrain(
+        conn,
+        `
         MATCH (a:${escapeLabel(fromLabel)} {id: '${esc(fromId)}' }),
               (b:${escapeLabel(toLabel)} {id: '${esc(toId)}' })
         CREATE (a)-[:${REL_TABLE_NAME} {type: '${esc(relType)}', confidence: ${confidence}, reason: '${esc(reason)}', step: ${step}}]->(b)
-      `);
+      `,
+      );
     } catch {
       // skip
     }
@@ -704,14 +1198,14 @@ export const insertNodeToLbug = async (
     if (targetDbPath) {
       const tempHandle = await openLbugConnection(lbug, targetDbPath);
       try {
-        await tempHandle.conn.query(query);
+        await queryAndDrain(tempHandle.conn, query);
         return true;
       } finally {
         await closeLbugConnection(tempHandle);
       }
     } else if (conn) {
       // Use existing persistent connection (when called from analyze)
-      await conn.query(query);
+      await queryAndDrain(conn, query);
       return true;
     }
 
@@ -782,7 +1276,7 @@ export const batchInsertNodesToLbug = async (
           query = `MERGE (n:${t} {id: ${escapeValue(properties.id)}}) SET n.name = ${escapeValue(properties.name)}, n.filePath = ${escapeValue(properties.filePath)}, n.startLine = ${properties.startLine || 0}, n.endLine = ${properties.endLine || 0}, n.content = ${escapeValue(properties.content || '')}${descPart}`;
         }
 
-        await tempConn.query(query);
+        await queryAndDrain(tempConn, query);
         inserted++;
       } catch (e: any) {
         // Don't console.error here - it corrupts MCP JSON-RPC on stderr
@@ -797,16 +1291,7 @@ export const batchInsertNodesToLbug = async (
 };
 
 export const executeQuery = async (cypher: string): Promise<any[]> => {
-  if (!conn) {
-    throw new Error('LadybugDB not initialized. Call initLbug first.');
-  }
-
-  const queryResult = await conn.query(cypher);
-  // LadybugDB uses getAll() instead of hasNext()/getNext()
-  // Query returns QueryResult for single queries, QueryResult[] for multi-statement
-  const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-  const rows = await result.getAll();
-  return rows;
+  return await executePrepared(cypher, {});
 };
 
 export const streamQuery = async (
@@ -818,8 +1303,10 @@ export const streamQuery = async (
   }
 
   const queryResult = await conn.query(cypher);
-  const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+  const results = Array.isArray(queryResult) ? queryResult : [queryResult];
+  const result = results[0];
   let rowCount = 0;
+  let streamError: unknown;
 
   try {
     while (await result.hasNext()) {
@@ -828,11 +1315,14 @@ export const streamQuery = async (
       rowCount++;
     }
     return rowCount;
+  } catch (err) {
+    streamError = err;
+    throw err;
   } finally {
     try {
-      await result.close();
-    } catch {
-      // Best-effort cleanup only.
+      await drainQueryResult(results);
+    } catch (err) {
+      if (streamError === undefined) throw err;
     }
   }
 };
@@ -854,8 +1344,7 @@ export const executePrepared = async (
     throw new Error(`Prepare failed: ${errMsg}`);
   }
   const queryResult = await conn.execute(stmt, params);
-  const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-  return await result.getAll();
+  return await readQueryRows(queryResult);
 };
 
 export const executeWithReusedStatement = async (
@@ -877,7 +1366,7 @@ export const executeWithReusedStatement = async (
     }
     try {
       for (const params of subBatch) {
-        await conn.execute(stmt, params);
+        await drainQueryResult(await conn.execute(stmt, params));
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -899,8 +1388,7 @@ export const getLbugStats = async (): Promise<{ nodes: number; edges: number }> 
       const queryResult = await conn.query(
         `MATCH (n:${escapeTableName(tableName)}) RETURN count(n) AS cnt`,
       );
-      const nodeResult = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-      const nodeRows = await nodeResult.getAll();
+      const nodeRows = await readQueryRows(queryResult);
       if (nodeRows.length > 0) {
         totalNodes += Number(nodeRows[0]?.cnt ?? nodeRows[0]?.[0] ?? 0);
       }
@@ -914,8 +1402,7 @@ export const getLbugStats = async (): Promise<{ nodes: number; edges: number }> 
     const queryResult = await conn.query(
       `MATCH ()-[r:${REL_TABLE_NAME}]->() RETURN count(r) AS cnt`,
     );
-    const edgeResult = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-    const edgeRows = await edgeResult.getAll();
+    const edgeRows = await readQueryRows(queryResult);
     if (edgeRows.length > 0) {
       totalEdges = Number(edgeRows[0]?.cnt ?? edgeRows[0]?.[0] ?? 0);
     }
@@ -951,8 +1438,7 @@ export const loadCachedEmbeddings = async (): Promise<{
       const check = await conn.query(
         `MATCH (e:${EMBEDDING_TABLE_NAME}) RETURN e.nodeId AS nodeId, e.chunkIndex AS chunkIndex LIMIT 1`,
       );
-      const checkResult = Array.isArray(check) ? check[0] : check;
-      await checkResult.getAll();
+      await readQueryRows(check);
     } catch {
       return { embeddingNodeIds: new Set(), embeddings: [] };
     }
@@ -976,8 +1462,7 @@ export const loadCachedEmbeddings = async (): Promise<{
         throw err;
       }
     }
-    const result = Array.isArray(rows) ? rows[0] : rows;
-    for (const row of await result.getAll()) {
+    for (const row of await readQueryRows(rows)) {
       const nodeId = String(row.nodeId ?? row[0] ?? '');
       if (!nodeId) continue;
       embeddingNodeIds.add(nodeId);
@@ -1085,10 +1570,34 @@ export const fetchExistingEmbeddingHashes = async (
 export const flushWAL = async (): Promise<void> => {
   if (!conn) return;
   try {
-    await conn.query('CHECKPOINT');
-  } catch {
-    /* ignore — older LadybugDB or schemaless DB may not accept it */
+    const checkpointResult = await conn.query('CHECKPOINT');
+    await drainQueryResult(checkpointResult);
+  } catch (err) {
+    logger.debug(
+      `GitNexus: LadybugDB CHECKPOINT skipped/failed during WAL flush: ${summarizeError(err)}`,
+    );
   }
+};
+
+/**
+ * Issue a manual `CHECKPOINT` against the current connection and surface
+ * any engine error to the caller. Unlike {@link flushWAL}, this variant
+ * does NOT swallow Ladybug rename/remove IO failures — the manual
+ * checkpoint driver (`wal-checkpoint-driver.ts`) relies on the rejection
+ * to drive its bounded retry loop. Returns `false` when no connection is
+ * open (the caller treats this as a no-op success — there is no WAL to
+ * flush). Returns `true` after a successful CHECKPOINT + drain.
+ *
+ * The split from `flushWAL` is deliberate: every other CHECKPOINT site
+ * (server flush, safeClose) is best-effort and prefers a silent skip;
+ * the manual driver, by contrast, must observe failures to decide
+ * whether to retry.
+ */
+export const tryFlushWAL = async (): Promise<boolean> => {
+  if (!conn) return false;
+  const checkpointResult = await conn.query('CHECKPOINT');
+  await drainQueryResult(checkpointResult);
+  return true;
 };
 
 /**
@@ -1141,6 +1650,9 @@ export const safeClose = async (): Promise<void> => {
         '⚠️ LadybugDB file handle still locked after close (Windows). If this repeats, check antivirus/Defender exclusions for the GitNexus storage directory.',
       );
     }
+  }
+  if (closingDbPath) {
+    await finalizeLbugSidecarsAfterClose(closingDbPath, { logger });
   }
 };
 
@@ -1195,13 +1707,13 @@ export const deleteNodesForFile = async (
         const countResult = await targetConn!.query(
           `MATCH (n:${tn}) WHERE n.filePath = '${escapedPath}' RETURN count(n) AS cnt`,
         );
-        const result = Array.isArray(countResult) ? countResult[0] : countResult;
-        const rows = await result.getAll();
+        const rows = await readQueryRows(countResult);
         const count = Number(rows[0]?.cnt ?? rows[0]?.[0] ?? 0);
 
         if (count > 0) {
           // Delete nodes (and implicitly their relationships via DETACH)
-          await targetConn!.query(
+          await queryAndDrain(
+            targetConn!,
             `MATCH (n:${tn}) WHERE n.filePath = '${escapedPath}' DETACH DELETE n`,
           );
           deletedNodes += count;
@@ -1213,7 +1725,8 @@ export const deleteNodesForFile = async (
 
     // Also delete any embeddings for nodes in this file
     try {
-      await targetConn!.query(
+      await queryAndDrain(
+        targetConn!,
         `MATCH (e:${EMBEDDING_TABLE_NAME}) WHERE e.nodeId STARTS WITH '${escapedPath}' DELETE e`,
       );
     } catch {
@@ -1228,6 +1741,77 @@ export const deleteNodesForFile = async (
 };
 
 export const getEmbeddingTableName = (): string => EMBEDDING_TABLE_NAME;
+
+/**
+ * Return the distinct repo-relative paths of files that import
+ * `targetFilePath` according to the IMPORTS edges currently in the
+ * DB. Used by the incremental writeback path to expand the
+ * "files-to-rewrite" set so that files importing a changed file get
+ * their edges (which may have been refined by cross-file resolution)
+ * re-emitted, rather than left stale in the DB.
+ *
+ * The DB query reads the *previous* run's state — pre-pipeline, before
+ * any nodes are deleted — so the returned importers are "files that
+ * USED TO import the target". That's the right set to invalidate:
+ * those are the files whose edges in the DB might no longer match
+ * what cross-file resolution produces given the changed file's new
+ * exports.
+ */
+export const queryImporters = async (targetFilePath: string): Promise<string[]> => {
+  if (!conn) {
+    throw new Error('LadybugDB not initialized. Call initLbug first.');
+  }
+  const escaped = targetFilePath.replace(/'/g, "''");
+  const cypher = `
+    MATCH (a)-[r:${REL_TABLE_NAME}]->(b)
+    WHERE r.type = 'IMPORTS' AND b.filePath = '${escaped}'
+    RETURN DISTINCT a.filePath AS importer
+  `;
+  try {
+    const queryResult = await conn.query(cypher);
+    const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
+    const rows = await result.getAll();
+    const out: string[] = [];
+    for (const row of rows) {
+      const v = (row as { importer?: unknown }).importer;
+      if (typeof v === 'string' && v.length > 0) out.push(v);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Drop every Community and Process node (and their MEMBER_OF /
+ * STEP_IN_PROCESS edges via DETACH DELETE). Used at the start of an
+ * incremental run so the communities and processes phases regenerate
+ * them from scratch on the merged graph — required for the
+ * "Leiden runs on the FULL graph" correctness invariant.
+ */
+export const deleteAllCommunitiesAndProcesses = async (): Promise<{
+  nodesDeleted: number;
+}> => {
+  if (!conn) {
+    throw new Error('LadybugDB not initialized. Call initLbug first.');
+  }
+  let nodesDeleted = 0;
+  for (const label of ['Community', 'Process']) {
+    try {
+      const countResult = await conn.query(`MATCH (n:${label}) RETURN count(n) AS cnt`);
+      const result = Array.isArray(countResult) ? countResult[0] : countResult;
+      const rows = await result.getAll();
+      const count = Number(rows[0]?.cnt ?? rows[0]?.[0] ?? 0);
+      if (count > 0) {
+        await conn.query(`MATCH (n:${label}) DETACH DELETE n`);
+        nodesDeleted += count;
+      }
+    } catch {
+      // Table may not exist yet on a freshly-initialized DB — fine.
+    }
+  }
+  return { nodesDeleted };
+};
 
 // ============================================================================
 // Full-Text Search (FTS) Functions
@@ -1257,7 +1841,7 @@ export const loadFTSExtension = async (
     throw new Error('LadybugDB not initialized. Call initLbug first.');
   }
 
-  const loaded = await extensionManager.ensure((sql) => c.query(sql), 'fts', 'FTS', opts);
+  const loaded = await extensionManager.ensure((sql) => queryAndDrain(c, sql), 'fts', 'FTS', opts);
   if (loaded && useModuleState) ftsLoaded = true;
   return loaded;
 };
@@ -1287,7 +1871,12 @@ export const loadVectorExtension = async (
     throw new Error('LadybugDB not initialized. Call initLbug first.');
   }
 
-  const loaded = await extensionManager.ensure((sql) => c.query(sql), 'VECTOR', 'VECTOR', opts);
+  const loaded = await extensionManager.ensure(
+    (sql) => queryAndDrain(c, sql),
+    'VECTOR',
+    'VECTOR',
+    opts,
+  );
   if (loaded && useModuleState) vectorExtensionLoaded = true;
   return loaded;
 };
@@ -1312,14 +1901,17 @@ export const createFTSIndex = async (
   if (ensuredFTSIndexes.has(key)) return;
 
   if (!(await loadFTSExtension())) {
-    return;
+    throw new Error(
+      `FTS extension unavailable - cannot create FTS index ${tableName}.${indexName}. ` +
+        'Run `gitnexus doctor` and ensure the LadybugDB FTS extension is installed and loadable on this machine.',
+    );
   }
 
   const propList = properties.map((p) => `'${p}'`).join(', ');
   const query = `CALL CREATE_FTS_INDEX('${tableName}', '${indexName}', [${propList}], stemmer := '${stemmer}')`;
 
   try {
-    await conn.query(query);
+    await queryAndDrain(conn, query);
     ensuredFTSIndexes.add(key);
   } catch (e: any) {
     if (e.message?.includes('already exists')) {
@@ -1391,20 +1983,15 @@ export const queryFTS = async (
     throw new Error('LadybugDB not initialized. Call initLbug first.');
   }
 
-  // Escape backslashes and single quotes to prevent Cypher injection
-  const escapedQuery = query.replace(/\\/g, '\\\\').replace(/'/g, "''");
-
   const cypher = `
-    CALL QUERY_FTS_INDEX('${tableName}', '${indexName}', '${escapedQuery}', conjunctive := ${conjunctive})
+    CALL QUERY_FTS_INDEX('${tableName}', '${indexName}', $query, conjunctive := ${conjunctive})
     RETURN node, score
     ORDER BY score DESC
     LIMIT ${limit}
   `;
 
   try {
-    const queryResult = await conn.query(cypher);
-    const result = Array.isArray(queryResult) ? queryResult[0] : queryResult;
-    const rows = await result.getAll();
+    const rows = await executePrepared(cypher, { query });
 
     return rows.map((row: any) => {
       const node = row.node || row[0] || {};
@@ -1435,7 +2022,7 @@ export const dropFTSIndex = async (tableName: string, indexName: string): Promis
   }
 
   try {
-    await conn.query(`CALL DROP_FTS_INDEX('${tableName}', '${indexName}')`);
+    await queryAndDrain(conn, `CALL DROP_FTS_INDEX('${tableName}', '${indexName}')`);
   } catch {
     // Index may not exist
   } finally {

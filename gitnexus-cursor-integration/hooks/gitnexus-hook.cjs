@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { acquireHookSlot } = require('./hook-lock.cjs');
 
 function readInput() {
   try {
@@ -57,6 +58,7 @@ function findCanonicalRepoRoot(cwd) {
       timeout: 2000,
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
     if (result.error || result.status !== 0) return null;
     const commonDir = (result.stdout || '').trim();
@@ -200,6 +202,7 @@ function runGitNexusCli(cliPath, args, cwd, timeout) {
       timeout,
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
   }
   return spawnSync(isWin ? 'npx.cmd' : 'npx', ['-y', 'gitnexus', ...args], {
@@ -207,6 +210,7 @@ function runGitNexusCli(cliPath, args, cwd, timeout) {
     timeout: timeout + 5000,
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
   });
 }
 
@@ -227,13 +231,17 @@ function main() {
     }
     const cwd = input.cwd || process.cwd();
     if (!path.isAbsolute(cwd)) return;
-    if (!findGitNexusDir(cwd)) return;
+    const gitNexusDir = findGitNexusDir(cwd);
+    if (!gitNexusDir) return;
 
     const toolName = input.tool_name || '';
     const toolInput = input.tool_input || {};
 
     const pattern = extractPattern(toolName, toolInput);
     if (!pattern || pattern.length < 3) return;
+
+    const release = acquireHookSlot(gitNexusDir);
+    if (!release) return;
 
     const cliPath = resolveCliPath();
     let result = '';
@@ -244,6 +252,8 @@ function main() {
       }
     } catch {
       /* graceful failure */
+    } finally {
+      release();
     }
 
     if (result && result.trim()) {

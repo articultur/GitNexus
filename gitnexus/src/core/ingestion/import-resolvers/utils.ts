@@ -1,6 +1,5 @@
 /**
- * Shared utilities for import resolution.
- * Extracted from import-processor.ts to reduce file size.
+ * Suffix-index helpers for import path resolution.
  */
 
 /** All file extensions to try during resolution */
@@ -9,9 +8,12 @@ export const EXTENSIONS = [
   // TypeScript/JavaScript
   '.tsx',
   '.ts',
-  '.ets',
+  '.mts',
+  '.cts',
   '.jsx',
   '.js',
+  '.mjs',
+  '.cjs',
   '.vue',
   '/index.tsx',
   '/index.ts',
@@ -54,7 +56,10 @@ export const EXTENSIONS = [
  * Try to match a path (with extensions) against the known file set.
  * Returns the matched file path or null.
  */
-export function tryResolveWithExtensions(basePath: string, allFiles: Set<string>): string | null {
+export function tryResolveWithExtensions(
+  basePath: string,
+  allFiles: ReadonlySet<string>,
+): string | null {
   for (const ext of EXTENSIONS) {
     const candidate = basePath + ext;
     if (allFiles.has(candidate)) return candidate;
@@ -77,17 +82,8 @@ export interface SuffixIndex {
   /** Case-insensitive suffix lookup */
   getInsensitive(suffix: string): string | undefined;
   /** Get all files in a directory suffix */
-  getFilesInDir(dirSuffix: string, extension: string): readonly string[];
+  getFilesInDir(dirSuffix: string, extension: string): string[];
 }
-
-const FROZEN_EMPTY_ARRAY: readonly string[] = Object.freeze([]) as readonly string[];
-
-/** Sentinel index that returns no results. Used to release memory after import resolution. */
-export const EMPTY_INDEX: SuffixIndex = Object.freeze({
-  get: () => undefined,
-  getInsensitive: () => undefined,
-  getFilesInDir: () => FROZEN_EMPTY_ARRAY,
-});
 
 export function buildSuffixIndex(normalizedFileList: string[], allFileList: string[]): SuffixIndex {
   // Map: normalized suffix -> original file path
@@ -140,7 +136,7 @@ export function buildSuffixIndex(normalizedFileList: string[], allFileList: stri
     get: (suffix: string) => exactMap.get(suffix),
     getInsensitive: (suffix: string) => lowerMap.get(suffix.toLowerCase()),
     getFilesInDir: (dirSuffix: string, extension: string) => {
-      return (dirMap.get(`${dirSuffix}:${extension}`) || []) as readonly string[];
+      return dirMap.get(`${dirSuffix}:${extension}`) || [];
     },
   };
 }

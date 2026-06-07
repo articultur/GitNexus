@@ -22,6 +22,7 @@ export {
   getLanguageFromFilename,
   getSyntaxLanguageFromFilename,
   detectOCHeaderLanguage,
+  isBladeTemplateFilename,
 } from './language-detection.js';
 export type { MroStrategy } from './mro-strategy.js';
 
@@ -30,7 +31,7 @@ export type { PipelinePhase, PipelineProgress } from './pipeline.js';
 
 // ─── Scope-based resolution — RFC #909 (Ring 1 #910) ────────────────────────
 // Data model (RFC §2)
-export type { SymbolDefinition } from './scope-resolution/symbol-definition.js';
+export type { ParameterTypeClass, SymbolDefinition } from './scope-resolution/symbol-definition.js';
 export type {
   ScopeId,
   DefId,
@@ -116,6 +117,8 @@ export type {
   FieldRegistry,
   FieldLookupOptions,
 } from './scope-resolution/registries/field-registry.js';
+export { buildMacroRegistry } from './scope-resolution/registries/macro-registry.js';
+export type { MacroRegistry } from './scope-resolution/registries/macro-registry.js';
 export { lookupCore } from './scope-resolution/registries/lookup-core.js';
 export type { CoreLookupParams } from './scope-resolution/registries/lookup-core.js';
 export { lookupQualified } from './scope-resolution/registries/lookup-qualified.js';
@@ -127,12 +130,19 @@ export {
   CONFIDENCE_EPSILON,
 } from './scope-resolution/registries/tie-breaks.js';
 export type { TieBreakKey } from './scope-resolution/registries/tie-breaks.js';
-export { CLASS_KINDS, METHOD_KINDS, FIELD_KINDS } from './scope-resolution/registries/context.js';
+export {
+  CLASS_KINDS,
+  METHOD_KINDS,
+  FIELD_KINDS,
+  MACRO_KINDS,
+} from './scope-resolution/registries/context.js';
 export type {
   RegistryContext,
   RegistryProviders,
+  OwnedMembersByOwnerLookup,
   OwnerScopedContributor,
   ArityVerdict,
+  ConstraintContext,
 } from './scope-resolution/registries/context.js';
 
 // Scope tree spine + position lookup (RFC §2.2 + §3.1; Ring 2 SHARED #912)

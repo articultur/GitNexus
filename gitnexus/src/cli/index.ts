@@ -5,9 +5,10 @@
 
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
-import { createLazyAction } from './lazy-action.js';
+import { createLazyAction, createLbugLazyAction } from './lazy-action.js';
 import { registerGroupCommands } from './group.js';
 import { registerRemoteCommands } from './remote.js';
+import { localizeCliHelp } from './help-i18n.js';
 
 const _require = createRequire(import.meta.url);
 const pkg = _require('../../package.json');
@@ -17,7 +18,9 @@ program.name('gitnexus').description('GitNexus local CLI and MCP server').versio
 
 program
   .command('setup')
-  .description('One-time setup: configure MCP for Cursor, Claude Code, OpenCode, Codex')
+  .description(
+    'One-time setup: configure MCP for Cursor, Claude Code, Antigravity, OpenCode, Codex',
+  )
   .addHelpText(
     'after',
     `
@@ -139,7 +142,7 @@ The server provides a REST API for querying the knowledge graph.
 Open http://localhost:4747 in your browser for the web UI.
 `,
   )
-  .action(createLazyAction(() => import('./serve.js'), 'serveCommand'));
+  .action(createLbugLazyAction(() => import('./serve.js'), 'serveCommand'));
 
 program
   .command('mcp')
@@ -154,7 +157,7 @@ Usually called automatically by IDEs after 'gitnexus setup'.
 Manual use is for testing or custom integrations.
 `,
   )
-  .action(createLazyAction(() => import('./mcp.js'), 'mcpCommand'));
+  .action(createLbugLazyAction(() => import('./mcp.js'), 'mcpCommand'));
 
 program
   .command('list')
@@ -196,6 +199,7 @@ program
 
   .option('-f, --force', 'Skip confirmation prompt')
   .option('--all', 'Clean all indexed repos')
+  .option('--lbug-sidecars', 'Clean quarantined LadybugDB missing-shadow WAL sidecars')
   .addHelpText(
     'after',
     `
@@ -223,7 +227,10 @@ program
   .command('wiki [path]')
   .description('Generate repository wiki from knowledge graph')
   .option('-f, --force', 'Force full regeneration even if up to date')
-  .option('--provider <provider>', 'LLM provider: openai or cursor (default: openai)')
+  .option(
+    '--provider <provider>',
+    'LLM provider: openai, openrouter, azure, custom, cursor, claude, codex, or opencode (default: openai)',
+  )
   .option('--model <model>', 'LLM model or Azure deployment name (default: minimax/minimax-m2.5)')
   .option(
     '--base-url <url>',
@@ -240,9 +247,15 @@ program
   )
   .option('--no-reasoning-model', 'Disable reasoning model mode (overrides saved config)')
   .option('--concurrency <n>', 'Parallel LLM calls (default: 3)', '3')
+  .option('--timeout <seconds>', 'LLM request timeout in seconds (default: disabled)')
+  .option('--retries <n>', 'Max LLM retry attempts per request (default: 3)')
   .option('--gist', 'Publish wiki as a public GitHub Gist after generation')
   .option('-v, --verbose', 'Enable verbose output (show LLM commands and responses)')
   .option('--review', 'Stop after grouping to review module structure before generating pages')
+  .option(
+    '--lang <lang>',
+    'Output language for generated documentation (e.g. english, chinese, spanish, japanese)',
+  )
   .addHelpText(
     'after',
     `
@@ -257,7 +270,7 @@ The wiki is generated using LLM to summarize code modules.
 Output: .gitnexus/wiki/ directory with markdown files.
 `,
   )
-  .action(createLazyAction(() => import('./wiki.js'), 'wikiCommand'));
+  .action(createLbugLazyAction(() => import('./wiki.js'), 'wikiCommand'));
 
 program
   .command('augment <pattern>')
@@ -274,7 +287,7 @@ with related symbols from the knowledge graph.
 Output: augmented search pattern with context.
 `,
   )
-  .action(createLazyAction(() => import('./augment.js'), 'augmentCommand'));
+  .action(createLbugLazyAction(() => import('./augment.js'), 'augmentCommand'));
 
 program
   .command('publish [path]')
@@ -348,7 +361,7 @@ Results are ranked by relevance using hybrid search (BM25 + semantic).
 Each result is an execution flow with its participating symbols.
 `,
   )
-  .action(createLazyAction(() => import('./tool.js'), 'queryCommand'));
+  .action(createLbugLazyAction(() => import('./tool.js'), 'queryCommand'));
 
 program
   .command('context [name]')
@@ -372,18 +385,27 @@ Output shows:
   - Execution flows it participates in
 `,
   )
-  .action(createLazyAction(() => import('./tool.js'), 'contextCommand'));
+  .action(createLbugLazyAction(() => import('./tool.js'), 'contextCommand'));
 
 program
-  .command('impact <target>')
+  .command('impact [target]')
   .description('Blast radius analysis: what breaks if you change a symbol')
   .option('-d, --direction <dir>', 'upstream (dependants) or downstream (dependencies)', 'upstream')
   .option('-r, --repo <name>', 'Target repository')
+  .option('-u, --uid <uid>', 'Direct symbol UID (zero-ambiguity lookup)')
+  .option('-f, --file <path>', 'File path to disambiguate common names')
+  .option(
+    '--kind <kind>',
+    'Kind filter to disambiguate common names (e.g. Function, Class, Method)',
+  )
   .option('--depth <n>', 'Max relationship depth (default: 3)')
   .option('--include-tests', 'Include test files in results')
   .option('--detail <mode>', 'Output detail mode: auto, summary, or full', 'auto')
   .option('--snapshot-id <id>', 'Snapshot ID for pagination (from previous layered result)')
   .option('--page <json>', 'Pagination params as JSON: \'{"depth":1,"offset":0,"limit":100}\'')
+  .option('--limit <n>', 'Max symbols per depth level (default: 100)')
+  .option('--offset <n>', 'Skip N symbols per depth level for pagination')
+  .option('--summary-only', 'Return counts and risk only, omit symbol list')
   .addHelpText(
     'after',
     `
@@ -400,7 +422,7 @@ Risk levels:
 Run this BEFORE modifying any shared code.
 `,
   )
-  .action(createLazyAction(() => import('./tool.js'), 'impactCommand'));
+  .action(createLbugLazyAction(() => import('./tool.js'), 'impactCommand'));
 
 program
   .command('cypher <query>')
@@ -420,7 +442,7 @@ Node types: File, Folder, Function, Class, Interface, Method, Property, etc.
 Edge types: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, etc.
 `,
   )
-  .action(createLazyAction(() => import('./tool.js'), 'cypherCommand'));
+  .action(createLbugLazyAction(() => import('./tool.js'), 'cypherCommand'));
 
 // ─── Eval Server (persistent daemon for SWE-bench) ─────────────────
 
@@ -428,6 +450,10 @@ program
   .command('eval-server')
   .description('Start lightweight HTTP server for fast tool calls during evaluation')
   .option('-p, --port <port>', 'Port number', '4848')
+  .option(
+    '--host <host>',
+    'Bind address (default: 127.0.0.1, use 0.0.0.0 to expose to all interfaces)',
+  )
   .option('--idle-timeout <seconds>', 'Auto-shutdown after N seconds idle (0 = disabled)', '0')
   .addHelpText(
     'after',
@@ -442,7 +468,7 @@ Used for SWE-bench evaluation and CI pipelines.
 Endpoints: /query, /context, /impact, /detect-changes, etc.
 `,
   )
-  .action(createLazyAction(() => import('./eval-server.js'), 'evalServerCommand'));
+  .action(createLbugLazyAction(() => import('./eval-server.js'), 'evalServerCommand'));
 
 program
   .command('use [name]')
@@ -525,5 +551,6 @@ Run 'gitnexus remote ls' to see available indexes on a remote.
 
 registerRemoteCommands(program);
 registerGroupCommands(program);
+localizeCliHelp(program);
 
 program.parse(process.argv);

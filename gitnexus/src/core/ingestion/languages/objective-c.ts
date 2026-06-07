@@ -4,10 +4,9 @@ import { typeConfig as objcTypeConfig } from '../type-extractors/objective-c.js'
 import { cCppExportChecker } from '../export-detection.js';
 import { createImportResolver } from '../import-resolvers/resolver-factory.js';
 import { objcImportConfig } from '../import-resolvers/configs/objective-c.js';
-import { extractObjCNamedBindings } from '../named-bindings/objective-c.js';
 import { OBJECTIVEC_QUERIES } from '../tree-sitter-queries.js';
 import { preprocessObjcContent } from './objc-preprocess.js';
-import { isObjcInsideContainer, type SyntaxNode } from '../utils/ast-helpers.js';
+import type { SyntaxNode } from '../utils/ast-helpers.js';
 import type { LanguageProvider } from '../language-provider.js';
 import { createCallExtractor } from '../call-extractors/generic.js';
 import { objcCallConfig } from '../call-extractors/configs/objective-c.js';
@@ -15,7 +14,6 @@ import { createFieldExtractor } from '../field-extractors/generic.js';
 import { objcFieldConfig } from '../field-extractors/configs/objective-c.js';
 import { createMethodExtractor } from '../method-extractors/generic.js';
 import { objcMethodConfig } from '../method-extractors/configs/objective-c.js';
-import { createHeritageExtractor } from '../heritage-extractors/generic.js';
 
 const OBJC_BUILT_INS: ReadonlySet<string> = new Set([
   'alloc',
@@ -65,6 +63,23 @@ const OBJC_BUILT_INS: ReadonlySet<string> = new Set([
   'objc_msgSendSuper',
 ]);
 
+const isObjcInsideContainer = (node: SyntaxNode): boolean => {
+  let current: SyntaxNode | null = node.parent;
+  while (current) {
+    if (
+      current.type === 'interface_declaration' ||
+      current.type === 'implementation_declaration' ||
+      current.type === 'category_interface' ||
+      current.type === 'category_implementation' ||
+      current.type === 'protocol_declaration'
+    ) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+};
+
 const objcLabelOverride: NonNullable<LanguageProvider['labelOverride']> = (
   functionNode,
   defaultLabel,
@@ -106,13 +121,10 @@ export const objectiveCProvider = defineLanguage({
   typeConfig: objcTypeConfig,
   exportChecker: cCppExportChecker,
   importResolver: createImportResolver(objcImportConfig),
-  importSemantics: 'wildcard-transitive',
   mroStrategy: 'leftmost-base',
   callExtractor: createCallExtractor(objcCallConfig),
   fieldExtractor: createFieldExtractor(objcFieldConfig),
   methodExtractor: createMethodExtractor(objcMethodConfig),
-  heritageExtractor: createHeritageExtractor(SupportedLanguages.ObjectiveC),
-  namedBindingExtractor: extractObjCNamedBindings,
   labelOverride: objcLabelOverride,
   descriptionExtractor: objcDescriptionExtractor,
   builtInNames: OBJC_BUILT_INS,

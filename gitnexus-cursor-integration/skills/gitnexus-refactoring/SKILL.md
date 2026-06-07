@@ -21,7 +21,7 @@ description: Plan safe refactors using blast radius and dependency mapping
 4. Plan update order: interfaces → implementations → callers → tests
 ```
 
-> If "Index is stale" → run `npx gitnexus analyze` in terminal.
+> If "Index is stale" → run `node .gitnexus/run.cjs analyze` in terminal.
 
 > **Remote-pulled indexes (no local source):** `gitnexus_rename(dry_run: false)` and `gitnexus_detect_changes()` require local files/git and will return an error. Use `dry_run: true` to preview graph-based edits only, then apply manually.
 
