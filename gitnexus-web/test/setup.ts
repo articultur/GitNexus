@@ -1,5 +1,6 @@
 import { beforeEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
+import i18n, { i18nReady } from '../src/i18n';
 
 const I18N_LANGUAGE_STORAGE_KEY = 'gitnexus.lng';
 
@@ -32,6 +33,9 @@ function ensureStorage(name: 'localStorage' | 'sessionStorage') {
 ensureStorage('localStorage');
 ensureStorage('sessionStorage');
 localStorage.removeItem(I18N_LANGUAGE_STORAGE_KEY);
+
+await i18nReady;
+await i18n.changeLanguage('en');
 
 // Reset storage between tests
 beforeEach(() => {

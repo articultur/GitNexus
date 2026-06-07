@@ -54,6 +54,7 @@ vi.mock('../../../src/lib/lucide-icons', () => {
   return {
     ZoomIn: icon('zoom-in'),
     ZoomOut: icon('zoom-out'),
+    Network: icon('network'),
     Maximize2: icon('maximize'),
     Focus: icon('focus'),
     RotateCcw: icon('rotate'),
@@ -65,25 +66,27 @@ vi.mock('../../../src/lib/lucide-icons', () => {
 });
 
 // Also mock @/lib/lucide-icons (alias resolution won't work under jsdom)
-vi.mock('@/lib/lucide-icons', () => {
-  const icon = (name: string) => () => <span data-testid={`icon-${name}`} />;
+vi.mock('@/lib/lucide-icons', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/lucide-icons')>('@/lib/lucide-icons');
   return {
-    ZoomIn: icon('zoom-in'),
-    ZoomOut: icon('zoom-out'),
-    Maximize2: icon('maximize'),
-    Focus: icon('focus'),
-    RotateCcw: icon('rotate'),
-    Play: icon('play'),
-    Pause: icon('pause'),
-    Lightbulb: icon('lightbulb'),
-    LightbulbOff: icon('lightbulb-off'),
-    Terminal: icon('terminal'),
-    X: icon('x'),
-    ChevronDown: icon('chevron-down'),
-    ChevronUp: icon('chevron-up'),
-    Loader2: icon('loader2'),
-    Sparkles: icon('sparkles'),
-    Table: icon('table'),
+    ...actual,
+    ZoomIn: () => <span data-testid="icon-zoom-in" />,
+    ZoomOut: () => <span data-testid="icon-zoom-out" />,
+    Network: () => <span data-testid="icon-network" />,
+    Maximize2: () => <span data-testid="icon-maximize" />,
+    Focus: () => <span data-testid="icon-focus" />,
+    RotateCcw: () => <span data-testid="icon-rotate" />,
+    Play: () => <span data-testid="icon-play" />,
+    Pause: () => <span data-testid="icon-pause" />,
+    Lightbulb: () => <span data-testid="icon-lightbulb" />,
+    LightbulbOff: () => <span data-testid="icon-lightbulb-off" />,
+    Terminal: () => <span data-testid="icon-terminal" />,
+    X: () => <span data-testid="icon-x" />,
+    ChevronDown: () => <span data-testid="icon-chevron-down" />,
+    ChevronUp: () => <span data-testid="icon-chevron-up" />,
+    Loader2: () => <span data-testid="icon-loader2" />,
+    Sparkles: () => <span data-testid="icon-sparkles" />,
+    Table: () => <span data-testid="icon-table" />,
   };
 });
 
