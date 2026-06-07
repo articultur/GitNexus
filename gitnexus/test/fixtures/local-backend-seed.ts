@@ -52,6 +52,19 @@ export const LOCAL_BACKEND_SEED_DATA = [
   // HAS_METHOD: BaseService -> authenticate
   `MATCH (c:Class), (m:Method) WHERE c.id = 'class:BaseService' AND m.id = 'method:BaseService.authenticate'
    CREATE (c)-[:CodeRelation {type: 'HAS_METHOD', confidence: 1.0, reason: 'class-method', step: 0}]->(m)`,
+
+  // ── Community-hop test fixture ─────────────────────────────────────────
+  // A process whose entry-point name ('xyzQux') does NOT appear in any search
+  // query for 'login'. func:login is in comm:auth; func:xyzQux is also in
+  // comm:auth. A search for 'login' should find func:login (direct BM25 hit),
+  // then the community-hop expansion should surface proc:auth-secondary because
+  // func:xyzQux (a community peer of func:login) participates in it.
+  `CREATE (fn:Function {id: 'func:xyzQux', name: 'xyzQux', filePath: 'src/auth.ts', startLine: 50, endLine: 55, isExported: false, content: 'function xyzQux() {}', description: 'Internal auth helper'})`,
+  `CREATE (p:Process {id: 'proc:auth-secondary', label: 'AuthSecondary', heuristicLabel: 'Auth Secondary Flow', processType: 'intra_community', stepCount: 1, communities: ['auth'], entryPointId: 'func:xyzQux', terminalId: 'func:xyzQux'})`,
+  `MATCH (fn:Function), (c:Community) WHERE fn.id = 'func:xyzQux' AND c.id = 'comm:auth'
+   CREATE (fn)-[:CodeRelation {type: 'MEMBER_OF', confidence: 1.0, reason: '', step: 0}]->(c)`,
+  `MATCH (fn:Function), (p:Process) WHERE fn.id = 'func:xyzQux' AND p.id = 'proc:auth-secondary'
+   CREATE (fn)-[:CodeRelation {type: 'STEP_IN_PROCESS', confidence: 1.0, reason: '', step: 1}]->(p)`,
 ];
 
 export const LOCAL_BACKEND_FTS_INDEXES: FTSIndexDef[] = [

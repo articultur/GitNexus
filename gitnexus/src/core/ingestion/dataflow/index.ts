@@ -117,6 +117,16 @@ function convertCFGResultToCFG(result: CFGResult): import('./types.js').CFG {
   };
 }
 
+function syntaxNodeFlag(node: unknown, key: 'hasError' | 'isMissing'): boolean {
+  const value = (node as Record<string, unknown> | null)?.[key];
+  return typeof value === 'function' ? Boolean(value.call(node)) : Boolean(value);
+}
+
+function hasParseErrors(tree: { rootNode: unknown }): boolean {
+  const root = tree.rootNode;
+  return syntaxNodeFlag(root, 'hasError') || syntaxNodeFlag(root, 'isMissing');
+}
+
 // ── Main Processor ────────────────────────────────────────────────────────
 
 /**
@@ -256,8 +266,13 @@ export async function processDataflow(
           await loadLanguage(lang);
           const source = func.content.join('\n');
           const tree = parseSourceSafe(parser!, source);
-          const cfgResult = buildCFGFromTSG({ rootNode: tree.rootNode }, source, lang, func.id);
-          cfg = convertCFGResultToCFG(cfgResult);
+          if (!hasParseErrors(tree)) {
+            const cfgResult = buildCFGFromTSG({ rootNode: tree.rootNode }, source, lang, func.id);
+            cfg = convertCFGResultToCFG(cfgResult);
+          } else {
+            const statements = parseStatements(func.id, func.content);
+            cfg = buildCFGFromStatements(func.id, statements);
+          }
         } catch (err) {
           // TSG failed — fall through to legacy
           const statements = parseStatements(func.id, func.content);
@@ -488,9 +503,11 @@ export async function processCFG(
           const { loadLanguage } = await import('../../tree-sitter/parser-loader.js');
           await loadLanguage(lang);
           const tree = parseSourceSafe(parser!, source);
-          const cfgResult = buildCFGFromTSG({ rootNode: tree.rootNode }, source, lang, func.id);
-          writeCFGEdges(knowledgeGraph, cfgResult);
-          continue;
+          if (!hasParseErrors(tree)) {
+            const cfgResult = buildCFGFromTSG({ rootNode: tree.rootNode }, source, lang, func.id);
+            writeCFGEdges(knowledgeGraph, cfgResult);
+            continue;
+          }
         } catch (err) {
           // TSG failed (CLI error, parse error, etc.) — fall through to legacy
           // console.warn(`TSG failed for ${func.id}, falling back:`, err);

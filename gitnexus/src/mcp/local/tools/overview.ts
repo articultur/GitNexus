@@ -21,7 +21,9 @@ export function aggregateClusters(clusters: any[]): any[] {
   >();
 
   for (const c of clusters) {
-    const label = c.heuristicLabel || c.label || 'Unknown';
+    const rawLabel = c.heuristicLabel || c.label || 'Unknown';
+    // Strip numeric suffix added by label deduplication (e.g. "Ingestion-2" → "Ingestion")
+    const label = rawLabel.replace(/-\d+$/, '');
     const symbols = c.symbolCount || 0;
     const cohesion = c.cohesion || 0;
     const existing = groups.get(label);

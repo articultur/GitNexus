@@ -55,6 +55,7 @@ describe('shouldIgnorePath', () => {
       '.vercel',
       '.parcel-cache',
       '.turbo',
+      'esm',
     ])('ignores %s directory', (dir) => {
       expect(shouldIgnorePath(`${dir}/bundle.js`)).toBe(true);
     });

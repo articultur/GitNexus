@@ -3,24 +3,22 @@
  *
  * Requires tree-sitter-go.  Tests are skipped if the parser is unavailable.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { extractGoNamedBindings } from '../../../src/core/ingestion/named-bindings/go.js';
 
 let Parser: typeof import('tree-sitter').default;
 let Go: any;
 let goAvailable = false;
 
-beforeAll(async () => {
-  try {
-    const tsModule = await import('tree-sitter');
-    Parser = tsModule.default;
-    const goModule = await import('tree-sitter-go');
-    Go = goModule.default ?? goModule;
-    goAvailable = true;
-  } catch {
-    goAvailable = false;
-  }
-});
+try {
+  const tsModule = await import('tree-sitter');
+  Parser = tsModule.default;
+  const goModule = await import('tree-sitter-go');
+  Go = goModule.default ?? goModule;
+  goAvailable = true;
+} catch {
+  goAvailable = false;
+}
 
 function findAll(node: any, type: string): any[] {
   const results: any[] = [];

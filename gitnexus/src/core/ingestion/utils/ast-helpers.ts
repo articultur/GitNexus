@@ -229,6 +229,14 @@ export const CLASS_CONTAINER_TYPES = new Set([
   // Go
   'struct_type',
   'interface_type',
+  // Objective-C
+  'class_interface',
+  'class_implementation',
+  'category_interface',
+  'category_implementation',
+  'class_interface_declaration',
+  'class_implementation_declaration',
+  'category_interface_declaration',
 ]);
 
 export const CONTAINER_TYPE_TO_LABEL: Record<string, string> = {

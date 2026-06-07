@@ -62,6 +62,31 @@ describe('direct CLI tool commands', () => {
     expect(writeSyncMock).toHaveBeenCalledWith(1, expect.stringContaining('No changes detected.'));
   });
 
+  it('prints doc-only changes without claiming there were no file changes', async () => {
+    callToolMock.mockResolvedValue({
+      summary: {
+        changed_files: 2,
+        changed_count: 0,
+        affected_count: 0,
+        risk_level: 'low',
+        risk_relevant_count: 0,
+        documentation_files: 2,
+        message: 'No indexed code symbols changed.',
+      },
+      changed_symbols: [],
+    });
+    const { detectChangesCommand } = await import('../../src/cli/tool.js');
+
+    await detectChangesCommand({});
+
+    const output: string = writeSyncMock.mock.calls[0][1];
+    expect(output).toContain('Changes: 2 files, 0 symbols');
+    expect(output).not.toContain('Risk-relevant symbols: 0');
+    expect(output).toContain('Documentation-only files ignored for risk: 2');
+    expect(output).toContain('No indexed code symbols changed.');
+    expect(output).not.toContain('No changes detected.');
+  });
+
   it('prints error message when result contains an error', async () => {
     callToolMock.mockResolvedValue({ error: 'index is stale' });
     const { detectChangesCommand } = await import('../../src/cli/tool.js');
@@ -89,6 +114,27 @@ describe('direct CLI tool commands', () => {
     expect(output).toContain('function fn14 → src/file14.ts');
     expect(output).not.toContain('fn15');
     expect(output).toContain('... and 2 more');
+  });
+
+  it('does not print undefined for missing changed symbol fields', async () => {
+    callToolMock.mockResolvedValue({
+      summary: {
+        changed_files: 1,
+        changed_count: 1,
+        risk_relevant_count: 0,
+        affected_count: 0,
+        risk_level: 'low',
+      },
+      changed_symbols: [{ id: 'Function:src/a.ts:fallbackName', file: 'src/a.ts' }],
+    });
+    const { detectChangesCommand } = await import('../../src/cli/tool.js');
+
+    await detectChangesCommand({});
+
+    const output: string = writeSyncMock.mock.calls[0][1];
+    expect(output).toContain('Risk-relevant symbols: 0');
+    expect(output).toContain('Symbol Function:src/a.ts:fallbackName → src/a.ts');
+    expect(output).not.toContain('undefined');
   });
 
   it('truncates affected_processes list beyond 10', async () => {

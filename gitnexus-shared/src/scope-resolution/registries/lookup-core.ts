@@ -336,7 +336,56 @@ function collectOwnedMembers(
   memberName: string,
   ctx: RegistryContext,
 ): readonly SymbolDefinition[] {
-  return ctx.ownedMembersByOwner(ownerDefId, memberName);
+  return getOwnerMemberIndex(ctx).get(ownerDefId)?.get(memberName) ?? EMPTY_DEFS;
+}
+
+const EMPTY_DEFS: readonly SymbolDefinition[] = Object.freeze([]);
+const OWNER_MEMBER_INDEX = new WeakMap<
+  RegistryContext,
+  ReadonlyMap<DefId, ReadonlyMap<string, readonly SymbolDefinition[]>>
+>();
+
+function getOwnerMemberIndex(
+  ctx: RegistryContext,
+): ReadonlyMap<DefId, ReadonlyMap<string, readonly SymbolDefinition[]>> {
+  const cached = OWNER_MEMBER_INDEX.get(ctx);
+  if (cached !== undefined) return cached;
+
+  const mutable = new Map<DefId, Map<string, SymbolDefinition[]>>();
+  for (const def of ctx.defs.byId.values()) {
+    if (def.ownerId === undefined) continue;
+    const name = simpleNameOf(def);
+    if (name === undefined) continue;
+    let byName = mutable.get(def.ownerId);
+    if (byName === undefined) {
+      byName = new Map();
+      mutable.set(def.ownerId, byName);
+    }
+    let defs = byName.get(name);
+    if (defs === undefined) {
+      defs = [];
+      byName.set(name, defs);
+    }
+    defs.push(def);
+  }
+
+  const frozen = new Map<DefId, ReadonlyMap<string, readonly SymbolDefinition[]>>();
+  for (const [ownerId, byName] of mutable) {
+    const frozenByName = new Map<string, readonly SymbolDefinition[]>();
+    for (const [name, defs] of byName) {
+      frozenByName.set(name, Object.freeze([...defs]));
+    }
+    frozen.set(ownerId, frozenByName);
+  }
+
+  OWNER_MEMBER_INDEX.set(ctx, frozen);
+  return frozen;
+}
+
+function simpleNameOf(def: SymbolDefinition): string | undefined {
+  if (def.qualifiedName === undefined || def.qualifiedName.length === 0) return undefined;
+  const dot = def.qualifiedName.lastIndexOf('.');
+  return dot === -1 ? def.qualifiedName : def.qualifiedName.slice(dot + 1);
 }
 
 function recordTypeBindingHit(

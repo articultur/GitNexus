@@ -14,9 +14,108 @@ import {
   executeParameterized,
   closeLbug,
   isLbugReady,
+  isWriteQuery,
 } from '../../core/lbug/pool-adapter.js';
 import { isValidQueryParams } from '../../core/lbug/query-params.js';
 import { isWalCorruptionError, WAL_RECOVERY_SUGGESTION } from '../../core/lbug/lbug-config.js';
+export { isWriteQuery };
+
+/**
+ * Generate helpful hints for common Cypher errors related to schema mismatches.
+ * Catches property-not-found and label-not-found errors and suggests alternatives.
+ */
+const KNOWN_NODE_LABELS = [
+  'File', 'Folder', 'Function', 'Class', 'Interface', 'Method', 'CodeElement',
+  'Community', 'Process', 'Route', 'Tool', 'Section',
+  'Struct', 'Enum', 'Trait', 'Impl', 'TypeAlias', 'Const', 'Static',
+  'Property', 'Record', 'Delegate', 'Annotation', 'Constructor', 'Template', 'Module',
+];
+
+const KNOWN_REL_TYPES = [
+  'CONTAINS', 'DEFINES', 'CALLS', 'IMPORTS', 'EXTENDS', 'IMPLEMENTS',
+  'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'METHOD_OVERRIDES', 'METHOD_IMPLEMENTS',
+  'MEMBER_OF', 'STEP_IN_PROCESS', 'HANDLES_ROUTE', 'FETCHES', 'HANDLES_TOOL',
+  'ENTRY_POINT_OF', 'WRAPS', 'QUERIES', 'DATA_FLOW', 'PROPAGATES',
+  'RETURNS', 'TAINTED', 'SANITIZES', 'SINK_REACHABLE', 'ALIASES', 'CFG_EDGE',
+];
+
+function getCypherErrorHint(msg: string): string | undefined {
+  // Property not found on node
+  const propMatch = msg.match(/Cannot find property\s+'(\w+)'/i) ?? msg.match(/property\s+'(\w+)'\s+does not exist/i);
+  if (propMatch) {
+    const prop = propMatch[1];
+    const commonProps = ['name', 'filePath', 'startLine', 'endLine', 'parameterCount', 'returnType',
+      'visibility', 'isStatic', 'isAsync', 'heuristicLabel', 'processType', 'stepCount',
+      'communities', 'cohesion', 'symbolCount', 'keywords', 'description', 'confidence', 'reason', 'step',
+      'url', 'method', 'declaredType', 'isOverride', 'isFinal', 'isVirtual', 'isAbstract'];
+    const suggestion = closestMatch(prop, commonProps);
+    return `Property '${prop}' not found.${suggestion ? ` Did you mean '${suggestion}'?` : ''} READ gitnexus://repo/{name}/schema for full property list.`;
+  }
+
+  // Label not found
+  const labelMatch = msg.match(/label\s+'(\w+)'\s+does not exist/i) ?? msg.match(/unknown label\s+'(\w+)'/i);
+  if (labelMatch) {
+    const label = labelMatch[1];
+    const suggestion = closestMatch(label, KNOWN_NODE_LABELS);
+    return `Node label '${label}' not found.${suggestion ? ` Did you mean '${suggestion}'?` : ''} Available labels: ${KNOWN_NODE_LABELS.slice(0, 12).join(', ')}, ... READ gitnexus://repo/{name}/schema for full list.`;
+  }
+
+  // Relationship type not found
+  const relMatch = msg.match(/relationship type\s+'(\w+)'\s+does not exist/i);
+  if (relMatch) {
+    const rel = relMatch[1];
+    const suggestion = closestMatch(rel, KNOWN_REL_TYPES);
+    return `Relationship type '${rel}' not found.${suggestion ? ` Did you mean '${suggestion}'?` : ''} Remember: use {type: 'REL_NAME'} in CodeRelation. READ gitnexus://repo/{name}/schema for full list.`;
+  }
+
+  // Table not found (FTS or vector index)
+  const tableMatch = msg.match(/table\s+'?(\w+)'?\s+does not exist/i);
+  if (tableMatch) {
+    return `Table '${tableMatch[1]}' not found. The index may not exist yet. Run: gitnexus analyze --force`;
+  }
+
+  return undefined;
+}
+
+function closestMatch(input: string, candidates: string[]): string | undefined {
+  const lower = input.toLowerCase();
+  let best: string | undefined;
+  let bestDist = Infinity;
+  for (const c of candidates) {
+    const cl = c.toLowerCase();
+    // Exact case-insensitive match
+    if (cl === lower) return c;
+    // Prefix match
+    if (cl.startsWith(lower) || lower.startsWith(cl)) {
+      const dist = Math.abs(cl.length - lower.length);
+      if (dist < bestDist) { bestDist = dist; best = c; }
+    }
+    // Levenshtein for close matches (only if short enough)
+    if (input.length <= 20 && c.length <= 20) {
+      const d = levenshtein(lower, cl);
+      if (d < bestDist && d <= Math.max(2, Math.floor(lower.length / 3))) {
+        bestDist = d; best = c;
+      }
+    }
+  }
+  return best;
+}
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
 // Embedding imports are lazy (dynamic import) to avoid loading onnxruntime-node
 // at MCP server startup — crashes on unsupported Node ABI versions (#89)
 // git utilities available if needed
@@ -29,9 +128,9 @@ import {
 } from '../../storage/git.js';
 import { realpathSync } from 'fs';
 import {
+  canonicalizePath,
   listRegisteredRepos,
   cleanupOldKuzuFiles,
-  canonicalizePath,
   RegistryAmbiguousTargetError,
   type RegistryEntry,
 } from '../../storage/repo-manager.js';
@@ -50,6 +149,7 @@ import {
 import { PhaseTimer } from '../../core/search/phase-timer.js';
 import { checkStalenessAsync, checkCwdMatch } from '../../core/git-staleness.js';
 import { logger } from '../../core/logger.js';
+import { detectChangesTool } from './tools/detect.js';
 import { testImpactTool } from './tools/test-impact.js';
 // AI context generation is CLI-only (gitnexus analyze)
 // import { generateAIContextFiles } from '../../cli/ai-context.js';
@@ -77,6 +177,80 @@ export function isTestFilePath(filePath: string): boolean {
     p.includes('/test_') ||
     p.includes('/conftest.')
   );
+}
+
+const SOURCE_EXTENSIONS = new Set([
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+  '.jsx',
+  '.ets',
+  '.arkts',
+  '.swift',
+  '.kt',
+  '.kts',
+  '.java',
+  '.go',
+  '.dart',
+  '.py',
+  '.rb',
+  '.php',
+  '.cs',
+  '.c',
+  '.cc',
+  '.cpp',
+  '.cxx',
+  '.h',
+  '.hpp',
+  '.m',
+  '.mm',
+]);
+
+const COMPILED_JS_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+const ARTIFACT_ROOT_SEGMENTS = new Set(['src', 'source', 'dist', 'build', 'out', 'lib']);
+
+function sourceArtifactKey(filePath: string | undefined): string | undefined {
+  if (!filePath) return undefined;
+  const normalized = filePath.replace(/\\/g, '/');
+  const ext = path.posix.extname(normalized).toLowerCase();
+  if (!SOURCE_EXTENSIONS.has(ext) && !COMPILED_JS_EXTENSIONS.has(ext)) return undefined;
+  const withoutExt = normalized.slice(0, -ext.length);
+  return withoutExt
+    .split('/')
+    .filter((segment) => segment && !ARTIFACT_ROOT_SEGMENTS.has(segment.toLowerCase()))
+    .join('/')
+    .toLowerCase();
+}
+
+function isCompiledJsArtifact(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  return COMPILED_JS_EXTENSIONS.has(path.posix.extname(filePath.replace(/\\/g, '/')).toLowerCase());
+}
+
+type ArtifactLike = { filePath?: string; name?: string; type?: string };
+
+function preferSourceArtifacts<T>(
+  items: T[],
+  getArtifact: (item: T) => ArtifactLike = (item) => item as ArtifactLike,
+): T[] {
+  const sourceKeys = new Set<string>();
+  for (const item of items) {
+    const artifact = getArtifact(item);
+    if (isCompiledJsArtifact(artifact.filePath)) continue;
+    const key = sourceArtifactKey(artifact.filePath);
+    if (key) sourceKeys.add(`${key}\0${artifact.name ?? ''}\0${artifact.type ?? ''}`);
+  }
+
+  if (sourceKeys.size === 0) return items;
+
+  return items.filter((item) => {
+    const artifact = getArtifact(item);
+    if (!isCompiledJsArtifact(artifact.filePath)) return true;
+    const key = sourceArtifactKey(artifact.filePath);
+    if (!key) return true;
+    return !sourceKeys.has(`${key}\0${artifact.name ?? ''}\0${artifact.type ?? ''}`);
+  });
 }
 
 /** Valid LadybugDB node labels for safe Cypher query construction */
@@ -313,7 +487,8 @@ export function resolveWorktreeCwd(repoPath: string, launchCwd: string): string 
 export const REPO_ID_HASH_LENGTH = 6;
 
 interface ImpactParams {
-  target: string;
+  target?: string;
+  targets?: string[];
   target_uid?: string;
   file_path?: string;
   kind?: string;
@@ -327,12 +502,22 @@ interface ImpactParams {
   summaryOnly?: boolean;
 }
 
+function shouldRunSymbolFallback(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length >= 6 && !trimmed.includes('*');
+}
+
 export class LocalBackend {
   private repos: Map<string, RepoHandle> = new Map();
   private contextCache: Map<string, CodebaseContext> = new Map();
   private initializedRepos: Set<string> = new Set();
   private reinitPromises: Map<string, Promise<void>> = new Map();
   private lastStalenessCheck: Map<string, number> = new Map();
+  private gitStalenessCache: Map<
+    string,
+    { isStale: boolean; commitsBehind: number; hint?: string; ts: number }
+  > = new Map();
+  private readonly GIT_STALENESS_TTL_MS = 60_000;
   private groupToolSvc: GroupService | null = null;
   /**
    * One-shot stderr warnings for sibling-clone drift, keyed by
@@ -530,9 +715,7 @@ export class LocalBackend {
       const key = h.name.toLowerCase();
       nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
     }
-    const labels = [...this.repos.values()].map((h) =>
-      (nameCounts.get(h.name.toLowerCase()) ?? 0) > 1 ? `${h.name} (${h.repoPath})` : h.name,
-    );
+    const labels = this.formatRepoLabels([...this.repos.values()], nameCounts);
 
     if (repoParam) {
       throw new Error(`Repository "${repoParam}" not found. Available: ${labels.join(', ')}`);
@@ -647,6 +830,21 @@ export class LocalBackend {
     };
   }
 
+  private formatRepoLabels(
+    handles: RepoHandle[],
+    nameCounts: Map<string, number> = new Map(),
+  ): string[] {
+    if (nameCounts.size === 0) {
+      for (const h of handles) {
+        const key = h.name.toLowerCase();
+        nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+      }
+    }
+    return handles.map((h) =>
+      (nameCounts.get(h.name.toLowerCase()) ?? 0) > 1 ? `${h.name} (${h.repoPath})` : h.name,
+    );
+  }
+
   // ─── Lazy LadybugDB Init ────────────────────────────────────────────
 
   private async ensureInitialized(repoId: string): Promise<void> {
@@ -666,6 +864,10 @@ export class LocalBackend {
       if (now - lastCheck < 5000) return; // Checked recently — skip
 
       this.lastStalenessCheck.set(repoId, now);
+      // Fire-and-forget git staleness check. Fills gitStalenessCache so
+      // query/context can include a warning without blocking on git.
+      this.triggerGitStalenessCheck(handle);
+
       try {
         const metaPath = path.join(handle.storagePath, 'meta.json');
         const metaRaw = await fs.readFile(metaPath, 'utf-8');
@@ -698,11 +900,67 @@ export class LocalBackend {
     try {
       await initLbug(repoId, handle.lbugPath);
       this.initializedRepos.add(repoId);
+      // Pre-warm the embedding model in the background so the first semantic-
+      // search call does not hit model-load latency (fixes cold-start where the
+      // first query() returns processes: [] while the ONNX model is loading).
+      // Only pre-warms when an embedding table exists — avoids downloading the
+      // model for repos that were indexed without embeddings.
+      import('../core/embedder.js')
+        .then(({ isEmbedderReady, initEmbedder }) => {
+          if (!isEmbedderReady()) {
+            executeQuery(repoId, `MATCH (e:${EMBEDDING_TABLE_NAME}) RETURN COUNT(*) AS cnt LIMIT 1`)
+              .then((rows) => {
+                if (rows.length > 0 && Number(rows[0].cnt ?? rows[0][0] ?? 0) > 0) {
+                  initEmbedder().catch(() => {});
+                }
+              })
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
     } catch (err: any) {
       // If lock error, mark as not initialized so next call retries
       this.initializedRepos.delete(repoId);
       throw err;
     }
+  }
+
+  // ─── Staleness helpers ───────────────────────────────────────────
+
+  /**
+   * Fire-and-forget git commit-behind check. Populates gitStalenessCache.
+   * Safe to call frequently — TTL-throttled, never awaited by callers.
+   */
+  private triggerGitStalenessCheck(handle: RepoHandle): void {
+    const cached = this.gitStalenessCache.get(handle.id);
+    if (cached && Date.now() - cached.ts < this.GIT_STALENESS_TTL_MS) return;
+    // Reserve the slot immediately to prevent concurrent redundant spawns.
+    this.gitStalenessCache.set(handle.id, {
+      isStale: cached?.isStale ?? false,
+      commitsBehind: cached?.commitsBehind ?? 0,
+      hint: cached?.hint,
+      ts: Date.now(),
+    });
+    checkStalenessAsync(handle.repoPath, handle.lastCommit)
+      .then((result) => {
+        this.gitStalenessCache.set(handle.id, { ...result, ts: Date.now() });
+      })
+      .catch(() => {
+        /* git unavailable — keep previous cached value */
+      });
+  }
+
+  /**
+   * Returns a human-readable staleness warning string when the git index
+   * is behind the working-tree HEAD, or undefined if up-to-date / unknown.
+   */
+  getStalenessWarning(repoId: string): string | undefined {
+    const cached = this.gitStalenessCache.get(repoId);
+    if (!cached?.isStale) return undefined;
+    return (
+      cached.hint ??
+      `Index is ${cached.commitsBehind} commit(s) behind HEAD. Run \`gitnexus analyze\` to update.`
+    );
   }
 
   // ─── Public Getters ──────────────────────────────────────────────
@@ -892,7 +1150,7 @@ export class LocalBackend {
       case 'test_impact':
         return testImpactTool(repo, params, (repoId) => this.ensureInitialized(repoId));
       case 'detect_changes':
-        return this.detectChanges(repo, params);
+        return detectChangesTool(repo, params, (repoId) => this.ensureInitialized(repoId));
       case 'rename':
         return this.rename(repo, params);
       // Legacy aliases for backwards compatibility
@@ -918,6 +1176,106 @@ export class LocalBackend {
   // ─── Tool Implementations ────────────────────────────────────────
 
   /**
+   * Merge micro-flows that share the same entry point into aggregated high-level flows.
+   * Processes sharing a step-1 symbol are combined; steps are deduplicated.
+   */
+  private static aggregateQueryProcesses(
+    processes: Array<{
+      id: string;
+      summary: string;
+      priority: number;
+      symbol_count: number;
+      process_type: string;
+      step_count: number;
+    }>,
+    processSymbols: Array<{
+      id: string;
+      process_id: string;
+      step_index?: number;
+      name: string;
+      filePath: string;
+      type?: string;
+      startLine?: number;
+      endLine?: number;
+      module?: string;
+      content?: string;
+    }>,
+  ): { processes: typeof processes; process_symbols: typeof processSymbols } {
+    // Build entry-point → process IDs mapping (step 1 or 0)
+    const processFirstSymbol = new Map<string, { symbolId: string; symbolName: string }>();
+    for (const sym of processSymbols) {
+      if (sym.step_index === 1 || sym.step_index === 0) {
+        processFirstSymbol.set(sym.process_id, { symbolId: sym.id, symbolName: sym.name });
+      }
+    }
+
+    const entryPointGroups = new Map<string, string[]>();
+    for (const proc of processes) {
+      const first = processFirstSymbol.get(proc.id);
+      const key = first?.symbolId ?? proc.id;
+      if (!entryPointGroups.has(key)) entryPointGroups.set(key, []);
+      entryPointGroups.get(key)!.push(proc.id);
+    }
+
+    const aggregated = new Map<string, { proc: typeof processes[0]; symbolIds: Set<string> }>();
+    const usedProcessIds = new Set<string>();
+
+    for (const [_entryKey, procIds] of entryPointGroups) {
+      if (procIds.length <= 1) continue;
+
+      const procs = procIds.map((id) => processes.find((p) => p.id === id)!).filter(Boolean);
+      if (procs.length === 0) continue;
+
+      const mergedId = `flow_${procs[0].id}`;
+      const mergedPriority = procs.reduce((sum, p) => sum + p.priority, 0);
+      const totalSymbols = new Set<string>();
+      for (const pid of procIds) {
+        for (const sym of processSymbols) {
+          if (sym.process_id === pid) totalSymbols.add(sym.id);
+        }
+      }
+
+      const firstSym = processFirstSymbol.get(procs[0].id);
+      const entryLabel = firstSym?.symbolName ?? procs[0].summary;
+      const stepTotal = procs.reduce((sum, p) => sum + p.step_count, 0);
+
+      aggregated.set(mergedId, {
+        proc: {
+          id: mergedId,
+          summary: `Flow: ${entryLabel} (+${procs.length - 1} traces)`,
+          priority: mergedPriority,
+          symbol_count: totalSymbols.size,
+          process_type: 'aggregated',
+          step_count: stepTotal,
+        },
+        symbolIds: totalSymbols,
+      });
+
+      for (const pid of procIds) usedProcessIds.add(pid);
+    }
+
+    const resultProcesses: typeof processes = [];
+    const resultSymbols: typeof processSymbols = [];
+
+    for (const [mergedId, { proc, symbolIds }] of aggregated) {
+      resultProcesses.push(proc);
+      for (const sym of processSymbols) {
+        if (symbolIds.has(sym.id)) resultSymbols.push({ ...sym, process_id: mergedId });
+      }
+    }
+
+    for (const proc of processes) {
+      if (usedProcessIds.has(proc.id)) continue;
+      resultProcesses.push(proc);
+      for (const sym of processSymbols) {
+        if (sym.process_id === proc.id) resultSymbols.push(sym);
+      }
+    }
+
+    return { processes: resultProcesses, process_symbols: resultSymbols };
+  }
+
+  /**
    * Query tool — process-grouped search.
    *
    * 1. Hybrid search (BM25 + semantic) to find matching symbols
@@ -934,6 +1292,7 @@ export class LocalBackend {
       limit?: number;
       max_symbols?: number;
       include_content?: boolean;
+      granularity?: 'low' | 'high';
     },
   ): Promise<any> {
     if (!params.query?.trim()) {
@@ -968,7 +1327,7 @@ export class LocalBackend {
     // Guard against undefined results (#1489) — when FTS is entirely
     // unavailable the search helper may return an unexpected shape.
     const bm25Results = bm25SearchResult?.results ?? [];
-    const ftsUsed = bm25SearchResult?.ftsUsed ?? false;
+    const ftsWarning = bm25SearchResult?.ftsWarning;
 
     // Merge via reciprocal rank fusion
     timer.start('merge');
@@ -999,9 +1358,12 @@ export class LocalBackend {
       }
     }
 
-    const merged = Array.from(scoreMap.entries())
-      .sort((a, b) => b[1].score - a[1].score)
-      .slice(0, searchLimit);
+    const merged = preferSourceArtifacts(
+      Array.from(scoreMap.entries())
+        .sort((a, b) => b[1].score - a[1].score)
+        .slice(0, searchLimit),
+      (entry) => entry[1].data,
+    );
     timer.stop(); // merge
 
     // Step 2: For each match with a nodeId, trace to process(es)
@@ -1021,6 +1383,82 @@ export class LocalBackend {
     >();
     const definitions: any[] = []; // standalone symbols not in any process
 
+    const nodeIds = Array.from(
+      new Set(
+        merged
+          .map(([, item]) => item.data?.nodeId)
+          .filter((nodeId): nodeId is string => typeof nodeId === 'string' && nodeId.length > 0),
+      ),
+    );
+    const processRowsByNodeId = new Map<string, any[]>();
+    const cohesionByNodeId = new Map<string, { cohesion: number; module?: string }>();
+    const contentByNodeId = new Map<string, string>();
+
+    if (nodeIds.length > 0) {
+      const processLookup = executeParameterized(
+        repo.id,
+        `
+        MATCH (n)-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process)
+        WHERE n.id IN $nodeIds
+        RETURN n.id AS nodeId, p.id AS pid, p.label AS label, p.heuristicLabel AS heuristicLabel, p.processType AS processType, p.stepCount AS stepCount, r.step AS step
+      `,
+        { nodeIds },
+      )
+        .then((rows) => {
+          for (const row of rows) {
+            const nodeId = row.nodeId ?? row[0];
+            if (!nodeId) continue;
+            const bucket = processRowsByNodeId.get(nodeId) ?? [];
+            bucket.push(row);
+            processRowsByNodeId.set(nodeId, bucket);
+          }
+        })
+        .catch((e) => logQueryError('query:process-lookup', e));
+
+      const cohesionLookup = executeParameterized(
+        repo.id,
+        `
+        MATCH (n)-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
+        WHERE n.id IN $nodeIds
+        RETURN n.id AS nodeId, c.cohesion AS cohesion, c.heuristicLabel AS module
+      `,
+        { nodeIds },
+      )
+        .then((rows) => {
+          for (const row of rows) {
+            const nodeId = row.nodeId ?? row[0];
+            if (!nodeId || cohesionByNodeId.has(nodeId)) continue;
+            cohesionByNodeId.set(nodeId, {
+              cohesion: (row.cohesion ?? row[1]) || 0,
+              module: row.module ?? row[2],
+            });
+          }
+        })
+        .catch((e) => logQueryError('query:cluster-info', e));
+
+      const contentLookup = includeContent
+        ? executeParameterized(
+            repo.id,
+            `
+            MATCH (n)
+            WHERE n.id IN $nodeIds
+            RETURN n.id AS nodeId, n.content AS content
+          `,
+            { nodeIds },
+          )
+            .then((rows) => {
+              for (const row of rows) {
+                const nodeId = row.nodeId ?? row[0];
+                const content = row.content ?? row[1];
+                if (nodeId && content) contentByNodeId.set(nodeId, content);
+              }
+            })
+            .catch((e) => logQueryError('query:content-fetch', e))
+        : Promise.resolve();
+
+      await Promise.all([processLookup, cohesionLookup, contentLookup]);
+    }
+
     for (const [_, item] of merged) {
       const sym = item.data;
       if (!sym.nodeId) {
@@ -1033,61 +1471,11 @@ export class LocalBackend {
         continue;
       }
 
-      // Find processes this symbol participates in
-      let processRows: any[] = [];
-      try {
-        processRows = await executeParameterized(
-          repo.id,
-          `
-          MATCH (n {id: $nodeId})-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process)
-          RETURN p.id AS pid, p.label AS label, p.heuristicLabel AS heuristicLabel, p.processType AS processType, p.stepCount AS stepCount, r.step AS step
-        `,
-          { nodeId: sym.nodeId },
-        );
-      } catch (e) {
-        logQueryError('query:process-lookup', e);
-      }
-
-      // Get cluster membership + cohesion (cohesion used as internal ranking signal)
-      let cohesion = 0;
-      let module: string | undefined;
-      try {
-        const cohesionRows = await executeParameterized(
-          repo.id,
-          `
-          MATCH (n {id: $nodeId})-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
-          RETURN c.cohesion AS cohesion, c.heuristicLabel AS module
-          LIMIT 1
-        `,
-          { nodeId: sym.nodeId },
-        );
-        if (cohesionRows.length > 0) {
-          cohesion = (cohesionRows[0].cohesion ?? cohesionRows[0][0]) || 0;
-          module = cohesionRows[0].module ?? cohesionRows[0][1];
-        }
-      } catch (e) {
-        logQueryError('query:cluster-info', e);
-      }
-
-      // Optionally fetch content
-      let content: string | undefined;
-      if (includeContent) {
-        try {
-          const contentRows = await executeParameterized(
-            repo.id,
-            `
-            MATCH (n {id: $nodeId})
-            RETURN n.content AS content
-          `,
-            { nodeId: sym.nodeId },
-          );
-          if (contentRows.length > 0) {
-            content = contentRows[0].content ?? contentRows[0][0];
-          }
-        } catch (e) {
-          logQueryError('query:content-fetch', e);
-        }
-      }
+      const processRows = processRowsByNodeId.get(sym.nodeId) ?? [];
+      const cohesionInfo = cohesionByNodeId.get(sym.nodeId);
+      const cohesion = cohesionInfo?.cohesion ?? 0;
+      const module = cohesionInfo?.module;
+      const content = includeContent ? contentByNodeId.get(sym.nodeId) : undefined;
 
       const symbolEntry = {
         id: sym.nodeId,
@@ -1140,6 +1528,81 @@ export class LocalBackend {
 
     timer.stop(); // symbol_lookup
 
+    // Step 2b: Community-hop process expansion.
+    // If the direct process map is sparse (fewer than processLimit hits), look
+    // for additional processes whose steps belong to the SAME communities as
+    // the matched symbols but were not matched by keyword/semantic search.
+    // This addresses "process discovery requires multiple keyword queries" —
+    // a process whose entry-point symbol name doesn't match the query string
+    // can still be surfaced when any of its community peers matched.
+    //
+    // We cap expansion at processLimit extra candidates and suppress any
+    // process already found in Step 2 (no duplicate boosting).
+    if (processMap.size < processLimit && nodeIds.length > 0) {
+      try {
+        timer.start('community_hop');
+        const communityExpansion = await executeParameterized(
+          repo.id,
+          `
+          MATCH (n)-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
+          WHERE n.id IN $nodeIds
+          MATCH (peer)-[:CodeRelation {type: 'MEMBER_OF'}]->(c)
+          MATCH (peer)-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process)
+          WHERE NOT p.id IN $knownPids
+          RETURN p.id AS pid, p.label AS label, p.heuristicLabel AS heuristicLabel,
+                 p.processType AS processType, p.stepCount AS stepCount,
+                 peer.id AS peerId, peer.name AS peerName, peer.filePath AS peerFilePath,
+                 labels(peer)[0] AS peerKind, r.step AS step, c.cohesion AS cohesion
+          LIMIT ${processLimit * 10}
+        `,
+          { nodeIds, knownPids: Array.from(processMap.keys()) },
+        );
+
+        for (const row of communityExpansion as any[]) {
+          const pid = row.pid ?? row[0];
+          if (!pid) continue;
+          // Lazily insert an entry for this process the first time we see it.
+          if (!processMap.has(pid)) {
+            const label = row.label ?? row[1];
+            const hLabel = row.heuristicLabel ?? row[2];
+            const pType = row.processType ?? row[3];
+            const stepCount = row.stepCount ?? row[4];
+            const cohesion = Number(row.cohesion ?? row[10] ?? 0);
+            processMap.set(pid, {
+              id: pid,
+              label,
+              heuristicLabel: hLabel,
+              processType: pType,
+              stepCount,
+              // Community-hop score is lower than direct match to preserve ranking.
+              totalScore: 0.005,
+              cohesionBoost: cohesion,
+              symbols: [],
+            });
+          }
+          // Accumulate each distinct peer symbol as a representative step.
+          const proc = processMap.get(pid)!;
+          const peerId = row.peerId ?? row[5];
+          if (peerId && !proc.symbols.some((s) => s.id === peerId)) {
+            proc.symbols.push({
+              id: peerId,
+              name: row.peerName ?? row[6],
+              type: row.peerKind ?? row[9],
+              filePath: row.peerFilePath ?? row[7],
+              process_id: pid,
+              step_index: row.step ?? row[8],
+            });
+          }
+        }
+      } catch {
+        /* community hop is best-effort; ignore errors */
+      } finally {
+        // Always stop the timer — PhaseTimer.stop() is a no-op when
+        // no phase is active, so this is safe even after a throw.
+        timer.stop();
+      }
+    }
+
     // Step 3: Rank processes by aggregate score + internal cohesion boost
     timer.start('ranking');
     const rankedProcesses = Array.from(processMap.values())
@@ -1185,15 +1648,29 @@ export class LocalBackend {
     const timing = timer.summary();
     logQueryTiming(searchQuery, timing);
 
+    const stalenessWarning = this.getStalenessWarning(repo.id);
+
+    // Step 5: Apply flow aggregation when granularity is "high"
+    const granularity = params.granularity ?? 'low';
+    if (granularity === 'high' && processes.length > 1) {
+      const aggregated = LocalBackend.aggregateQueryProcesses(processes, dedupedSymbols);
+      return {
+        processes: aggregated.processes,
+        process_symbols: aggregated.process_symbols,
+        definitions: definitions.slice(0, 20),
+        timing,
+        ...(ftsWarning ? { warning: ftsWarning } : {}),
+        ...(stalenessWarning ? { staleness_warning: stalenessWarning } : {}),
+      };
+    }
+
     return {
       processes,
       process_symbols: dedupedSymbols,
       definitions: definitions.slice(0, 20), // cap standalone definitions
       timing,
-      ...(!ftsUsed && {
-        warning:
-          'FTS indexes missing — keyword search degraded. Run: gitnexus analyze --repair-fts (or gitnexus analyze --force) to rebuild indexes.',
-      }),
+      ...(ftsWarning ? { warning: ftsWarning } : {}),
+      ...(stalenessWarning ? { staleness_warning: stalenessWarning } : {}),
     };
   }
 
@@ -1204,18 +1681,27 @@ export class LocalBackend {
     repo: RepoHandle,
     query: string,
     limit: number,
-  ): Promise<{ results: any[]; ftsUsed: boolean }> {
-    let searchFTSFromLbug;
+  ): Promise<{ results: any[]; ftsUsed: boolean; ftsWarning?: string }> {
+    let searchFTSFromLbug: (query: string, limit: number, repoId?: string) => Promise<any>;
+    let getFTSHealthWarning: ((response: any) => string | undefined) | undefined;
     try {
-      ({ searchFTSFromLbug } = await import('../../core/search/bm25-index.js'));
+      ({ searchFTSFromLbug, getFTSHealthWarning } = await import(
+        '../../core/search/bm25-index.js'
+      ));
     } catch (err: any) {
       // Module import can fail in sandboxed MCP contexts (#1489)
       logger.warn(
         { err: err?.message },
         'GitNexus: bm25-index.js import failed — falling back to semantic-only',
       );
-      return { results: [], ftsUsed: false };
+      return {
+        results: [],
+        ftsUsed: false,
+        ftsWarning:
+          'FTS indexes missing or unavailable — keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.',
+      };
     }
+
     let ftsResponse;
     try {
       ftsResponse = await searchFTSFromLbug(query, limit, repo.id);
@@ -1224,13 +1710,19 @@ export class LocalBackend {
         { err: err.message },
         'GitNexus: BM25/FTS search failed (FTS indexes may not exist) -',
       );
-      return { results: [], ftsUsed: false };
+      return {
+        results: [],
+        ftsUsed: false,
+        ftsWarning:
+          'FTS indexes missing or unavailable — keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.',
+      };
     }
 
     // Guard against unexpected response shape (#1489) — ftsResponse.results
     // could be undefined when the FTS extension is unavailable in the MCP process.
     const bm25Results = ftsResponse?.results ?? [];
     const ftsUsed = ftsResponse?.ftsAvailable ?? false;
+    const ftsWarning = getFTSHealthWarning?.(ftsResponse);
 
     const results: any[] = [];
 
@@ -1294,7 +1786,7 @@ export class LocalBackend {
       }
     }
 
-    return { results, ftsUsed };
+    return { results: preferSourceArtifacts(results), ftsUsed, ftsWarning };
   }
 
   /**
@@ -1469,7 +1961,9 @@ export class LocalBackend {
           recoverySuggestion: WAL_RECOVERY_SUGGESTION,
         };
       }
-      return { error: msg };
+      // Add schema hints for common Cypher errors
+      const hint = getCypherErrorHint(msg);
+      return hint ? { error: msg, hint } : { error: msg };
     }
   }
 
@@ -1804,16 +2298,29 @@ export class LocalBackend {
 
     // LIMIT 20 (was 10) — scoring is the point now, so give the ranker
     // headroom instead of arbitrary truncation.
-    const rows = await executeParameterized(
+    let rows = await executeParameterized(
       repo.id,
       `MATCH (n) ${whereClause} RETURN ${selectClause} LIMIT 20`,
       queryParams,
     );
 
+    let usedFuzzyFallback = false;
+    if (rows.length === 0 && shouldRunSymbolFallback(name)) {
+      const fuzzyWhere = hints.file_path
+        ? `WHERE (n.name ENDS WITH $symName OR n.id ENDS WITH $symName OR n.name CONTAINS $symName OR n.id CONTAINS $symName) AND n.filePath CONTAINS $filePath`
+        : `WHERE n.name ENDS WITH $symName OR n.id ENDS WITH $symName OR n.name CONTAINS $symName OR n.id CONTAINS $symName`;
+      rows = await executeParameterized(
+        repo.id,
+        `MATCH (n) ${fuzzyWhere} RETURN ${selectClause} LIMIT 20`,
+        queryParams,
+      );
+      usedFuzzyFallback = rows.length > 0;
+    }
+
     if (rows.length === 0) return { kind: 'not_found' };
 
     // Normalise row shape across object / tuple returns from LadybugDB.
-    const normalized = rows.map((r: any) => ({
+    const normalized = preferSourceArtifacts(rows.map((r: any) => ({
       id: (r.id ?? r[0]) as string,
       name: (r.name ?? r[1]) as string,
       type: (r.type ?? r[2] ?? '') as string,
@@ -1821,7 +2328,7 @@ export class LocalBackend {
       startLine: (r.startLine ?? r[4]) as number,
       endLine: (r.endLine ?? r[5]) as number,
       ...(include_content ? { content: (r.content ?? r[6]) as string | undefined } : {}),
-    }));
+    })));
 
     // Enrich labels for any candidates where `labels(n)[0]` came back empty.
     // LadybugDB returns an empty string for that projection on certain node
@@ -1831,6 +2338,21 @@ export class LocalBackend {
     // across the five priority labels patches the type in-place without
     // per-candidate round-trips.
     await this.enrichCandidateLabels(repo, normalized);
+
+    if (usedFuzzyFallback) {
+      const scored = normalized.map((s) => ({
+        ...s,
+        score: this.scoreCandidate({ kind: s.type, filePath: s.filePath || '' }, hints),
+      }));
+      scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        const fpA = (a.filePath || '').length;
+        const fpB = (b.filePath || '').length;
+        if (fpA !== fpB) return fpA - fpB;
+        return String(a.id).localeCompare(String(b.id));
+      });
+      return { kind: 'ambiguous', candidates: scored };
+    }
 
     // Preserve #480 Class/Constructor collapse: if we have exactly one
     // Class (or Interface) candidate and one Constructor sharing name +
@@ -1922,6 +2444,7 @@ export class LocalBackend {
       file_path?: string;
       kind?: string;
       include_content?: boolean;
+      include_callers_content?: boolean;
     },
   ): Promise<any> {
     try {
@@ -1946,11 +2469,12 @@ export class LocalBackend {
       file_path?: string;
       kind?: string;
       include_content?: boolean;
+      include_callers_content?: boolean;
     },
   ): Promise<any> {
     await this.ensureInitialized(repo.id);
 
-    const { name, uid, file_path, kind, include_content } = params;
+    const { name, uid, file_path, kind, include_content, include_callers_content } = params;
 
     if (!name && !uid) {
       return { error: 'Either "name" or "uid" parameter is required.' };
@@ -2126,32 +2650,55 @@ export class LocalBackend {
       { symId },
     );
 
-    // Process participation
+    // Process participation + community/module — run in parallel (independent queries).
     let processRows: any[] = [];
+    let symbolModule: string | undefined;
     try {
-      processRows = await executeParameterized(
-        repo.id,
-        `
-        MATCH (n {id: $symId})-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process)
-        RETURN p.id AS pid, p.heuristicLabel AS label, r.step AS step, p.stepCount AS stepCount
-      `,
-        { symId },
-      );
+      const [pRows, mRows] = await Promise.all([
+        executeParameterized(
+          repo.id,
+          `
+          MATCH (n {id: $symId})-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process)
+          RETURN p.id AS pid, p.heuristicLabel AS label, r.step AS step, p.stepCount AS stepCount
+        `,
+          { symId },
+        ).catch((e) => {
+          logQueryError('context:process-participation', e);
+          return [] as any[];
+        }),
+        executeParameterized(
+          repo.id,
+          `MATCH (n {id: $symId})-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
+           RETURN c.heuristicLabel AS module LIMIT 1`,
+          { symId },
+        ).catch(() => [] as any[]),
+      ]);
+      processRows = pRows;
+      if (mRows.length > 0) {
+        const r = mRows[0] as any;
+        const raw = r.module ?? r[0];
+        if (raw) symbolModule = String(raw);
+      }
     } catch (e) {
-      logQueryError('context:process-participation', e);
+      logQueryError('context:process-community', e);
     }
 
-    // Helper to categorize refs
-    const categorize = (rows: any[]) => {
+    // Helper to categorize refs; optionally injects caller content from a Map.
+    const categorize = (rows: any[], contentMap?: Map<string, string | null>) => {
       const cats: Record<string, any[]> = {};
       for (const row of rows) {
         const relType = (row.relType || row[0] || '').toLowerCase();
-        const entry = {
-          uid: row.uid || row[1],
+        const uid = row.uid || row[1];
+        const entry: Record<string, any> = {
+          uid,
           name: row.name || row[2],
           filePath: row.filePath || row[3],
           kind: row.kind || row[4],
         };
+        if (contentMap && uid) {
+          const c = contentMap.get(uid);
+          if (c != null) entry.content = c;
+        }
         if (!cats[relType]) cats[relType] = [];
         cats[relType].push(entry);
       }
@@ -2194,6 +2741,49 @@ export class LocalBackend {
       }
     }
 
+    // Optionally batch-fetch source content for all incoming callers.
+    let callerContentMap: Map<string, string | null> | undefined;
+    if (include_callers_content) {
+      const callerUids = [
+        ...new Set(
+          (incomingRows as any[]).map((r) => r.uid || r[1]).filter(Boolean) as string[],
+        ),
+      ];
+      if (callerUids.length > 0) {
+        try {
+          const contentRows = await executeParameterized(
+            repo.id,
+            'MATCH (n) WHERE n.id IN $uids RETURN n.id AS uid, n.content AS content',
+            { uids: callerUids },
+          );
+          callerContentMap = new Map(
+            contentRows.map((r: any) => [r.uid ?? r[0], r.content ?? r[1] ?? null]),
+          );
+        } catch {
+          /* content fetch failed — omit silently */
+        }
+      }
+    }
+
+    const incoming = categorize(incomingRows, callerContentMap);
+    const outgoing = categorize(outgoingRows);
+
+    // When a Class/Interface has no discoverable incoming edges, add an
+    // actionable note. Direct callers may exist via factory functions, DI
+    // containers, or interface aliases that don't produce CALLS edges to
+    // the concrete class. A Cypher query is the reliable fallback.
+    const incomingEmpty = Object.keys(incoming).length === 0;
+    const rawSymName = sym.name ?? (sym as any)[1] ?? '';
+    // Escape single quotes so the Cypher snippet in incoming_note is valid
+    // even for symbol names like O'Brien.
+    const escapedSymName = (rawSymName as string).replace(/'/g, "\\'");
+    const incomingNote =
+      incomingEmpty && isClassLike
+        ? `No direct caller edges found for '${rawSymName}'. ` +
+          `The class may be instantiated via a factory or used through an interface. ` +
+          `Explore with: cypher({query: "MATCH (c)-[r:CodeRelation]->(n) WHERE n.name = '${escapedSymName}' RETURN r.type, c.name, c.filePath LIMIT 20"})`
+        : undefined;
+
     return {
       status: 'found',
       symbol: {
@@ -2203,11 +2793,13 @@ export class LocalBackend {
         filePath: sym.filePath ?? (sym as any)[3],
         startLine: sym.startLine ?? (sym as any)[4],
         endLine: sym.endLine ?? (sym as any)[5],
+        ...(symbolModule ? { module: symbolModule } : {}),
         ...(include_content ? { content: sym.content ?? (sym as any)[6] } : {}),
         ...(methodMetadata ? { methodMetadata } : {}),
       },
-      incoming: categorize(incomingRows),
-      outgoing: categorize(outgoingRows),
+      incoming,
+      ...(incomingNote ? { incoming_note: incomingNote } : {}),
+      outgoing,
       ...(typedPropertyRows.length > 0
         ? {
             typed_properties: typedPropertyRows.map((r: any) => ({
@@ -2224,7 +2816,11 @@ export class LocalBackend {
         name: r.label || r[1],
         step_index: r.step || r[2],
         step_count: r.stepCount || r[3],
+        resource_url: `gitnexus://repo/${repo.name}/process/${encodeURIComponent(r.label || r[1])}`,
       })),
+      ...(this.getStalenessWarning(repo.id)
+        ? { staleness_warning: this.getStalenessWarning(repo.id) }
+        : {}),
     };
   }
 
@@ -2776,8 +3372,20 @@ export class LocalBackend {
   }
 
   private async impact(repo: RepoHandle, params: ImpactParams): Promise<any> {
+    // Batch mode when targets[] is provided and non-empty.
+    if (params.targets && params.targets.length > 0) {
+      return this._batchImpact(repo, params, params.targets);
+    }
+    if (!params.target) {
+      return {
+        error: 'Either target or targets must be provided',
+        direction: params.direction,
+        impactedCount: 0,
+        risk: 'UNKNOWN',
+      };
+    }
     try {
-      return await this._impactImpl(repo, params);
+      return await this._impactImpl(repo, params as ImpactParams & { target: string });
     } catch (err: any) {
       // Return structured error instead of crashing (#321)
       return {
@@ -2792,7 +3400,103 @@ export class LocalBackend {
     }
   }
 
-  private async _impactImpl(repo: RepoHandle, params: ImpactParams): Promise<any> {
+  /**
+   * Batch impact: run the single-target implementation for each target in parallel and return
+   * per-target results alongside a deduplicated merged summary.
+   */
+  private async _batchImpact(
+    repo: RepoHandle,
+    baseParams: Omit<ImpactParams, 'target' | 'targets'>,
+    targets: string[],
+  ): Promise<any> {
+    const results = await Promise.all(
+      targets.map(async (target) => {
+        try {
+          return await this._impactImpl(repo, { ...baseParams, target });
+        } catch (err: any) {
+          return {
+            error: (err instanceof Error ? err.message : String(err)) || 'Impact analysis failed',
+            target: { name: target },
+            direction: baseParams.direction,
+            impactedCount: 0,
+            risk: 'UNKNOWN' as const,
+            ...(isWalCorruptionError(err) ? { recoverySuggestion: WAL_RECOVERY_SUGGESTION } : {}),
+          };
+        }
+      }),
+    );
+
+    const RISK_ORDER = ['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+    const mergedRisk = results.reduce(
+      (acc, r) =>
+        RISK_ORDER.indexOf((r.risk as string) ?? 'UNKNOWN') > RISK_ORDER.indexOf(acc)
+          ? ((r.risk as string) ?? 'UNKNOWN')
+          : acc,
+      'LOW' as string,
+    );
+
+    const uidToEntry = new Map<string, { depth: number; entry: any }>();
+    for (const result of results) {
+      if (!result.byDepth) continue;
+      for (const [depthStr, entries] of Object.entries(result.byDepth)) {
+        const depth = parseInt(depthStr, 10);
+        for (const entry of entries as any[]) {
+          const uid: string | undefined = entry.uid;
+          if (!uid) continue;
+          const existing = uidToEntry.get(uid);
+          if (!existing || depth < existing.depth) {
+            uidToEntry.set(uid, { depth, entry });
+          }
+        }
+      }
+    }
+    const mergedByDepth: Record<string, any[]> = {};
+    for (const { depth, entry } of uidToEntry.values()) {
+      const key = String(depth);
+      (mergedByDepth[key] ??= []).push(entry);
+    }
+
+    const processMap = new Map<string, any>();
+    for (const result of results) {
+      for (const p of result.affected_processes ?? []) {
+        const key = p.id ?? p.name;
+        if (key) processMap.set(key, p);
+      }
+    }
+
+    const moduleMap = new Map<string, any>();
+    for (const result of results) {
+      for (const m of result.affected_modules ?? []) {
+        if (!moduleMap.has(m.name) || m.impact === 'direct') {
+          moduleMap.set(m.name, m);
+        }
+      }
+    }
+
+    return {
+      mode: 'batch',
+      direction: baseParams.direction,
+      targets: results.map((r) => r.target?.name ?? 'unknown'),
+      results,
+      merged: {
+        risk: mergedRisk,
+        impactedCount: uidToEntry.size,
+        summary: {
+          direct: results.reduce((acc, r) => acc + (r.summary?.direct ?? 0), 0),
+          processes_affected: processMap.size,
+          modules_affected: moduleMap.size,
+        },
+        affected_processes: Array.from(processMap.values()),
+        affected_modules: Array.from(moduleMap.values()),
+        byDepth: mergedByDepth,
+      },
+    };
+  }
+
+  private async _impactImpl(
+    repo: RepoHandle,
+    params: ImpactParams & { target: string },
+  ): Promise<any> {
     await this.ensureInitialized(repo.id);
 
     const { target, direction } = params;
@@ -3671,6 +4375,7 @@ export class LocalBackend {
       if (typeof params.limit === 'number') queryArgs.limit = params.limit;
       if (typeof params.max_symbols === 'number') queryArgs.max_symbols = params.max_symbols;
       if (params.include_content !== undefined) queryArgs.include_content = params.include_content;
+      if (params.granularity !== undefined) queryArgs.granularity = params.granularity;
       if (params.service !== undefined && params.service !== null)
         queryArgs.service = params.service;
       if (memberRest !== undefined) {

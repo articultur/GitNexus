@@ -113,17 +113,23 @@ export function resolveReferenceSites(input: ResolveReferencesInput): ResolveRef
   let sitesProcessed = 0;
   let referencesEmitted = 0;
   let unresolved = 0;
+  const lookupCache = new Map<string, readonly Resolution[]>();
 
   for (const site of scopes.referenceSites) {
     sitesProcessed++;
 
-    const resolutions = lookupForSite(
-      site,
-      classRegistry,
-      methodRegistry,
-      fieldRegistry,
-      macroRegistry,
-    );
+    const cacheKey = cacheKeyForSite(site);
+    let resolutions = lookupCache.get(cacheKey);
+    if (resolutions === undefined) {
+      resolutions = lookupForSite(
+        site,
+        classRegistry,
+        methodRegistry,
+        fieldRegistry,
+        macroRegistry,
+      );
+      lookupCache.set(cacheKey, resolutions);
+    }
     if (resolutions.length === 0) {
       unresolved++;
       continue;
@@ -235,6 +241,18 @@ function lookupForSite(
       return macroRegistry.lookup(site.name, site.inScope);
     }
   }
+}
+
+function cacheKeyForSite(site: ReferenceSite): string {
+  return JSON.stringify([
+    site.kind,
+    site.name,
+    site.inScope,
+    site.callForm ?? '',
+    site.explicitReceiver?.name ?? '',
+    site.arity ?? -1,
+    site.argumentTypes ?? [],
+  ]);
 }
 
 /** Compose a `Reference` record from a site + its top resolution. */

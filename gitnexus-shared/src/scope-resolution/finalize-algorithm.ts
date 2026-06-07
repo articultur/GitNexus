@@ -168,8 +168,12 @@ export interface FinalizeOutput {
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 export function finalize(input: FinalizeInput, hooks: FinalizeHooks): FinalizeOutput {
+  const prof = isFinalizeProfilingEnabled();
+  const tStart = prof ? Date.now() : 0;
   const byFilePath = new Map<string, FinalizeFile>();
   for (const f of input.files) byFilePath.set(f.filePath, f);
+  const exportSurfaces = buildFileExportSurfaces(input.files);
+  const tExports = prof ? Date.now() : 0;
 
   // ── Phase 0: pre-resolve raw import targets (one syscall-equivalent per
   // (file, parsedImport)). Edges with no resolvable target become
@@ -187,6 +191,7 @@ export function finalize(input: FinalizeInput, hooks: FinalizeHooks): FinalizeOu
     }
     edgeIndex.set(file.filePath, drafts);
   }
+  const tDrafts = prof ? Date.now() : 0;
 
   // ── Phase 1: build file-level import graph (only resolvable edges form
   // graph edges; unresolvable ones are terminal and contribute no
@@ -204,20 +209,28 @@ export function finalize(input: FinalizeInput, hooks: FinalizeHooks): FinalizeOu
       }
     }
   }
+  const tGraph = prof ? Date.now() : 0;
 
   // ── Phase 2: Tarjan SCC → reverse-topological list of SCCs.
   const sccs = tarjanSccs(graph);
+  const tScc = prof ? Date.now() : 0;
 
   // ── Phase 2.5: precompute the per-file re-export closure (iterative,
   // SCC-condensed). Eliminates the recursive crawl that the per-edge
   // `tryFinalize` call site used to do; lookups are O(1) afterwards.
   // See `buildReexportClosures` for the algorithm.
-  const reexportClosures = buildReexportClosures(input.files, byFilePath, edgeIndex);
+  const reexportClosures = buildReexportClosures(
+    input.files,
+    byFilePath,
+    edgeIndex,
+    exportSurfaces,
+  );
+  const tReexports = prof ? Date.now() : 0;
 
   // ── Phase 3: process SCCs in reverse-topological order (leaves first).
-  // Within each SCC, run a bounded fixpoint that resolves intra-SCC edges.
-  // Edges leaving the SCC are already resolved (their target SCC is
-  // already finalized); edges inside the SCC may need multiple passes.
+  // This preserves the original bounded fixpoint semantics, but carries only
+  // still-unfinalized drafts between passes so each retry avoids re-scanning
+  // draft edges that already settled in an earlier pass.
   const linkedByScope = new Map<ScopeId, readonly ImportEdge[]>();
   let linkedEdges = 0;
 
@@ -225,41 +238,34 @@ export function finalize(input: FinalizeInput, hooks: FinalizeHooks): FinalizeOu
     const sccFiles = new Set(scc.files);
     const capacity = countEdgesWithin(edgeIndex, sccFiles);
 
-    // Run the fixpoint up to `capacity` iterations. Each iteration tries to
-    // resolve every still-unlinked edge in the SCC; stops early if a pass
-    // makes no progress.
+    let pending = collectPendingDrafts(edgeIndex, scc.files);
     let progressed = true;
     let iterations = 0;
-    while (progressed && iterations < capacity) {
+    while (progressed && iterations < capacity && pending.length > 0) {
       progressed = false;
       iterations++;
-      for (const filePath of scc.files) {
-        const drafts = edgeIndex.get(filePath);
-        if (drafts === undefined) continue;
-        for (const draft of drafts) {
-          if (draft.finalized !== null) continue;
-          const finalized = tryFinalize(draft, byFilePath, reexportClosures);
-          if (finalized !== null) {
-            draft.finalized = finalized;
-            progressed = true;
-          }
+      const nextPending: ImportEdgeDraft[] = [];
+      for (const draft of pending) {
+        const finalized = tryFinalize(draft, byFilePath, reexportClosures, exportSurfaces);
+        if (finalized !== null) {
+          draft.finalized = finalized;
+          progressed = true;
+        } else {
+          nextPending.push(draft);
         }
       }
+      pending = nextPending;
     }
 
-    // Any drafts still not finalized within this SCC hit the cap → unresolved.
-    for (const filePath of scc.files) {
-      const drafts = edgeIndex.get(filePath);
-      if (drafts === undefined) continue;
-      for (const draft of drafts) {
-        if (draft.finalized !== null) continue;
-        draft.finalized = {
-          ...draft.base,
-          linkStatus: 'unresolved' as const,
-        };
-      }
+    for (const draft of pending) {
+      if (draft.finalized !== null) continue;
+      draft.finalized = {
+        ...draft.base,
+        linkStatus: 'unresolved' as const,
+      };
     }
   }
+  const tPhase3 = prof ? Date.now() : 0;
 
   // ── Phase 4: collect finalized `ImportEdge[]` per module scope, preserving
   // input order within each file, and wildcard-expand where applicable.
@@ -274,7 +280,13 @@ export function finalize(input: FinalizeInput, hooks: FinalizeHooks): FinalizeOu
       }
       if (d.source.kind === 'wildcard' && edge.linkStatus !== 'unresolved') {
         // Produce one `wildcard-expanded` ImportEdge per exported name.
-        const expanded = expandWildcard(edge, byFilePath, hooks, input.workspaceIndex);
+        const expanded = expandWildcard(
+          edge,
+          byFilePath,
+          hooks,
+          input.workspaceIndex,
+          exportSurfaces,
+        );
         for (const e of expanded) finalized.push(e);
       } else {
         finalized.push(edge);
@@ -283,10 +295,12 @@ export function finalize(input: FinalizeInput, hooks: FinalizeHooks): FinalizeOu
     }
     linkedByScope.set(file.moduleScope, Object.freeze(finalized));
   }
+  const tPhase4 = prof ? Date.now() : 0;
 
   // ── Phase 5: materialize module-scope bindings (local + imports + wildcards),
   // delegating precedence to `provider.mergeBindings`.
   const bindingsByScope = materializeBindings(input.files, linkedByScope, hooks);
+  const tBindings = prof ? Date.now() : 0;
 
   // ── Stats.
   const sccCount = sccs.length;
@@ -302,6 +316,26 @@ export function finalize(input: FinalizeInput, hooks: FinalizeHooks): FinalizeOu
     sccCount,
     largestSccSize,
   };
+  const tEnd = prof ? Date.now() : 0;
+
+  if (prof) {
+    logFinalizeProfile(
+      `[finalize prof] exports=${tExports - tStart}ms` +
+        ` drafts=${tDrafts - tExports}ms` +
+        ` graph=${tGraph - tDrafts}ms` +
+        ` scc=${tScc - tGraph}ms` +
+        ` reexports=${tReexports - tScc}ms` +
+        ` phase3=${tPhase3 - tReexports}ms` +
+        ` phase4=${tPhase4 - tPhase3}ms` +
+        ` bindings=${tBindings - tPhase4}ms` +
+        ` stats=${tEnd - tBindings}ms` +
+        ` total=${tEnd - tStart}ms` +
+        ` files=${input.files.length}` +
+        ` edges=${totalEdges}` +
+        ` sccs=${sccs.length}` +
+        ` largestScc=${largestSccSize}`,
+    );
+  }
 
   return Object.freeze({
     imports: linkedByScope,
@@ -309,6 +343,17 @@ export function finalize(input: FinalizeInput, hooks: FinalizeHooks): FinalizeOu
     sccs,
     stats,
   });
+}
+
+function isFinalizeProfilingEnabled(): boolean {
+  return (
+    (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+      ?.PROF_SCOPE_RESOLUTION === '1'
+  );
+}
+
+function logFinalizeProfile(message: string): void {
+  (globalThis as { console?: { warn?(message?: unknown): void } }).console?.warn?.(message);
 }
 
 // ─── Internal: edge drafting (phase 0) ──────────────────────────────────────
@@ -320,6 +365,11 @@ interface ImportEdgeDraft {
   readonly targetFile: string | null;
   readonly base: ImportEdge;
   finalized: ImportEdge | null;
+}
+
+interface FileExportSurface {
+  readonly preferredByName: ReadonlyMap<string, SymbolDefinition>;
+  readonly firstEntries: readonly (readonly [string, SymbolDefinition])[];
 }
 
 function makeEdgeDrafts(
@@ -433,11 +483,13 @@ function tryFinalize(
   draft: ImportEdgeDraft,
   byFilePath: Map<string, FinalizeFile>,
   reexportClosures: ReadonlyMap<string, FileReexportClosure>,
+  exportSurfaces: ReadonlyMap<string, FileExportSurface>,
 ): ImportEdge | null {
   const targetFile = draft.targetFile;
   if (targetFile === null) return draft.base; // already terminal
 
   const targetModule = byFilePath.get(targetFile);
+  const targetExports = exportSurfaces.get(targetFile);
   if (targetModule === undefined) return draft.base; // external target — leave as-is
 
   // Wildcards finalize at the file level; their per-name expansion happens
@@ -456,7 +508,7 @@ function tryFinalize(
   // so consumers can reach the module as a symbol — but its absence is not
   // a failure.
   if (draft.source.kind === 'namespace') {
-    const moduleDef = findExportByName(targetModule.localDefs, extractExportedName(draft.source));
+    const moduleDef = targetExports?.preferredByName.get(extractExportedName(draft.source));
     return {
       ...draft.base,
       targetModuleScope: targetModule.moduleScope,
@@ -468,7 +520,7 @@ function tryFinalize(
   // local defs. Multi-hop re-export chains settle iteratively — each hop
   // resolves once its prior hop is finalized.
   const importedName = extractExportedName(draft.source);
-  const exported = findExportByName(targetModule.localDefs, importedName);
+  const exported = targetExports?.preferredByName.get(importedName);
 
   if (exported !== undefined) {
     const transitiveVia =
@@ -572,6 +624,7 @@ function buildReexportClosures(
   files: readonly FinalizeFile[],
   byFilePath: ReadonlyMap<string, FinalizeFile>,
   edgeIndex: ReadonlyMap<string, ImportEdgeDraft[]>,
+  exportSurfaces: ReadonlyMap<string, FileExportSurface>,
 ): ReadonlyMap<string, FileReexportClosure> {
   const closures = new Map<string, Map<string, ReexportClosureEntry>>();
   for (const file of files) closures.set(file.filePath, new Map());
@@ -604,7 +657,7 @@ function buildReexportClosures(
     if (!scc.isCycle) {
       const filePath = scc.files[0];
       if (filePath !== undefined) {
-        populateFileClosure(filePath, byFilePath, edgeIndex, closures);
+        populateFileClosure(filePath, byFilePath, edgeIndex, closures, exportSurfaces);
       }
       continue;
     }
@@ -618,7 +671,7 @@ function buildReexportClosures(
       progressed = false;
       iter++;
       for (const filePath of scc.files) {
-        if (populateFileClosure(filePath, byFilePath, edgeIndex, closures)) {
+        if (populateFileClosure(filePath, byFilePath, edgeIndex, closures, exportSurfaces)) {
           progressed = true;
         }
       }
@@ -647,6 +700,7 @@ function populateFileClosure(
   byFilePath: ReadonlyMap<string, FinalizeFile>,
   edgeIndex: ReadonlyMap<string, ImportEdgeDraft[]>,
   closures: Map<string, Map<string, ReexportClosureEntry>>,
+  exportSurfaces: ReadonlyMap<string, FileExportSurface>,
 ): boolean {
   const myClosure = closures.get(filePath);
   if (myClosure === undefined) return false;
@@ -660,14 +714,14 @@ function populateFileClosure(
     if (draft.source.kind !== 'reexport') continue;
     const targetFile = draft.targetFile;
     if (targetFile === null) continue;
-    const targetModule = byFilePath.get(targetFile);
-    if (targetModule === undefined) continue;
+    const targetExports = exportSurfaces.get(targetFile);
+    if (!byFilePath.has(targetFile)) continue;
 
     const localName = draft.source.localName;
     if (myClosure.has(localName)) continue;
 
     const importedName = draft.source.importedName;
-    const direct = findExportByName(targetModule.localDefs, importedName);
+    const direct = targetExports?.preferredByName.get(importedName);
     if (direct !== undefined) {
       myClosure.set(localName, { def: direct, via: Object.freeze([targetFile]) });
       continue;
@@ -690,12 +744,11 @@ function populateFileClosure(
     if (draft.source.kind !== 'wildcard') continue;
     const targetFile = draft.targetFile;
     if (targetFile === null) continue;
-    const targetModule = byFilePath.get(targetFile);
-    if (targetModule === undefined) continue;
+    const targetExports = exportSurfaces.get(targetFile);
+    if (targetExports === undefined) continue;
 
-    for (const def of targetModule.localDefs) {
-      const name = deriveSimpleName(def);
-      if (name === null || myClosure.has(name)) continue;
+    for (const [name, def] of targetExports.firstEntries) {
+      if (myClosure.has(name)) continue;
       myClosure.set(name, { def, via: Object.freeze([targetFile]) });
     }
     const targetClosure = closures.get(targetFile);
@@ -812,10 +865,22 @@ function countEdgesWithin(edgeIndex: Map<string, ImportEdgeDraft[]>, files: Set<
       if (d.targetFile !== null && files.has(d.targetFile)) n++;
     }
   }
-  // Guarantee at least one pass even for a trivial SCC (ensures deterministic
-  // fixpoint termination even when a single-file SCC has zero intra-SCC edges
-  // but still needs one settle pass).
   return Math.max(n, 1);
+}
+
+function collectPendingDrafts(
+  edgeIndex: ReadonlyMap<string, ImportEdgeDraft[]>,
+  filePaths: readonly string[],
+): ImportEdgeDraft[] {
+  const pending: ImportEdgeDraft[] = [];
+  for (const filePath of filePaths) {
+    const drafts = edgeIndex.get(filePath);
+    if (drafts === undefined) continue;
+    for (const draft of drafts) {
+      if (draft.finalized === null) pending.push(draft);
+    }
+  }
+  return pending;
 }
 
 // ─── Internal: wildcard expansion (phase 4) ────────────────────────────────
@@ -825,11 +890,13 @@ function expandWildcard(
   byFilePath: Map<string, FinalizeFile>,
   hooks: FinalizeHooks,
   workspace: WorkspaceIndex,
+  exportSurfaces: ReadonlyMap<string, FileExportSurface>,
 ): readonly ImportEdge[] {
   if (edge.targetModuleScope === undefined || edge.targetFile === null) {
     return [edge]; // unresolvable wildcard survives as a single unlinked edge
   }
   const target = byFilePath.get(edge.targetFile);
+  const targetExports = exportSurfaces.get(edge.targetFile);
   if (target === undefined) return [edge];
 
   const names = hooks.expandsWildcardTo(edge.targetModuleScope, workspace);
@@ -846,7 +913,7 @@ function expandWildcard(
 
   const expanded: ImportEdge[] = [];
   for (const name of names) {
-    const def = findExportByName(target.localDefs, name);
+    const def = targetExports?.preferredByName.get(name);
     if (def === undefined) continue;
     expanded.push({
       localName: name,
@@ -858,6 +925,39 @@ function expandWildcard(
     });
   }
   return expanded;
+}
+
+function buildFileExportSurfaces(
+  files: readonly FinalizeFile[],
+): ReadonlyMap<string, FileExportSurface> {
+  const out = new Map<string, FileExportSurface>();
+
+  for (const file of files) {
+    const preferredByName = new Map<string, SymbolDefinition>();
+    const firstByName = new Map<string, SymbolDefinition>();
+
+    for (const def of file.localDefs) {
+      const name = deriveSimpleName(def);
+      if (name === null) continue;
+      if (!firstByName.has(name)) firstByName.set(name, def);
+
+      const existing = preferredByName.get(name);
+      if (existing === undefined) {
+        preferredByName.set(name, def);
+        continue;
+      }
+      if (!isCallableOrTypeLike(existing.type) && isCallableOrTypeLike(def.type)) {
+        preferredByName.set(name, def);
+      }
+    }
+
+    out.set(file.filePath, {
+      preferredByName,
+      firstEntries: Object.freeze(Array.from(firstByName.entries())),
+    });
+  }
+
+  return out;
 }
 
 // ─── Internal: bindings materialization (phase 5) ───────────────────────────

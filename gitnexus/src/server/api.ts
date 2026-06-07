@@ -26,7 +26,7 @@ import {
 } from '../core/lbug/lbug-adapter.js';
 import { isValidQueryParams } from '../core/lbug/query-params.js';
 import { NODE_TABLES, type GraphNode, type GraphRelationship } from 'gitnexus-shared';
-import { searchFTSFromLbug } from '../core/search/bm25-index.js';
+import { getFTSHealthWarning, searchFTSFromLbug } from '../core/search/bm25-index.js';
 import { hybridSearch } from '../core/search/hybrid-search.js';
 import { LocalBackend } from '../mcp/local/local-backend.js';
 import { mountMCPEndpoints } from './mcp-http.js';
@@ -1103,17 +1103,16 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
         lbugPath,
         async () => {
           let searchResults: any[];
-          let ftsAvailable: boolean | undefined;
+          let ftsWarning: string | undefined;
 
           if (mode === 'semantic') {
             const { isEmbedderReady } = await import('../core/embeddings/embedder.js');
             if (!isEmbedderReady()) {
-              return { searchResults: [] as any[], ftsAvailable: undefined };
+              return { searchResults: [] as any[], ftsWarning: undefined };
             }
             const { semanticSearch: semSearch } =
               await import('../core/embeddings/embedding-pipeline.js');
             searchResults = await semSearch(executeQuery, query, limit);
-            // Normalize semantic results to HybridSearchResult shape
             searchResults = searchResults.map((r: any, i: number) => ({
               ...r,
               score: r.score ?? 1 - (r.distance ?? 0),
@@ -1122,14 +1121,13 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
             }));
           } else if (mode === 'bm25') {
             const ftsResponse = await searchFTSFromLbug(query, limit);
-            ftsAvailable = ftsResponse.ftsAvailable;
+            ftsWarning = getFTSHealthWarning(ftsResponse);
             searchResults = ftsResponse.results.map((r: any, i: number) => ({
               ...r,
               rank: i + 1,
               sources: ['bm25'],
             }));
           } else {
-            // hybrid (default)
             const { isEmbedderReady } = await import('../core/embeddings/embedder.js');
             if (isEmbedderReady()) {
               const { semanticSearch: semSearch } =
@@ -1137,15 +1135,13 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
               searchResults = await hybridSearch(query, limit, executeQuery, semSearch);
             } else {
               const ftsResponse = await searchFTSFromLbug(query, limit);
-              ftsAvailable = ftsResponse.ftsAvailable;
+              ftsWarning = getFTSHealthWarning(ftsResponse);
               searchResults = ftsResponse.results;
             }
           }
 
-          if (!enrich) return { searchResults, ftsAvailable };
+          if (!enrich) return { searchResults, ftsWarning };
 
-          // Server-side enrichment: add connections, cluster, processes per result
-          // Uses parameterized queries to prevent Cypher injection via nodeId
           const validLabel = (label: string): boolean =>
             (NODE_TABLES as readonly string[]).includes(label);
 
@@ -1157,9 +1153,6 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
 
               if (!nodeId || !validLabel(nodeLabel)) return { ...r, ...enrichment };
 
-              // Run connections, cluster, and process queries in parallel
-              // Label is validated against NODE_TABLES (compile-time safe identifiers);
-              // nodeId uses $nid parameter binding to prevent injection
               const [connRes, clusterRes, procRes] = await Promise.all([
                 executePrepared(
                   `
@@ -1224,15 +1217,12 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
             }),
           );
 
-          return { searchResults: enriched, ftsAvailable };
+          return { searchResults: enriched, ftsWarning };
         },
         { readOnly: true },
       );
       const response: any = { results: results.searchResults ?? results };
-      if (results.ftsAvailable === false) {
-        response.warning =
-          'FTS indexes missing — keyword search degraded. Run: gitnexus analyze --repair-fts (or gitnexus analyze --force) to rebuild indexes.';
-      }
+      if (results.ftsWarning) response.warning = results.ftsWarning;
       res.json(response);
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Search failed' });

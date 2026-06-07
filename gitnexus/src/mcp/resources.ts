@@ -7,6 +7,7 @@
 
 import type { LocalBackend } from './local/local-backend.js';
 import { checkStaleness } from './staleness.js';
+import { checkFTSHealth } from '../core/search/bm25-index.js';
 
 export interface ResourceDefinition {
   uri: string;
@@ -339,6 +340,26 @@ async function getContextResource(backend: LocalBackend, repoName?: string): Pro
   lines.push('  - rename: Multi-file coordinated rename with confidence tags');
   lines.push('  - cypher: Raw graph queries');
   lines.push('  - list_repos: Discover all indexed repositories');
+
+  // FTS health check — probe index availability
+  try {
+    const ftsHealth = await checkFTSHealth(repoId);
+    lines.push('');
+    lines.push('search_health:');
+    lines.push(`  fts: ${ftsHealth.available ? 'available' : 'degraded'}`);
+    if (!ftsHealth.complete) {
+      lines.push(`  fts_complete: false`);
+      lines.push(`  missing_indexes: [${ftsHealth.missingIndexes.join(', ')}]`);
+    }
+    if (ftsHealth.warning) {
+      lines.push(`  warning: "${ftsHealth.warning}"`);
+    }
+  } catch {
+    // Non-fatal: FTS health check should not break the context resource
+    lines.push('');
+    lines.push('search_health:');
+    lines.push('  fts: unknown (health check failed)');
+  }
   lines.push('');
   lines.push('re_index: Run `npx gitnexus analyze` in terminal if data is stale');
   lines.push('');
@@ -442,6 +463,9 @@ nodes:
   - CodeElement: Catch-all for other code elements
   - Community: Auto-detected functional area (Leiden algorithm)
   - Process: Execution flow trace
+  - Route: HTTP/API route endpoint
+  - Tool: MCP/RPC tool definition
+  - Section: Code section (e.g., markdown heading, config block)
 
 additional_node_types: "Multi-language: Struct, Enum, Macro, Typedef, Union, Namespace, Trait, Impl, TypeAlias, Const, Static, Property, Record, Delegate, Annotation, Constructor, Template, Module (use backticks in queries: \`Struct\`, \`Enum\`, etc.)"
 
@@ -453,6 +477,8 @@ node_properties:
   Constructor: "parameterCount (INT32), visibility (STRING), isStatic (BOOL), parameterTypes (STRING[])"
   Community: "heuristicLabel (STRING), cohesion (DOUBLE), symbolCount (INT32), keywords (STRING[]), description (STRING), enrichedBy (STRING)"
   Process: "heuristicLabel (STRING), processType (STRING — 'intra_community' or 'cross_community'), stepCount (INT32), communities (STRING[]), entryPointId (STRING), terminalId (STRING)"
+  Route: "url (STRING), method (STRING), filePath (STRING)"
+  Tool: "name (STRING), description (STRING), filePath (STRING)"
 
 relationships:
   - CONTAINS: File/Folder contains child
@@ -467,7 +493,21 @@ relationships:
   - METHOD_OVERRIDES: Method overrides another Method (MRO)
   - METHOD_IMPLEMENTS: ConcreteMethod implements InterfaceMethod (matched by name + parameterTypes)
   - MEMBER_OF: Symbol belongs to community
-  - STEP_IN_PROCESS: Symbol is step N in process
+  - STEP_IN_PROCESS: Symbol is step N in process (has step property)
+  - HANDLES_ROUTE: Function/Method handles an HTTP route
+  - FETCHES: Component fetches data from an API route
+  - HANDLES_TOOL: Function/Method handles an MCP/RPC tool
+  - ENTRY_POINT_OF: Route/Tool is the entry point of a Process
+  - WRAPS: Middleware/higher-order function wraps another
+  - QUERIES: Function queries a data source
+  - DATA_FLOW: Taint-analysis data flow edge (source → flow)
+  - PROPAGATES: Taint propagates through a node
+  - RETURNS: Data return path
+  - TAINTED: Node is marked as tainted
+  - SANITIZES: Sanitizer cleans tainted data
+  - SINK_REACHABLE: Taint reaches a sink
+  - ALIASES: Symbol is an alias of another
+  - CFG_EDGE: Control-flow graph edge
 
 relationship_table: "All relationships use a single CodeRelation table with a 'type' property. Properties: type (STRING), confidence (DOUBLE), reason (STRING), step (INT32)"
 
@@ -475,17 +515,33 @@ example_queries:
   find_callers: |
     MATCH (caller)-[:CodeRelation {type: 'CALLS'}]->(f:Function {name: "myFunc"})
     RETURN caller.name, caller.filePath
-  
+
   find_community_members: |
     MATCH (s)-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
     WHERE c.heuristicLabel = "Auth"
     RETURN s.name, labels(s)[0] AS type
-  
+
   trace_process: |
     MATCH (s)-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process)
     WHERE p.heuristicLabel = "LoginFlow"
     RETURN s.name, r.step
     ORDER BY r.step
+
+  find_route_handlers: |
+    MATCH (r:Route)-[:CodeRelation {type: 'HANDLES_ROUTE'}]->(h)
+    RETURN r.url, r.method, h.name, h.filePath
+
+  find_tool_handlers: |
+    MATCH (t:Tool)-[:CodeRelation {type: 'HANDLES_TOOL'}]->(h)
+    RETURN t.name, h.name, h.filePath
+
+  find_entry_points: |
+    MATCH (n)-[:CodeRelation {type: 'ENTRY_POINT_OF'}]->(p:Process)
+    RETURN labels(n)[0] AS type, n.name, p.heuristicLabel
+
+  find_data_flows: |
+    MATCH (src)-[:CodeRelation {type: 'DATA_FLOW'}]->(flow)-[:CodeRelation {type: 'PROPAGATES'}]->(dst)
+    RETURN src.name, flow.name, dst.name
 `;
 }
 

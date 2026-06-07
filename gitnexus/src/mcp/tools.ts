@@ -132,6 +132,12 @@ SERVICE: optional monorepo path prefix (POSIX-style, case-sensitive segments). W
           description:
             'Optional monorepo service root (relative path, "/" separators). In group mode (@repo), prefix-matches symbol file paths; ignored for a normal repo name. Empty string is rejected server-side.',
         },
+        granularity: {
+          type: 'string',
+          enum: ['low', 'high'],
+          description:
+            'Process granularity: "low" (default) returns individual micro-flows; "high" merges processes sharing entry points into end-to-end aggregated flows.',
+        },
       },
       required: ['query'],
     },
@@ -181,6 +187,8 @@ TIPS:
 - All relationships use single CodeRelation table — filter with {type: 'CALLS'} etc.
 - Community = auto-detected functional area (Leiden algorithm). Properties: heuristicLabel, cohesion, symbolCount, keywords, description, enrichedBy
 - Process = execution flow trace from entry point to terminal. Properties: heuristicLabel, processType, stepCount, communities, entryPointId, terminalId
+  - processType values: 'intra_community' (all steps within one module/community), 'cross_community' (steps span multiple modules)
+- STEP_IN_PROCESS edge: r.step is 0-based integer step index; steps ordered by r.step give the full execution sequence
 - Use heuristicLabel (not label) for human-readable community/process names`,
     annotations: READ_ONLY_TOOL_ANNOTATIONS,
     inputSchema: {
@@ -233,6 +241,12 @@ SERVICE: optional monorepo path prefix (case-sensitive path segments). When "rep
         include_content: {
           type: 'boolean',
           description: 'Include full symbol source code (default: false)',
+          default: false,
+        },
+        include_callers_content: {
+          type: 'boolean',
+          description:
+            'Include full source code for each symbol in the incoming (callers) list (default: false). Useful when you need to review all call-sites in one response. Omit or set false to keep the response compact.',
           default: false,
         },
         repo: {
@@ -345,6 +359,8 @@ Depth groups:
 
 TIP: For hub symbols (base error classes, shared utilities) with many direct callers, use summaryOnly: true first to see counts and risk, then drill into specific depths with limit/offset. maxDepth alone does not bound output size when most dependents are at depth 1. limit and offset apply independently to each depth level, not to the total result set — use byDepthCounts to see totals per depth.
 
+BATCH MODE: Pass targets (array) instead of target to analyze multiple symbols in one call. Returns per-target results plus a merged summary with deduplicated byDepth, combined risk (max), and merged processes/modules.
+
 TIP: Default traversal uses CALLS/IMPORTS/EXTENDS/IMPLEMENTS. For class members, include HAS_METHOD and HAS_PROPERTY in relationTypes. For field access analysis, include ACCESSES in relationTypes.
 
 Handles disambiguation: when multiple symbols share the target name, returns ranked candidates (each with a relevance score) instead of silently picking one. Use target_uid for zero-ambiguity lookup, or narrow with file_path and/or kind hints.
@@ -359,7 +375,17 @@ SERVICE: optional monorepo path prefix (case-sensitive path segments). When "rep
     inputSchema: {
       type: 'object',
       properties: {
-        target: { type: 'string', description: 'Name of function, class, or file to analyze' },
+        target: {
+          type: 'string',
+          description:
+            'Name of function, class, or file to analyze. Required when targets is omitted.',
+        },
+        targets: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Batch mode: analyze multiple symbols in one call. When provided, runs impact analysis for each target in parallel and returns per-target results plus a deduplicated merged summary (merged.byDepth, merged.risk, merged.affected_processes, etc.).',
+        },
         target_uid: {
           type: 'string',
           description:
@@ -397,7 +423,7 @@ SERVICE: optional monorepo path prefix (case-sensitive path segments). When "rep
           type: 'array',
           items: { type: 'string' },
           description:
-            'Filter: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, METHOD_OVERRIDES, METHOD_IMPLEMENTS, ACCESSES (default: usage-based, ACCESSES excluded by default)',
+            'Filter by edge type(s). Valid values: CALLS, IMPORTS, EXTENDS, IMPLEMENTS, HAS_METHOD, HAS_PROPERTY, METHOD_OVERRIDES, OVERRIDES, METHOD_IMPLEMENTS, ACCESSES, HANDLES_ROUTE, FETCHES, HANDLES_TOOL, ENTRY_POINT_OF, WRAPS, DATA_FLOW, TAINTED, SINK_REACHABLE, PROPAGATES, RETURNS, SANITIZES, ALIASES (default: CALLS+IMPORTS+EXTENDS+IMPLEMENTS; ACCESSES excluded by default)',
         },
         includeTests: { type: 'boolean', description: 'Include test files (default: false)' },
         minConfidence: {
@@ -459,7 +485,7 @@ SERVICE: optional monorepo path prefix (case-sensitive path segments). When "rep
           maximum: 3600000,
         },
       },
-      required: ['target', 'direction'],
+      required: ['direction'],
     },
   },
   {

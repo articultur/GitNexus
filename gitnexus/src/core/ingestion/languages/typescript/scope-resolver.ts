@@ -51,7 +51,7 @@ function makeTsResolveImportTarget(): ScopeResolver['resolveImportTarget'] {
     readonly allFilePaths: Set<string>;
     readonly allFileList: readonly string[];
     readonly normalizedFileList: readonly string[];
-    readonly index: SuffixIndex;
+    readonly suffixIndex: SuffixIndex;
     readonly resolveCache: Map<string, string | null>;
   }
   let cached: PassCache | null = null;
@@ -65,7 +65,7 @@ function makeTsResolveImportTarget(): ScopeResolver['resolveImportTarget'] {
         allFilePaths: new Set(allFilePaths),
         allFileList,
         normalizedFileList,
-        index: buildSuffixIndex(normalizedFileList, allFileList),
+        suffixIndex: buildSuffixIndex(normalizedFileList, allFileList),
         resolveCache: new Map(),
       };
     }
@@ -76,7 +76,7 @@ function makeTsResolveImportTarget(): ScopeResolver['resolveImportTarget'] {
       allFilePaths: cached.allFilePaths,
       allFileList: cached.allFileList,
       normalizedFileList: cached.normalizedFileList,
-      index: cached.index,
+      index: cached.suffixIndex,
       resolveCache: cached.resolveCache,
       tsconfigPaths: cfg?.tsconfigPaths ?? null,
     };

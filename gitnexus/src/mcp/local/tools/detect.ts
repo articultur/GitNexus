@@ -34,6 +34,28 @@ type ChangeType =
   | 'test_change' // in test file
   | 'meta_change'; // imports, exports, etc.
 
+const DOCUMENTATION_SYMBOL_TYPES = new Set(['Section', 'Document']);
+const CODE_IMPACT_SYMBOL_TYPES = new Set([
+  'Class',
+  'Interface',
+  'Struct',
+  'Trait',
+  'Enum',
+  'Function',
+  'Method',
+  'Constructor',
+  'Property',
+  'Variable',
+  'Constant',
+  'Module',
+  'Namespace',
+  'CodeElement',
+  'Route',
+  'Macro',
+  'Delegate',
+  'Record',
+]);
+
 /**
  * Degraded mode response when diff exceeds buffer limits.
  * Returned instead of normal result when precision is symbol-level or file-level.
@@ -201,9 +223,10 @@ export async function detectChangesTool(
     hunks: number;
     symbols: any[];
   }> = [];
+  const documentationFiles = new Set<string>();
+  let documentationSymbolsSkipped = 0;
 
   // Track modules for scoring
-  const affectedModules = new Set<string>();
   const allImpactedItems: Array<{
     depth: number;
     relationType: string;
@@ -213,14 +236,8 @@ export async function detectChangesTool(
 
   for (const fileHunk of diffHunks) {
     const normalizedFile = fileHunk.filePath.replace(/\\/g, '/');
-
-    // Extract module path (first two directory components or file name)
-    const pathParts = normalizedFile.split('/');
-    if (pathParts.length > 1) {
-      affectedModules.add(pathParts.slice(0, 2).join('/'));
-    } else {
-      affectedModules.add(normalizedFile);
-    }
+    const isDocumentationFile = isDocumentationFilePath(normalizedFile);
+    if (isDocumentationFile) documentationFiles.add(normalizedFile);
 
     // Determine if this is a test file
     const isTestFile = isTestFilePath(normalizedFile);
@@ -245,13 +262,15 @@ export async function detectChangesTool(
       const matchedSymbolIds = new Set<string>();
 
       for (const sym of symbols) {
-        const id = sym.id || sym[0];
-        const name = sym.name || sym[1];
-        const type = sym.type || sym[2];
-        const filePath = sym.filePath || sym[3];
-        const startLine = sym.startLine || sym[4];
-        const endLine = sym.endLine || sym[5];
-        const content = sym.content || sym[6];
+        const normalizedSymbol = normalizeSymbolRow(sym);
+        if (normalizedSymbol === null) continue;
+
+        const { id, name, type, filePath, startLine, endLine, content } = normalizedSymbol;
+
+        if (isDocumentationFile || isDocumentationSymbolType(type)) {
+          documentationSymbolsSkipped++;
+          continue;
+        }
 
         // Find which hunks overlap with this symbol's line range
         const overlappingHunks = fileHunk.hunks.filter((hunk) =>
@@ -298,13 +317,14 @@ export async function detectChangesTool(
           changed_lines_count: changedLines.length,
         });
 
-        // Add to impacted items for scoring
-        allImpactedItems.push({
-          depth: 1,
-          relationType: 'CHANGED_IN',
-          confidence: 0.95,
-          name,
-        });
+        if (isRiskRelevantChange(symbolRecord)) {
+          allImpactedItems.push({
+            depth: 1,
+            relationType: 'CHANGED_IN',
+            confidence: 0.95,
+            name,
+          });
+        }
 
         // Add path to evidence
         evidenceBuilder.addPath(
@@ -337,7 +357,9 @@ export async function detectChangesTool(
     }
   >();
 
-  for (const sym of changedSymbols) {
+  const riskRelevantSymbols = changedSymbols.filter(isRiskRelevantChange);
+
+  for (const sym of riskRelevantSymbols) {
     try {
       const procs = await executeParameterized(
         repo.id,
@@ -376,8 +398,8 @@ export async function detectChangesTool(
   }
 
   const processCount = affectedProcesses.size;
-  const moduleCount = affectedModules.size;
-  const directCount = changedSymbols.length;
+  const moduleCount = countAffectedModules(riskRelevantSymbols);
+  const directCount = riskRelevantSymbols.length;
   const totalCount = directCount + processCount;
 
   // Use unified scoring
@@ -512,10 +534,16 @@ export async function detectChangesTool(
   return {
     summary: {
       changed_count: changedSymbols.length,
+      risk_relevant_count: riskRelevantSymbols.length,
       affected_count: processCount,
       changed_files: changedFiles.length,
       affected_modules: moduleCount,
       risk_level: risk,
+      documentation_files: documentationFiles.size,
+      documentation_symbols_skipped: documentationSymbolsSkipped,
+      ...(changedSymbols.length === 0 && changedFiles.length > 0
+        ? { message: 'No indexed code symbols changed.' }
+        : {}),
       // New unified scoring
       score_v2: {
         score: scoreResult.score,
@@ -542,6 +570,90 @@ export async function detectChangesTool(
       },
     }),
   };
+}
+
+interface NormalizedSymbolRow {
+  id: string;
+  name: string;
+  type: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  content?: string;
+}
+
+function normalizeSymbolRow(row: any): NormalizedSymbolRow | null {
+  const id = stringValue(row?.id ?? row?.[0]);
+  const filePath = stringValue(row?.filePath ?? row?.[3]);
+  const startLine = numberValue(row?.startLine ?? row?.[4]);
+  const endLine = numberValue(row?.endLine ?? row?.[5]);
+  if (!id || !filePath || startLine === null || endLine === null) return null;
+
+  return {
+    id,
+    name: stringValue(row?.name ?? row?.[1]) ?? inferNameFromId(id),
+    type: normalizeSymbolType(row?.type ?? row?.[2], id),
+    filePath,
+    startLine,
+    endLine,
+    content: stringValue(row?.content ?? row?.[6]),
+  };
+}
+
+function normalizeSymbolType(rawType: unknown, id: string): string {
+  return stringValue(rawType) ?? inferTypeFromId(id) ?? 'Symbol';
+}
+
+function inferTypeFromId(id: string): string | undefined {
+  const colon = id.indexOf(':');
+  if (colon <= 0) return undefined;
+  const prefix = id.slice(0, colon);
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(prefix) ? prefix : undefined;
+}
+
+function inferNameFromId(id: string): string {
+  const colon = id.indexOf(':');
+  const rest = colon === -1 ? id : id.slice(colon + 1);
+  const parts = rest.split(':').filter(Boolean);
+  return parts.at(-1) ?? rest;
+}
+
+function stringValue(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function numberValue(value: unknown): number | null {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function isDocumentationFilePath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+  return normalized.endsWith('.md') || normalized.endsWith('.mdx');
+}
+
+function isDocumentationSymbolType(symbolType: string): boolean {
+  return DOCUMENTATION_SYMBOL_TYPES.has(symbolType);
+}
+
+function isRiskRelevantChange(symbol: { type: string; change_type: ChangeType }): boolean {
+  return (
+    symbol.change_type !== 'doc_change' &&
+    symbol.change_type !== 'test_change' &&
+    CODE_IMPACT_SYMBOL_TYPES.has(symbol.type)
+  );
+}
+
+function countAffectedModules(symbols: Array<{ filePath: string }>): number {
+  const modules = new Set<string>();
+  for (const symbol of symbols) {
+    const normalizedFile = symbol.filePath.replace(/\\/g, '/');
+    const pathParts = normalizedFile.split('/');
+    modules.add(pathParts.length > 1 ? pathParts.slice(0, 2).join('/') : normalizedFile);
+  }
+  return modules.size;
 }
 
 /**
@@ -720,6 +832,11 @@ async function buildDegradedResponse(
 
     // For symbol-level precision, query symbols in each file
     if (diffResult.precision === 'symbol-level') {
+      if (isDocumentationFilePath(file.path)) {
+        files.push(fileInfo);
+        continue;
+      }
+
       try {
         const symbols = await executeParameterized(
           repoId,
@@ -736,18 +853,25 @@ async function buildDegradedResponse(
         );
 
         if (symbols.length > 0) {
-          fileInfo.symbols = symbols.map((sym) => {
-            const uid = sym.id || sym[0];
-            const name = sym.name || sym[1];
-            affectedSymbols.push({ name, uid, file: file.path });
+          fileInfo.symbols = symbols.flatMap((sym) => {
+            const normalizedSymbol = normalizeSymbolRow(sym);
+            if (
+              normalizedSymbol === null ||
+              isDocumentationSymbolType(normalizedSymbol.type)
+            ) {
+              return [];
+            }
+            const uid = normalizedSymbol.id;
+            const name = normalizedSymbol.name;
+            affectedSymbols.push({ name, uid, file: normalizedSymbol.filePath });
             totalSymbols++;
-            return {
+            return [{
               name,
               uid,
-              type: sym.type || sym[2],
-              line_start: sym.startLine || sym[4],
-              line_end: sym.endLine || sym[5],
-            };
+              type: normalizedSymbol.type,
+              line_start: normalizedSymbol.startLine,
+              line_end: normalizedSymbol.endLine,
+            }];
           });
 
           // Add drill-down for the file (prefer MCP tools, CLI as fallback)

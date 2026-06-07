@@ -30,6 +30,7 @@ vi.mock('../../src/mcp/core/lbug-adapter.js', async (importOriginal) => {
 });
 
 vi.mock('../../src/storage/repo-manager.js', () => ({
+  canonicalizePath: (input: string) => input,
   listRegisteredRepos: repoMocks.listRegisteredRepos,
   cleanupOldKuzuFiles: vi.fn().mockResolvedValue({ found: false, needsReindex: false }),
   findSiblingClones: vi.fn().mockResolvedValue([]),

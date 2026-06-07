@@ -45,16 +45,63 @@ interface ImportedSymbol {
  * trailing sections, etc.) instead of duplicating it inline.
  */
 export function parseCargoPackageName(content: string): string | null {
-  const lines = content.split('\n');
-  const packageStart = lines.findIndex((l) => l.trim() === '[package]');
-  if (packageStart < 0) return null;
-  for (let i = packageStart + 1; i < lines.length; i++) {
-    const line = lines[i].trimStart();
-    if (line.startsWith('[')) break; // hit the next section header
-    const m = /^name\s*=\s*"([^"]+)"/.exec(line);
-    if (m) return m[1];
+  let inPackage = false;
+  let lineStart = 0;
+
+  while (lineStart <= content.length) {
+    const newline = content.indexOf('\n', lineStart);
+    const lineEnd = newline === -1 ? content.length : newline;
+
+    if (!inPackage) {
+      if (isTrimmedLine(content, lineStart, lineEnd, '[package]')) {
+        inPackage = true;
+      }
+    } else {
+      const first = firstNonWhitespace(content, lineStart, lineEnd);
+      if (first < lineEnd && content[first] === '[') break;
+      const name = parsePackageNameLine(content, first, lineEnd);
+      if (name !== null) return name;
+    }
+
+    if (newline === -1) break;
+    lineStart = newline + 1;
   }
+
   return null;
+}
+
+function isTrimmedLine(content: string, start: number, end: number, expected: string): boolean {
+  const left = firstNonWhitespace(content, start, end);
+  let right = end;
+  while (right > left && isAsciiWhitespace(content.charCodeAt(right - 1))) right--;
+  return right - left === expected.length && content.startsWith(expected, left);
+}
+
+function parsePackageNameLine(content: string, start: number, end: number): string | null {
+  if (!content.startsWith('name', start)) return null;
+  let pos = start + 'name'.length;
+  if (pos < end && !isAsciiWhitespace(content.charCodeAt(pos)) && content[pos] !== '=') {
+    return null;
+  }
+  pos = firstNonWhitespace(content, pos, end);
+  if (pos >= end || content[pos] !== '=') return null;
+  pos = firstNonWhitespace(content, pos + 1, end);
+  if (pos >= end || content[pos] !== '"') return null;
+  const valueStart = pos + 1;
+  let valueEnd = valueStart;
+  while (valueEnd < end && content[valueEnd] !== '"') valueEnd++;
+  if (valueEnd >= end) return null;
+  return content.slice(valueStart, valueEnd);
+}
+
+function firstNonWhitespace(content: string, start: number, end: number): number {
+  let pos = start;
+  while (pos < end && isAsciiWhitespace(content.charCodeAt(pos))) pos++;
+  return pos;
+}
+
+function isAsciiWhitespace(code: number): boolean {
+  return code === 9 || code === 10 || code === 11 || code === 12 || code === 13 || code === 32;
 }
 
 /**

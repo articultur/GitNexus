@@ -4,6 +4,7 @@ import { isHttpMode } from '../core/embeddings/http-client.js';
 import { getLocalEmbeddingRuntimeBlocker } from '../core/embeddings/runtime-support.js';
 import { checkLbugNative } from '../core/lbug/native-check.js';
 import { getExtensionInstallPolicy } from '../core/lbug/extension-loader.js';
+import { checkFTSHealth } from '../core/search/bm25-index.js';
 import { t } from './i18n/index.js';
 
 function isCombiningMark(codePoint: number): boolean {
@@ -119,6 +120,30 @@ export const doctorCommand = async () => {
   );
   if (capabilities.reason)
     console.log(`  ${label('doctor.labels.note', 18)}${capabilities.reason}`);
+
+  // Probe actual FTS index health (not just platform capability)
+  try {
+    const ftsHealth = await checkFTSHealth();
+    if (!ftsHealth.available) {
+      console.log('');
+      console.log('FTS Index Health');
+      console.log('  ⚠  No FTS indexes found — keyword search is unavailable.');
+      console.log('     Run: gitnexus analyze --force');
+    } else if (!ftsHealth.complete) {
+      console.log('');
+      console.log('FTS Index Health');
+      console.log(`  ⚠  Partial: ${ftsHealth.missingIndexes.length} index(es) missing`);
+      for (const idx of ftsHealth.missingIndexes) {
+        console.log(`     - ${idx}`);
+      }
+      console.log('     Run: gitnexus analyze --force');
+    } else {
+      console.log(`  FTS indexes:     all ${ftsHealth.indexStatus.length} OK`);
+    }
+  } catch {
+    // Non-fatal: doctor should still work without a database
+  }
+
   console.log('');
   console.log(t('doctor.embeddings'));
   console.log(`  ${label('doctor.labels.backend', 12)}${isHttpMode() ? 'http' : 'local'}`);

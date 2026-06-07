@@ -15,10 +15,105 @@ export interface BM25SearchResult {
   nodeIds?: string[];
 }
 
+export interface FTSIndexStatus {
+  table: string;
+  indexName: string;
+  available: boolean;
+}
+
 export interface FTSSearchResponse {
   results: BM25SearchResult[];
   /** True when at least one FTS index query succeeded (index exists). */
   ftsAvailable: boolean;
+  /** True only when every configured FTS index query succeeded. */
+  ftsComplete: boolean;
+  /** Per-index health so callers can distinguish partial from total degradation. */
+  ftsIndexStatus: FTSIndexStatus[];
+  missingIndexes: string[];
+}
+
+export interface FTSHealthReport {
+  available: boolean;
+  complete: boolean;
+  indexStatus: FTSIndexStatus[];
+  missingIndexes: string[];
+  warning?: string;
+}
+
+export function getFTSHealthWarning(response: unknown): string | undefined {
+  if (!response || Array.isArray(response) || typeof response !== 'object') return undefined;
+  const r = response as Partial<FTSSearchResponse>;
+
+  if (r.ftsAvailable === false) {
+    return 'FTS indexes missing or unavailable — keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.';
+  }
+
+  const missing = Array.isArray(r.missingIndexes) ? r.missingIndexes.filter(Boolean) : [];
+  if (r.ftsComplete === false || missing.length > 0) {
+    const suffix = missing.length > 0 ? ` (${missing.join(', ')})` : '';
+    return `FTS indexes partially missing${suffix} — keyword search may miss results. Run: gitnexus analyze --force to rebuild indexes.`;
+  }
+
+  return undefined;
+}
+
+/**
+ * Lightweight FTS health check — probes each index without running a real search.
+ *
+ * Uses a minimal query ("a") to test index existence; returns per-index status
+ * and an overall health report suitable for context resources and doctor output.
+ *
+ * @param repoId - If provided, uses the MCP connection pool; otherwise uses the
+ *   core lbug adapter (CLI / pipeline context).
+ */
+export async function checkFTSHealth(repoId?: string): Promise<FTSHealthReport> {
+  const ftsIndexStatus: FTSIndexStatus[] = [];
+  let queriesSucceeded = 0;
+
+  if (repoId) {
+    const poolMod = await import('../lbug/pool-adapter.js');
+    const { executeQuery } = poolMod;
+    const executor = (cypher: string) => executeQuery(repoId, cypher);
+
+    for (const { table, indexName } of FTS_INDEXES) {
+      const result = await queryFTSViaExecutor(executor, table, indexName, 'a', 1);
+      const available = result !== null;
+      if (available) queriesSucceeded++;
+      ftsIndexStatus.push({ table, indexName, available });
+    }
+  } else {
+    for (const { table, indexName } of FTS_INDEXES) {
+      try {
+        await queryFTS(table, indexName, 'a', 1, false);
+        queriesSucceeded++;
+        ftsIndexStatus.push({ table, indexName, available: true });
+      } catch {
+        ftsIndexStatus.push({ table, indexName, available: false });
+      }
+    }
+  }
+
+  const available = queriesSucceeded > 0;
+  const missingIndexes = ftsIndexStatus
+    .filter((s) => !s.available)
+    .map((s) => `${s.table}.${s.indexName}`);
+  const complete = missingIndexes.length === 0;
+
+  const response: FTSSearchResponse = {
+    results: [],
+    ftsAvailable: available,
+    ftsComplete: complete,
+    ftsIndexStatus,
+    missingIndexes,
+  };
+
+  return {
+    available,
+    complete,
+    indexStatus: ftsIndexStatus,
+    missingIndexes,
+    warning: getFTSHealthWarning(response),
+  };
 }
 
 /**
@@ -72,6 +167,7 @@ export const searchFTSFromLbug = async (
   repoId?: string,
 ): Promise<FTSSearchResponse> => {
   const resultsByIndex: any[][] = [];
+  const ftsIndexStatus: FTSIndexStatus[] = [];
   let queriesSucceeded = 0;
 
   if (repoId) {
@@ -89,6 +185,7 @@ export const searchFTSFromLbug = async (
         queriesSucceeded++;
         resultsByIndex.push(result);
       }
+      ftsIndexStatus.push({ table, indexName, available: result !== null });
     }
   } else {
     // Use core lbug adapter (CLI / pipeline context) — also sequential for safety.
@@ -97,13 +194,18 @@ export const searchFTSFromLbug = async (
         const result = await queryFTS(table, indexName, query, limit, false);
         queriesSucceeded++;
         resultsByIndex.push(result);
+        ftsIndexStatus.push({ table, indexName, available: true });
       } catch {
         // FTS index may not exist — count as failed
+        ftsIndexStatus.push({ table, indexName, available: false });
       }
     }
   }
 
   const ftsAvailable = queriesSucceeded > 0;
+  const missingIndexes = ftsIndexStatus
+    .filter((status) => !status.available)
+    .map((status) => `${status.table}.${status.indexName}`);
 
   // Collect all node scores per filePath to track which nodes actually matched
   const fileNodeScores = new Map<string, Array<{ score: number; nodeId: string }>>();
@@ -143,5 +245,8 @@ export const searchFTSFromLbug = async (
       nodeIds: r.nodeIds,
     })),
     ftsAvailable,
+    ftsComplete: missingIndexes.length === 0,
+    ftsIndexStatus,
+    missingIndexes,
   };
 };

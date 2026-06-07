@@ -1632,13 +1632,9 @@ import { SupportedLanguages } from 'gitnexus-shared';
 
 // Objective-C queries - works with tree-sitter-objc
 export const OBJECTIVEC_QUERIES = `
-; ── Class Interface (@interface Foo) ──────────────────────────────────────────
+; ── Class Interface (@interface Foo / @interface Foo : Bar) ──────────────────
 (class_interface
-  (identifier) @name
-  (":") @colon) @definition.class
-
-; ── Class Interface without superclass (@interface Foo <Bar>) ──────────────────
-(class_interface
+  .
   (identifier) @name) @definition.class
 
 ; ── Heritage: class extends (e.g., @interface Foo : Bar) ─────────────────────
@@ -1656,6 +1652,7 @@ export const OBJECTIVEC_QUERIES = `
 
 ; ── Class Implementation (@implementation Foo) ────────────────────────────────
 (class_implementation
+  .
   (identifier) @name) @definition.class
 
 ; ── Protocol (@protocol Foo) ────────────────────────────────────────────────

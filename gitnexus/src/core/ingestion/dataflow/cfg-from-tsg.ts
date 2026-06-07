@@ -15,8 +15,9 @@
  */
 
 import { execFileSync } from 'child_process';
-import { existsSync, writeFileSync, unlinkSync } from 'fs';
-import { join, dirname } from 'path';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { parseTSGOutput, postProcessTSGGraph, tsgToCFGResult } from './cfg-post-processor.js';
 import type { CFGResult } from './types.js';
@@ -92,6 +93,21 @@ const DSL_SEARCH_PATHS = [
   join(__dirname, 'dsl'),
 ];
 
+const TSG_GRAMMAR_PACKAGES = [
+  'tree-sitter-c',
+  'tree-sitter-c-sharp',
+  'tree-sitter-cpp',
+  'tree-sitter-go',
+  'tree-sitter-java',
+  'tree-sitter-javascript',
+  'tree-sitter-objc',
+  'tree-sitter-php',
+  'tree-sitter-python',
+  'tree-sitter-ruby',
+  'tree-sitter-rust',
+  'tree-sitter-typescript',
+];
+
 /**
  * Find the tree-sitter-graph CLI executable.
  * Searches PATH and common installation locations.
@@ -148,6 +164,41 @@ function findDSLFile(language: string): string {
   );
 }
 
+function findParserDirectories(): string[] {
+  const seen = new Set<string>();
+  const roots = [__dirname, process.cwd()];
+
+  for (const root of roots) {
+    let current = resolve(root);
+    while (true) {
+      const nodeModules = join(current, 'node_modules');
+      if (
+        existsSync(nodeModules) &&
+        TSG_GRAMMAR_PACKAGES.some((pkg) => existsSync(join(nodeModules, pkg, 'tree-sitter.json')))
+      ) {
+        seen.add(nodeModules);
+      }
+
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+
+  return [...seen];
+}
+
+function writeTreeSitterConfig(tmpDir: string): NodeJS.ProcessEnv {
+  const parserDirectories = findParserDirectories();
+  if (parserDirectories.length === 0) return process.env;
+
+  writeFileSync(
+    join(tmpDir, 'config.json'),
+    JSON.stringify({ 'parser-directories': parserDirectories }, null, 2),
+  );
+  return { ...process.env, TREE_SITTER_DIR: tmpDir };
+}
+
 /**
  * Build a CFG using the tree-sitter-graph DSL pipeline.
  *
@@ -175,16 +226,23 @@ export function buildCFGFromTSG(
   // Write source to a temp file (tree-sitter-graph uses file extension to infer language)
   const EXT_MAP: Record<string, string> = {
     typescript: 'ts',
+    arkts: 'ts',
     javascript: 'js',
     python: 'py',
+    java: 'java',
+    go: 'go',
+    kotlin: 'kt',
+    csharp: 'cs',
+    rust: 'rs',
+    c: 'c',
+    cpp: 'cpp',
     objectivec: 'm',
   };
   const ext = EXT_MAP[langKey] ?? 'txt';
-  const tmpSource = join(
-    process.env.TMPDIR ?? '/tmp',
-    `gitnexus-tsg-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`,
-  );
+  const tmpDir = mkdtempSync(join(tmpdir(), 'gitnexus-tsg-'));
+  const tmpSource = join(tmpDir, `source.${ext}`);
   writeFileSync(tmpSource, source);
+  const env = writeTreeSitterConfig(tmpDir);
 
   try {
     // Run: tree-sitter-graph <dsl> <source>
@@ -192,7 +250,9 @@ export function buildCFGFromTSG(
     // Using execFileSync with array args avoids shell injection since all paths are controlled
     const json = execFileSync(tsgCLI, ['--json', dslFile, tmpSource], {
       encoding: 'utf-8',
+      env,
       maxBuffer: 10 * 1024 * 1024, // 10MB
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
 
     // Parse TSG JSON → CFGNode[] + CFGEdge[]
@@ -206,7 +266,7 @@ export function buildCFGFromTSG(
   } finally {
     // Clean up temp file
     try {
-      unlinkSync(tmpSource);
+      rmSync(tmpDir, { recursive: true, force: true });
     } catch {
       /* ignore */
     }
