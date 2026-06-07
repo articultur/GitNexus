@@ -293,7 +293,7 @@ async function getReposResource(backend: LocalBackend): Promise<string> {
   if (repos.length > 1) {
     lines.push('');
     lines.push('# Multiple repos indexed. Use repo parameter in tool calls:');
-    lines.push(`# gitnexus_search({query: "auth", repo: "${repos[0].name}"})`);
+    lines.push(`# query({query: "auth", repo: "${repos[0].name}"})`);
   }
 
   return lines.join('\n');
@@ -403,7 +403,7 @@ async function getClustersResource(backend: LocalBackend, repoName?: string): Pr
 
     if (result.clusters.length > displayLimit) {
       lines.push(
-        `\n# Showing top ${displayLimit} of ${result.clusters.length} modules. Use gitnexus_query for deeper search.`,
+        `\n# Showing top ${displayLimit} of ${result.clusters.length} modules. Use the query tool for deeper search.`,
       );
     }
 
@@ -437,7 +437,7 @@ async function getProcessesResource(backend: LocalBackend, repoName?: string): P
 
     if (result.processes.length > displayLimit) {
       lines.push(
-        `\n# Showing top ${displayLimit} of ${result.processes.length} processes. Use gitnexus_query for deeper search.`,
+        `\n# Showing top ${displayLimit} of ${result.processes.length} processes. Use the query tool for deeper search.`,
       );
     }
 
