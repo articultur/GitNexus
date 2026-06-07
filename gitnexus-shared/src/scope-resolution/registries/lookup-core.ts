@@ -336,6 +336,8 @@ function collectOwnedMembers(
   memberName: string,
   ctx: RegistryContext,
 ): readonly SymbolDefinition[] {
+  const indexed = ctx.ownedMembersByOwner?.(ownerDefId, memberName);
+  if (indexed !== undefined) return indexed;
   return getOwnerMemberIndex(ctx).get(ownerDefId)?.get(memberName) ?? EMPTY_DEFS;
 }
 

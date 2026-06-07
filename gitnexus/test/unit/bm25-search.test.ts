@@ -19,7 +19,9 @@ vi.mock('../../src/core/lbug/lbug-adapter.js', async (importOriginal) => {
 // `searchFTSFromLbug`. We mock it so we can drive the executor without
 // spinning up a real LadybugDB pool.
 const mockExecuteParameterized = vi.fn();
+const mockExecuteQuery = mockExecuteParameterized;
 vi.mock('../../src/core/lbug/pool-adapter.js', () => ({
+  executeQuery: (repoId: string, cypher: string) => mockExecuteQuery(repoId, cypher),
   executeParameterized: (repoId: string, cypher: string, params: Record<string, any>) =>
     mockExecuteParameterized(repoId, cypher, params),
   addPoolCloseListener: vi.fn(),

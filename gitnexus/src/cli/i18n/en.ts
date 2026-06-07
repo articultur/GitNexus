@@ -52,6 +52,8 @@ export const en = {
   'tool.detectChanges.changesSummary': 'Changes: {{files}} files, {{symbols}} symbols',
   'tool.detectChanges.affectedProcesses': 'Affected processes: {{count}}',
   'tool.detectChanges.riskLevel': 'Risk level: {{risk}}',
+  'tool.detectChanges.riskRelevantSymbols': 'Risk-relevant symbols: {{count}}',
+  'tool.detectChanges.documentationFiles': 'Documentation-only files ignored for risk: {{count}}',
   'tool.detectChanges.unknownRisk': 'unknown',
   'tool.detectChanges.changedSymbols': 'Changed symbols:',
   'tool.detectChanges.overflowMore': '... and {{count}} more',

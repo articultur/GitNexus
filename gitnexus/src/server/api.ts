@@ -1103,12 +1103,13 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
         lbugPath,
         async () => {
           let searchResults: any[];
+          let ftsAvailable: boolean | undefined;
           let ftsWarning: string | undefined;
 
           if (mode === 'semantic') {
             const { isEmbedderReady } = await import('../core/embeddings/embedder.js');
             if (!isEmbedderReady()) {
-              return { searchResults: [] as any[], ftsWarning: undefined };
+              return { searchResults: [] as any[], ftsAvailable: undefined, ftsWarning: undefined };
             }
             const { semanticSearch: semSearch } =
               await import('../core/embeddings/embedding-pipeline.js');
@@ -1121,6 +1122,7 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
             }));
           } else if (mode === 'bm25') {
             const ftsResponse = await searchFTSFromLbug(query, limit);
+            ftsAvailable = ftsResponse.ftsAvailable;
             ftsWarning = getFTSHealthWarning(ftsResponse);
             searchResults = ftsResponse.results.map((r: any, i: number) => ({
               ...r,
@@ -1135,12 +1137,13 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
               searchResults = await hybridSearch(query, limit, executeQuery, semSearch);
             } else {
               const ftsResponse = await searchFTSFromLbug(query, limit);
+              ftsAvailable = ftsResponse.ftsAvailable;
               ftsWarning = getFTSHealthWarning(ftsResponse);
               searchResults = ftsResponse.results;
             }
           }
 
-          if (!enrich) return { searchResults, ftsWarning };
+          if (!enrich) return { searchResults, ftsAvailable, ftsWarning };
 
           const validLabel = (label: string): boolean =>
             (NODE_TABLES as readonly string[]).includes(label);
@@ -1217,11 +1220,12 @@ export const createServer = async (port: number, host: string = '127.0.0.1') => 
             }),
           );
 
-          return { searchResults: enriched, ftsWarning };
+          return { searchResults: enriched, ftsAvailable, ftsWarning };
         },
         { readOnly: true },
       );
       const response: any = { results: results.searchResults ?? results };
+      if (results.ftsAvailable !== undefined) response.ftsAvailable = results.ftsAvailable;
       if (results.ftsWarning) response.warning = results.ftsWarning;
       res.json(response);
     } catch (err: any) {

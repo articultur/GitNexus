@@ -56,6 +56,8 @@ export const zhCN = {
   'tool.detectChanges.changesSummary': '变更：{{files}} 个文件，{{symbols}} 个符号',
   'tool.detectChanges.affectedProcesses': '受影响流程：{{count}}',
   'tool.detectChanges.riskLevel': '风险等级：{{risk}}',
+  'tool.detectChanges.riskRelevantSymbols': '风险相关符号：{{count}}',
+  'tool.detectChanges.documentationFiles': '已忽略文档类文件风险：{{count}}',
   'tool.detectChanges.unknownRisk': '未知',
   'tool.detectChanges.changedSymbols': '已变更符号：',
   'tool.detectChanges.overflowMore': '... 以及另外 {{count}} 个',

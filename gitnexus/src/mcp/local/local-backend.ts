@@ -1467,7 +1467,7 @@ export class LocalBackend {
 
     if (nodeIds.length > 0) {
       const processLookup = executeParameterized(
-        repo.id,
+        repo.lbugPath,
         `
         MATCH (n)-[r:CodeRelation {type: 'STEP_IN_PROCESS'}]->(p:Process)
         WHERE n.id IN $nodeIds
@@ -1487,7 +1487,7 @@ export class LocalBackend {
         .catch((e) => logQueryError('query:process-lookup', e));
 
       const cohesionLookup = executeParameterized(
-        repo.id,
+        repo.lbugPath,
         `
         MATCH (n)-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
         WHERE n.id IN $nodeIds
@@ -1509,7 +1509,7 @@ export class LocalBackend {
 
       const contentLookup = includeContent
         ? executeParameterized(
-            repo.id,
+            repo.lbugPath,
             `
             MATCH (n)
             WHERE n.id IN $nodeIds
@@ -1613,7 +1613,7 @@ export class LocalBackend {
       try {
         timer.start('community_hop');
         const communityExpansion = await executeParameterized(
-          repo.id,
+          repo.lbugPath,
           `
           MATCH (n)-[:CodeRelation {type: 'MEMBER_OF'}]->(c:Community)
           WHERE n.id IN $nodeIds
@@ -2381,7 +2381,7 @@ export class LocalBackend {
         ? `WHERE (n.name ENDS WITH $symName OR n.id ENDS WITH $symName OR n.name CONTAINS $symName OR n.id CONTAINS $symName) AND n.filePath CONTAINS $filePath`
         : `WHERE n.name ENDS WITH $symName OR n.id ENDS WITH $symName OR n.name CONTAINS $symName OR n.id CONTAINS $symName`;
       rows = await executeParameterized(
-        repo.id,
+        repo.lbugPath,
         `MATCH (n) ${fuzzyWhere} RETURN ${selectClause} LIMIT 20`,
         queryParams,
       );
@@ -2823,7 +2823,7 @@ export class LocalBackend {
       if (callerUids.length > 0) {
         try {
           const contentRows = await executeParameterized(
-            repo.id,
+            repo.lbugPath,
             'MATCH (n) WHERE n.id IN $uids RETURN n.id AS uid, n.content AS content',
             { uids: callerUids },
           );

@@ -3,13 +3,18 @@ import { t } from './i18n/index.js';
 type DetectChangesSummary = {
   changed_files?: number;
   changed_count?: number;
+  risk_relevant_count?: number;
+  documentation_files?: number;
   affected_count?: number;
   risk_level?: string;
+  message?: string;
 };
 
 type ChangedSymbol = {
+  id?: string;
   type?: string;
   name?: string;
+  file?: string;
   filePath?: string;
 };
 
@@ -35,7 +40,7 @@ export function formatDetectChangesResult(result: unknown): string {
   if (payload.error) return t('common.error', { message: String(payload.error) });
 
   const summary = payload.summary ?? {};
-  if ((summary.changed_count ?? 0) === 0) {
+  if ((summary.changed_files ?? 0) === 0 && (summary.changed_count ?? 0) === 0) {
     return t('tool.detectChanges.noChanges');
   }
 
@@ -52,13 +57,27 @@ export function formatDetectChangesResult(result: unknown): string {
       risk: summary.risk_level || t('tool.detectChanges.unknownRisk'),
     }),
   );
-  lines.push('');
 
   const changed = Array.isArray(payload.changed_symbols) ? payload.changed_symbols : [];
+  if (changed.length > 0 && summary.risk_relevant_count !== undefined) {
+    lines.push(t('tool.detectChanges.riskRelevantSymbols', { count: summary.risk_relevant_count }));
+  }
+  if (summary.documentation_files !== undefined && summary.documentation_files > 0) {
+    lines.push(t('tool.detectChanges.documentationFiles', { count: summary.documentation_files }));
+  }
+  if (summary.message) {
+    lines.push(summary.message);
+  }
+  lines.push('');
+
   if (changed.length > 0) {
     lines.push(t('tool.detectChanges.changedSymbols'));
     for (const symbol of changed.slice(0, 15)) {
-      lines.push(`  ${symbol.type ?? 'Symbol'} ${symbol.name ?? '?'} → ${symbol.filePath ?? '?'}`);
+      lines.push(
+        `  ${symbol.type ?? 'Symbol'} ${symbol.name ?? symbol.id ?? '?'} → ${
+          symbol.filePath ?? symbol.file ?? '?'
+        }`,
+      );
     }
     if (changed.length > 15) {
       lines.push(t('tool.detectChanges.overflowMore', { count: changed.length - 15 }));
