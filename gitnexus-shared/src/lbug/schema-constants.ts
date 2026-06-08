@@ -40,6 +40,8 @@ export const NODE_TABLES = [
   'Module',
   'Route',
   'Tool',
+  // Taint/PDG substrate (issue #2080) — inert until M1 (#2081) emits blocks.
+  'BasicBlock',
 ] as const;
 
 export type NodeTableName = (typeof NODE_TABLES)[number];

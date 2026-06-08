@@ -31,6 +31,7 @@ import {
   ormPhase,
   crossFilePhase,
   scopeResolutionPhase,
+  pruneLocalSymbolsPhase,
   mroPhase,
   communitiesPhase,
   processesPhase,
@@ -42,7 +43,12 @@ import {
 } from './pipeline-phases/index.js';
 
 export interface PipelineOptions {
-  /** Skip MRO, community detection, and process extraction for faster test runs. */
+  /**
+   * Skip MRO, community detection, and process extraction for faster test runs.
+   * The `pruneLocalSymbols` phase still runs — it is graph construction (it cleans
+   * up inert local symbols), not graph analysis — so set `keepLocalValueSymbols`
+   * to retain those nodes under `skipGraphPhases`.
+   */
   skipGraphPhases?: boolean;
   /** Force sequential parsing (no worker pool). Useful for testing the sequential path. */
   skipWorkers?: boolean;
@@ -64,6 +70,14 @@ export interface PipelineOptions {
   workerPoolSize?: number;
   parseChunkConcurrency?: number;
   chunkByteBudget?: number;
+  /**
+   * Keep inert block-local value symbols (Const/Variable/Static) that the
+   * `pruneLocalSymbols` phase would otherwise drop. Mirrors the
+   * `GITNEXUS_KEEP_LOCAL_VALUE_SYMBOLS` env var, but threaded per-call so
+   * long-running hosts (eval-server, MCP daemon) can opt out without leaking
+   * `process.env` state across invocations. When undefined, the env var decides.
+   */
+  keepLocalValueSymbols?: boolean;
 }
 
 // ── Phase registry ─────────────────────────────────────────────────────────
@@ -74,12 +88,20 @@ export interface PipelineOptions {
  * Phase dependency graph:
  *
  *   scan → structure → [markdown, cobol] → parse → [routes, tools, orm]
- *     → crossFile → mro → communities → processes
+ *     → crossFile → scopeResolution → pruneLocalSymbols
+ *     → mro → communities → processes
  *
  * To add a new phase: create a file in pipeline-phases/, export the phase
- * object, and add it to the appropriate position in this array.
+ * object, and `.register()` it at the appropriate position below. Opt-in
+ * phases pass an `enabledWhen` predicate (issue #2080 phase-registry seam) —
+ * the legacy `if (!skipGraphPhases)` guard is now expressed that way on the
+ * three graph phases, with no change in behaviour.
+ *
+ * Exported for the parity test (`pipeline-phase-registry.test.ts`), which
+ * asserts the produced list is byte-identical to the legacy array for every
+ * options combination.
  */
-function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
+export function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
   const phases: PipelinePhase[] = [
     scanPhase,
     structurePhase,
@@ -91,6 +113,7 @@ function buildPhaseList(options?: PipelineOptions): PipelinePhase[] {
     ormPhase,
     crossFilePhase,
     scopeResolutionPhase,
+    pruneLocalSymbolsPhase,
   ];
 
   if (!options?.skipGraphPhases) {
