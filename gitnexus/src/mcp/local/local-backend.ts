@@ -437,6 +437,21 @@ function logQueryError(context: string, err: unknown): void {
   logger.error({ context, err: msg }, 'GitNexus query failed');
 }
 
+/**
+ * A "missing table/label/relation" prepare error is benign for the query tool's
+ * best-effort enrichment: a repo analyzed without processes or communities simply
+ * has no `Process`/`Community` tables, so the `STEP_IN_PROCESS` / `MEMBER_OF`
+ * enrichment queries fail to prepare. That is a normal configuration, NOT a
+ * degraded result — it must not raise the `partial` flag (which callers would
+ * then learn to ignore). Real failures (timeouts, locks, native faults) do.
+ */
+function isBenignMissingTableError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return /does not exist|no such (table|label|rel)|unknown (table|label)|not (defined|found)/i.test(
+    msg,
+  );
+}
+
 const isReadOnlyDbError = (err: unknown): boolean => {
   // Walk the `cause` chain (bounded) so a wrapped read-only error (e.g. the
   // pool adapter's `{ cause }` wrapper) is still detected here — this is the
@@ -1654,12 +1669,13 @@ export class LocalBackend {
       } else {
         // Add to each process it belongs to
         for (const row of processRows) {
-          const pid = row.pid ?? row[0];
-          const label = row.label ?? row[1];
-          const hLabel = row.heuristicLabel ?? row[2];
-          const pType = row.processType ?? row[3];
-          const stepCount = row.stepCount ?? row[4];
-          const step = row.step ?? row[5];
+          // Positional fallbacks shift +1 because `n.id AS nodeId` is column 0.
+          const pid = row.pid ?? row[1];
+          const label = row.label ?? row[2];
+          const hLabel = row.heuristicLabel ?? row[3];
+          const pType = row.processType ?? row[4];
+          const stepCount = row.stepCount ?? row[5];
+          const step = row.step ?? row[6];
 
           if (!processMap.has(pid)) {
             processMap.set(pid, {
