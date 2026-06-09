@@ -1,4 +1,4 @@
-import type { ParsedFile, ReferenceSite, SymbolDefinition } from 'gitnexus-shared';
+import type { Callsite, ParsedFile, SymbolDefinition } from 'gitnexus-shared';
 import type { KnowledgeGraph } from '../../../graph/types.js';
 import type { GraphNodeLookup } from '../../scope-resolution/graph-bridge/node-lookup.js';
 import { resolveDefGraphId } from '../../scope-resolution/graph-bridge/ids.js';
@@ -132,11 +132,10 @@ export function buildCppMemberLookupMro(
 export function resolveCppReceiverMember(
   ownerDef: SymbolDefinition,
   memberName: string,
-  callsite: ReferenceSite,
+  callsite: Callsite,
   _scopes: ScopeResolutionIndexes,
   model: SemanticModel,
 ): ReceiverMemberResolution | undefined {
-  if (callsite.kind !== 'call') return undefined;
   const ownMethods = model.methods.lookupAllByOwner(ownerDef.nodeId, memberName);
   const introduced = introducedDefinitions(ownerDef.nodeId, memberName, model);
 
@@ -303,7 +302,7 @@ function uniqueDefinitions(definitions: readonly SymbolDefinition[]): SymbolDefi
 
 function chooseOverload(
   candidates: readonly SymbolDefinition[],
-  callsite: ReferenceSite,
+  callsite: Callsite,
 ): ReceiverMemberResolution | undefined {
   if (candidates.length === 0) return undefined;
   const narrowed = narrowOverloadCandidates(candidates, callsite.arity, callsite.argumentTypes, {

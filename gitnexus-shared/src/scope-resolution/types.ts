@@ -23,7 +23,7 @@
  */
 
 import type { NodeLabel } from '../graph/types.js';
-import type { SymbolDefinition } from './symbol-definition.js';
+import type { ParameterTypeClass, SymbolDefinition } from './symbol-definition.js';
 
 // ─── §2.1 Type aliases ──────────────────────────────────────────────────────
 
@@ -272,6 +272,8 @@ export interface Callsite {
   /** Inferred argument types at the call site, one per argument.
    *  An empty string entry means the type was not inferred. */
   readonly argumentTypes?: readonly string[];
+  /** Shape-preserving argument type sidecar, aligned with `argumentTypes`. */
+  readonly argumentTypeClasses?: readonly ParameterTypeClass[];
 }
 
 // ─── §2.4 ImportEdge ────────────────────────────────────────────────────────

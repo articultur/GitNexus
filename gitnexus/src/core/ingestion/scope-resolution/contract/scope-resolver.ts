@@ -267,7 +267,6 @@ import type {
   Callsite,
   ConstraintContext,
   ParsedFile,
-  ReferenceSite,
   ScopeId,
   SupportedLanguages,
   SymbolDefinition,
@@ -412,7 +411,7 @@ export interface ScopeResolver {
    * for the Tier-A predicate registry and Kleene 3-valued evaluator.
    */
   readonly constraintCompatibility?: (
-    callsite: ReferenceSite,
+    callsite: Callsite,
     def: SymbolDefinition,
     ctx: ConstraintContext,
   ) => ArityVerdict;

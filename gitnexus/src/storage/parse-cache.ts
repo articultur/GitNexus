@@ -44,6 +44,11 @@ import type { ParseWorkerResult } from '../core/ingestion/workers/parse-worker.j
  * On version mismatch, `loadParseCache` returns an empty cache and the
  * next save overwrites the on-disk file with the new version baked in.
  */
+// Bumped to 5 in #2161: C++ `ParsedFile.captureSideChannel` now carries
+// `memberLookup` facts for receiver member resolution. Old durable ParsedFile
+// shards are otherwise valid JSON but silently miss the new side-channel slice,
+// causing warm-cache C++ analyses to fall back to flattened generic lookup.
+//
 // Bumped to 4 in #1983: on-disk parse-cache shards omit legacy DAG fields
 // (`calls`, `assignments`, `constructorBindings`) unused after RING4-1 (#942)
 // and the worker `parsedFiles` (the worker writes those to the disk ParsedFile
@@ -55,7 +60,7 @@ import type { ParseWorkerResult } from '../core/ingestion/workers/parse-worker.j
 // the main thread (the #1983 OOM). Because the two stores share this version,
 // any future change to the `ParsedFile` serialization shape MUST bump
 // SCHEMA_BUMP so both invalidate in lockstep.
-const SCHEMA_BUMP = 4;
+const SCHEMA_BUMP = 5;
 const GITNEXUS_PKG_VERSION = (() => {
   try {
     // package.json sits at gitnexus/package.json — two levels up from
