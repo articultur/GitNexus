@@ -521,44 +521,14 @@ function mapToGraph(
       },
     });
 
-    if (item.parentName) {
-      // Child data item -> HAS_PROPERTY from parent data item to this item
-      // Find the parent's Property node ID by searching data items for matching name
-      const parentItem = extracted.dataItems.find(
-        (di) => di.name.toUpperCase() === item.parentName!.toUpperCase(),
-      );
-      if (parentItem) {
-        const parentNodeId = generatePropertyId(filePath, parentItem);
-        graph.addRelationship({
-          id: generateId('HAS_PROPERTY', `${parentNodeId}->${propId}`),
-          type: 'HAS_PROPERTY',
-          sourceId: parentNodeId,
-          targetId: propId,
-          confidence: 1.0,
-          reason: 'cobol-data-item-child',
-        });
-      } else {
-        // Fallback: parent not found -> link to program
-        graph.addRelationship({
-          id: generateId('HAS_PROPERTY', `${itemParent}->${propId}`),
-          type: 'HAS_PROPERTY',
-          sourceId: itemParent,
-          targetId: propId,
-          confidence: 1.0,
-          reason: 'cobol-data-item',
-        });
-      }
-    } else {
-      // Top-level data item -> HAS_PROPERTY from program/module to this item
-      graph.addRelationship({
-        id: generateId('HAS_PROPERTY', `${itemParent}->${propId}`),
-        type: 'HAS_PROPERTY',
-        sourceId: itemParent,
-        targetId: propId,
-        confidence: 1.0,
-        reason: 'cobol-data-item',
-      });
-    }
+    graph.addRelationship({
+      id: generateId('CONTAINS', `${itemParent}->${propId}`),
+      type: 'CONTAINS',
+      sourceId: itemParent,
+      targetId: propId,
+      confidence: 1.0,
+      reason: 'cobol-data-item',
+    });
   }
 
   // ── Build data item Map early (needed by CALL USING, CICS INTO/FROM, MOVE, and USING) ──

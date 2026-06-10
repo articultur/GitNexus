@@ -1,7 +1,10 @@
-import type Parser from 'tree-sitter';
+import Parser from 'tree-sitter';
+import { SupportedLanguages } from 'gitnexus-shared';
 import { extractStringContent, findDescendant, type SyntaxNode } from '../utils/ast-helpers.js';
 import { splitNamespaceUseDeclaration } from '../languages/php/import-decomposer.js';
 import { normalizeQualifiedName } from '../utils/qualified-name.js';
+import { getLanguageGrammar } from '../../tree-sitter/parser-loader.js';
+import { parseSourceSafe } from '../../tree-sitter/safe-parse.js';
 
 export interface ExtractedRoute {
   filePath: string;
@@ -160,6 +163,34 @@ function routeNameBaseFromPath(routePath: string | null): string | null {
 function appendResourceActionName(base: string | null, action: string): string | null {
   if (!base) return null;
   return base.endsWith('.') ? `${base}${action}` : `${base}.${action}`;
+}
+
+function normalizeLaravelPath(rawPath: string | null, prefix: string | null): string | null {
+  if (rawPath === null) return null;
+  const pieces = [prefix, rawPath].filter((piece): piece is string => Boolean(piece));
+  let path = pieces.join('/');
+  if (!path.startsWith('/')) path = `/${path}`;
+  path = path.replace(/\/+/g, '/').replace(/\{([^}]+)\}/g, '[$1]');
+  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+  return path;
+}
+
+function parseLaravelRouteContent(content: string, filePath: string): Parser.Tree | null {
+  if (!content.trim()) return null;
+  const parser = new Parser();
+  parser.setLanguage(
+    getLanguageGrammar(SupportedLanguages.PHP) as Parameters<Parser['setLanguage']>[0],
+  );
+  const source = content.trimStart().startsWith('<?php') ? content : `<?php\n${content}`;
+  return parseSourceSafe(parser, source, undefined, undefined, filePath);
+}
+
+export function isLaravelRouteFile(content: string, filePath = ''): boolean {
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  if (/(^|\/)routes\/(web|api|console|channels)\.php$/.test(normalizedPath)) return true;
+  return /\bRoute::(?:get|post|put|patch|delete|options|any|match|resource|apiResource|middleware|prefix|group)\s*\(/.test(
+    content,
+  );
 }
 
 /**
@@ -398,7 +429,14 @@ function resolveControllerQualifiedName(
   return null;
 }
 
-export function extractLaravelRoutes(tree: Parser.Tree, filePath: string): ExtractedRoute[] {
+export function extractLaravelRoutes(content: string, filePath: string): ExtractedRoute[];
+export function extractLaravelRoutes(tree: Parser.Tree, filePath: string): ExtractedRoute[];
+export function extractLaravelRoutes(
+  input: string | Parser.Tree,
+  filePath: string,
+): ExtractedRoute[] {
+  const tree = typeof input === 'string' ? parseLaravelRouteContent(input, filePath) : input;
+  if (!tree) return [];
   const routes: ExtractedRoute[] = [];
   const useAliasMap = buildUseAliasMap(tree.rootNode);
 
@@ -430,6 +468,7 @@ export function extractLaravelRoutes(tree: Parser.Tree, filePath: string): Extra
     chainAttrs: { method: string; argsNode: SyntaxNode | null }[],
   ) {
     const effective = resolveStack(groupStack);
+    const emittedMethod = httpMethod.toUpperCase();
     let routeName: string | null = null;
 
     for (const attr of chainAttrs) {
@@ -448,7 +487,7 @@ export function extractLaravelRoutes(tree: Parser.Tree, filePath: string): Extra
       }
     }
 
-    const routePath = extractFirstStringArg(argsNode);
+    const routePath = normalizeLaravelPath(extractFirstStringArg(argsNode), effective.prefix);
 
     if (ROUTE_RESOURCE_METHODS.has(httpMethod)) {
       const target = extractControllerTarget(argsNode);
@@ -458,7 +497,7 @@ export function extractLaravelRoutes(tree: Parser.Tree, filePath: string): Extra
       for (const action of actions) {
         routes.push({
           filePath,
-          httpMethod,
+          httpMethod: emittedMethod,
           routePath,
           routeName: appendResourceActionName(routeNameBase, action),
           controllerName: target.controller ?? effective.controller,
@@ -477,7 +516,7 @@ export function extractLaravelRoutes(tree: Parser.Tree, filePath: string): Extra
       const target = extractControllerTarget(argsNode);
       routes.push({
         filePath,
-        httpMethod,
+        httpMethod: emittedMethod,
         routePath,
         routeName,
         controllerName: target.controller ?? effective.controller,
@@ -588,6 +627,16 @@ export function extractLaravelRoutes(tree: Parser.Tree, filePath: string): Extra
         );
         continue;
       }
+    }
+
+    const memberMethod = getCallMethodName(node);
+    if (
+      node.type === 'member_call_expression' &&
+      memberMethod &&
+      (ROUTE_HTTP_METHODS.has(memberMethod) || ROUTE_RESOURCE_METHODS.has(memberMethod))
+    ) {
+      emitRoute(memberMethod, getArguments(node), node.startPosition.row, groupSnapshot, []);
+      continue;
     }
 
     // Default: push children in reverse so leftmost is processed first

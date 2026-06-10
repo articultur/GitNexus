@@ -136,6 +136,68 @@ function resolveClassBindingForName(
   return findClassBindingInScope(scopeId, baseName, scopes);
 }
 
+function findImportedClassReceiver(
+  parsed: ParsedFile,
+  receiverName: string,
+  scopes: ScopeResolutionIndexes,
+  index: WorkspaceResolutionIndex,
+): SymbolDefinition | undefined {
+  const imports = scopes.imports.get(parsed.moduleScope);
+  if (imports === undefined) return undefined;
+
+  for (const edge of imports) {
+    if (edge.targetFile === null) continue;
+    if (edge.localName !== receiverName) continue;
+    if (edge.kind !== 'named' && edge.kind !== 'alias' && edge.kind !== 'wildcard-expanded') {
+      continue;
+    }
+
+    const exportedNames = new Set<string>([
+      edge.targetExportedName,
+      receiverName,
+      ...parsed.parsedImports
+        .filter(
+          (
+            imp,
+          ): imp is Extract<
+            ParsedFile['parsedImports'][number],
+            { readonly localName: string; readonly importedName: string }
+          > => 'localName' in imp && imp.localName === receiverName,
+        )
+        .flatMap((imp) => [imp.importedName, imp.targetRaw?.split('.').pop()])
+        .filter((name): name is string => name !== undefined && name !== null && name.length > 0),
+    ]);
+
+    for (const exportedName of exportedNames) {
+      const def = findExportedDef(edge.targetFile, exportedName, index);
+      if (def !== undefined && isClassLike(def.type)) return def;
+    }
+  }
+  return undefined;
+}
+
+function findOwnedMemberInClassScope(
+  ownerDefId: string,
+  memberName: string,
+  index: WorkspaceResolutionIndex,
+): SymbolDefinition | undefined {
+  const classScope = index.classScopeByDefId.get(ownerDefId);
+  const refs = classScope?.bindings.get(memberName);
+  if (refs === undefined) return undefined;
+  for (const ref of refs) {
+    if (
+      ref.def.type === 'Method' ||
+      ref.def.type === 'Function' ||
+      ref.def.type === 'Constructor' ||
+      ref.def.type === 'Property' ||
+      ref.def.type === 'Variable'
+    ) {
+      return ref.def;
+    }
+  }
+  return undefined;
+}
+
 export function emitReceiverBoundCalls(
   graph: KnowledgeGraph,
   scopes: ScopeResolutionIndexes,
@@ -583,12 +645,16 @@ export function emitReceiverBoundCalls(
       }
 
       // ── Case 2: class-name receiver ──────────────────────────────
-      const classDef = findClassBindingInScope(site.inScope, receiverName, scopes);
+      const classDef =
+        findClassBindingInScope(site.inScope, receiverName, scopes) ??
+        findImportedClassReceiver(parsed, receiverName, scopes, index);
       if (classDef !== undefined) {
         const chain = [classDef.nodeId, ...scopes.methodDispatch.mroFor(classDef.nodeId)];
         let memberDef: SymbolDefinition | undefined;
         for (const ownerId of chain) {
-          memberDef = findOwnedMember(ownerId, memberName, model);
+          memberDef =
+            findOwnedMember(ownerId, memberName, model) ??
+            findOwnedMemberInClassScope(ownerId, memberName, index);
           if (memberDef !== undefined) {
             // The MRO chain is most-derived-first ([classDef, ...ancestors]).
             // If the most-derived definition is arity-incompatible with the

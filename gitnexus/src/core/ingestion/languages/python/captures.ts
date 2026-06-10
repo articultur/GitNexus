@@ -165,12 +165,39 @@ export function emitPythonScopeCaptures(
       continue;
     }
 
+    const callTag = (
+      ['@reference.call.free', '@reference.call.member', '@reference.call.constructor'] as const
+    ).find((tag) => grouped[tag] !== undefined);
+    if (callTag !== undefined && grouped['@reference.arity'] === undefined) {
+      const callNode = nodeMap[callTag];
+      if (callNode !== undefined && callNode.type === 'call') {
+        grouped['@reference.arity'] = syntheticCapture(
+          '@reference.arity',
+          callNode,
+          String(countPythonCallArguments(callNode)),
+        );
+      }
+    }
+
     out.push(grouped);
   }
 
   out.push(...synthesizePythonInheritanceReferences(tree.rootNode));
 
   return out;
+}
+
+function countPythonCallArguments(callNode: SyntaxNode): number {
+  const args = callNode.childForFieldName('arguments');
+  if (args === null) return 0;
+  let count = 0;
+  for (let i = 0; i < args.namedChildCount; i++) {
+    const child = args.namedChild(i);
+    if (child === null) continue;
+    if (child.type === 'comment') continue;
+    count++;
+  }
+  return count;
 }
 
 /**

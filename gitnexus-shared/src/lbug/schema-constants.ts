@@ -78,6 +78,9 @@ export const REL_TYPES = [
   'SANITIZES',
   'ALIASES',
   'BOUNDARY_CROSS',
+  'CFG',
+  'REACHING_DEF',
+  'TAINT_PATH',
 ] as const;
 
 export type RelType = (typeof REL_TYPES)[number];

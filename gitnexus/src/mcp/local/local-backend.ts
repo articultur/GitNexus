@@ -84,6 +84,10 @@ const KNOWN_REL_TYPES = [
   'CFG_EDGE',
 ];
 
+const FTS_REPAIR_WARNING =
+  'FTS indexes missing or unavailable — keyword search degraded. Run: gitnexus analyze --repair-fts to rebuild search indexes.';
+const QUERY_ENRICHMENT_WARNING = 'Query enrichment degraded; returning partial results.';
+
 function getCypherErrorHint(msg: string): string | undefined {
   // Property not found on node
   const propMatch =
@@ -1502,7 +1506,14 @@ export class LocalBackend {
     // Guard against undefined results (#1489) — when FTS is entirely
     // unavailable the search helper may return an unexpected shape.
     const bm25Results = bm25SearchResult?.results ?? [];
-    const ftsWarning = bm25SearchResult?.ftsWarning;
+    const ftsWarning =
+      bm25SearchResult?.ftsWarning ??
+      (bm25SearchResult?.ftsUsed === false ? FTS_REPAIR_WARNING : undefined);
+    let enrichmentDegraded = false;
+    const markEnrichmentFailure = (phase: string, err: unknown): void => {
+      logQueryError(phase, err);
+      if (!isBenignMissingTableError(err)) enrichmentDegraded = true;
+    };
 
     // Merge via reciprocal rank fusion
     timer.start('merge');
@@ -1588,7 +1599,7 @@ export class LocalBackend {
             processRowsByNodeId.set(nodeId, bucket);
           }
         })
-        .catch((e) => logQueryError('query:process-lookup', e));
+        .catch((e) => markEnrichmentFailure('query:process-lookup', e));
 
       const cohesionLookup = executeParameterized(
         repo.lbugPath,
@@ -1609,7 +1620,7 @@ export class LocalBackend {
             });
           }
         })
-        .catch((e) => logQueryError('query:cluster-info', e));
+        .catch((e) => markEnrichmentFailure('query:cluster-info', e));
 
       const contentLookup = includeContent
         ? executeParameterized(
@@ -1628,7 +1639,7 @@ export class LocalBackend {
                 if (nodeId && content) contentByNodeId.set(nodeId, content);
               }
             })
-            .catch((e) => logQueryError('query:content-fetch', e))
+            .catch((e) => markEnrichmentFailure('query:content-fetch', e))
         : Promise.resolve();
 
       await Promise.all([processLookup, cohesionLookup, contentLookup]);
@@ -1770,8 +1781,8 @@ export class LocalBackend {
             });
           }
         }
-      } catch {
-        /* community hop is best-effort; ignore errors */
+      } catch (e) {
+        markEnrichmentFailure('query:community-hop', e);
       } finally {
         // Always stop the timer — PhaseTimer.stop() is a no-op when
         // no phase is active, so this is safe even after a throw.
@@ -1825,6 +1836,9 @@ export class LocalBackend {
     logQueryTiming(searchQuery, timing);
 
     const stalenessWarning = this.getStalenessWarning(repo.id);
+    const warnings = [ftsWarning, enrichmentDegraded ? QUERY_ENRICHMENT_WARNING : undefined]
+      .filter((warning): warning is string => Boolean(warning))
+      .join(' ');
 
     // Step 5: Apply flow aggregation when granularity is "high"
     const granularity = params.granularity ?? 'low';
@@ -1835,7 +1849,8 @@ export class LocalBackend {
         process_symbols: aggregated.process_symbols,
         definitions: definitions.slice(0, 20),
         timing,
-        ...(ftsWarning ? { warning: ftsWarning } : {}),
+        ...(warnings ? { warning: warnings } : {}),
+        ...(enrichmentDegraded ? { partial: true } : {}),
         ...(stalenessWarning ? { staleness_warning: stalenessWarning } : {}),
       };
     }
@@ -1845,7 +1860,8 @@ export class LocalBackend {
       process_symbols: dedupedSymbols,
       definitions: definitions.slice(0, 20), // cap standalone definitions
       timing,
-      ...(ftsWarning ? { warning: ftsWarning } : {}),
+      ...(warnings ? { warning: warnings } : {}),
+      ...(enrichmentDegraded ? { partial: true } : {}),
       ...(stalenessWarning ? { staleness_warning: stalenessWarning } : {}),
     };
   }
@@ -1861,8 +1877,16 @@ export class LocalBackend {
     let searchFTSFromLbug: (query: string, limit: number, repoId?: string) => Promise<any>;
     let getFTSHealthWarning: ((response: any) => string | undefined) | undefined;
     try {
-      ({ searchFTSFromLbug, getFTSHealthWarning } =
-        await import('../../core/search/bm25-index.js'));
+      const bm25Module = await import('../../core/search/bm25-index.js');
+      searchFTSFromLbug = bm25Module.searchFTSFromLbug;
+      try {
+        getFTSHealthWarning =
+          typeof bm25Module.getFTSHealthWarning === 'function'
+            ? bm25Module.getFTSHealthWarning
+            : undefined;
+      } catch {
+        getFTSHealthWarning = undefined;
+      }
     } catch (err: any) {
       // Module import can fail in sandboxed MCP contexts (#1489)
       logger.warn(
@@ -1872,8 +1896,7 @@ export class LocalBackend {
       return {
         results: [],
         ftsUsed: false,
-        ftsWarning:
-          'FTS indexes missing or unavailable — keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.',
+        ftsWarning: FTS_REPAIR_WARNING,
       };
     }
 
@@ -1888,8 +1911,7 @@ export class LocalBackend {
       return {
         results: [],
         ftsUsed: false,
-        ftsWarning:
-          'FTS indexes missing or unavailable — keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.',
+        ftsWarning: FTS_REPAIR_WARNING,
       };
     }
 
@@ -1897,7 +1919,8 @@ export class LocalBackend {
     // could be undefined when the FTS extension is unavailable in the MCP process.
     const bm25Results = ftsResponse?.results ?? [];
     const ftsUsed = ftsResponse?.ftsAvailable ?? false;
-    const ftsWarning = getFTSHealthWarning?.(ftsResponse);
+    const ftsWarning =
+      getFTSHealthWarning?.(ftsResponse) ?? (ftsUsed === false ? FTS_REPAIR_WARNING : undefined);
 
     const results: any[] = [];
 

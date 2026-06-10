@@ -40,18 +40,20 @@ export interface FTSHealthReport {
   warning?: string;
 }
 
+const FTS_REPAIR_HINT = 'Run: gitnexus analyze --repair-fts to rebuild search indexes.';
+
 export function getFTSHealthWarning(response: unknown): string | undefined {
   if (!response || Array.isArray(response) || typeof response !== 'object') return undefined;
   const r = response as Partial<FTSSearchResponse>;
 
   if (r.ftsAvailable === false) {
-    return 'FTS indexes missing or unavailable — keyword search degraded. Run: gitnexus analyze --force to rebuild indexes.';
+    return `FTS indexes missing or unavailable — keyword search degraded. ${FTS_REPAIR_HINT}`;
   }
 
   const missing = Array.isArray(r.missingIndexes) ? r.missingIndexes.filter(Boolean) : [];
   if (r.ftsComplete === false || missing.length > 0) {
     const suffix = missing.length > 0 ? ` (${missing.join(', ')})` : '';
-    return `FTS indexes partially missing${suffix} — keyword search may miss results. Run: gitnexus analyze --force to rebuild indexes.`;
+    return `FTS indexes partially missing${suffix} — keyword search may miss results. ${FTS_REPAIR_HINT}`;
   }
 
   return undefined;

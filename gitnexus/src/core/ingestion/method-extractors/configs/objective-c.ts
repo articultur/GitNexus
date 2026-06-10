@@ -98,7 +98,7 @@ export const objcMethodConfig: MethodExtractionConfig = {
   language: SupportedLanguages.ObjectiveC,
   typeDeclarationNodes: ['class_interface', 'class_implementation', 'protocol_declaration'],
   methodNodeTypes: ['method_declaration'],
-  bodyNodeTypes: ['protocol_body'],
+  bodyNodeTypes: ['protocol_declaration'],
 
   extractName: extractObjCMethodName,
   extractReturnType: extractObjCMethodReturnType,
@@ -112,7 +112,9 @@ export const objcMethodConfig: MethodExtractionConfig = {
 
   isAbstract(node) {
     // Protocol methods are abstract (no body)
-    return !node.children.some((c) => c.type === 'compound_statement' || c.type === 'block');
+    return !node.children.some(
+      (c) => c.type === 'compound_statement' || c.type === 'block_literal',
+    );
   },
 
   isFinal() {

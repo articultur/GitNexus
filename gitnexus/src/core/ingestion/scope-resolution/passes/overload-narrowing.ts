@@ -101,14 +101,16 @@ export function narrowOverloadCandidates(
   hookCtx?: OverloadNarrowingHookCtx,
 ): readonly SymbolDefinition[] {
   if (overloads.length === 0) return [];
+  const effectiveArgCount =
+    argCount !== undefined && Number.isFinite(argCount) && argCount >= 0 ? argCount : undefined;
 
   const arityMatches: readonly SymbolDefinition[] =
-    argCount === undefined
+    effectiveArgCount === undefined
       ? overloads
       : overloads.filter((d) => {
           const max = d.parameterCount;
           const min = d.requiredParameterCount;
-          if (max !== undefined && argCount > max) {
+          if (max !== undefined && effectiveArgCount > max) {
             // Variadic marker check is C#-specific (the 'params' keyword).
             // Other languages use their own marker — PHP uses '...' (see
             // `languages/php/arity-metadata.ts:46`), Python uses '*args'-
@@ -124,7 +126,7 @@ export function narrowOverloadCandidates(
               d.parameterTypes.some((t) => t === 'params' || t.startsWith('params '));
             if (!variadic) return false;
           }
-          if (min !== undefined && argCount < min) return false;
+          if (min !== undefined && effectiveArgCount < min) return false;
           return true;
         });
 
@@ -193,8 +195,8 @@ export function narrowOverloadCandidates(
   // case, so a buggy hook that wrongly returns `'incompatible'` for
   // every candidate degrades to today's "suppress edge" behavior rather
   // than emitting a wrong edge.
-  if (hookCtx?.constraintCompatibility !== undefined && argCount !== undefined) {
-    const callsite: Callsite = { arity: argCount };
+  if (hookCtx?.constraintCompatibility !== undefined && effectiveArgCount !== undefined) {
+    const callsite: Callsite = { arity: effectiveArgCount };
     const ctx: ConstraintContext =
       argTypes !== undefined
         ? {
@@ -482,6 +484,8 @@ export function isOverloadAmbiguousAfterNormalization(
   if (candidates.length < 2) return false;
   const first = candidates[0].parameterTypes;
   if (first === undefined) return false;
+  const effectiveArgCount =
+    argCount !== undefined && Number.isFinite(argCount) && argCount >= 0 ? argCount : undefined;
   // When argCount is provided, compare only the first `argCount` slots —
   // this catches default-argument ambiguity: `void f(int); void f(int, int = 0);`
   // called with `f(1)` (argCount=1) leaves both candidates viable because
@@ -489,7 +493,7 @@ export function isOverloadAmbiguousAfterNormalization(
   // identical even though full parameterTypes lengths differ.
   // Without argCount, fall back to full-sequence comparison (the original
   // int/long normalization-collapse case).
-  const compareUpTo = argCount !== undefined ? argCount : first.length;
+  const compareUpTo = effectiveArgCount !== undefined ? effectiveArgCount : first.length;
   if (compareUpTo === 0) return false;
   if (first.length < compareUpTo) return false;
   for (let i = 1; i < candidates.length; i++) {
@@ -502,7 +506,7 @@ export function isOverloadAmbiguousAfterNormalization(
     // When argCount is NOT provided, also require length equality so
     // distinct-arity candidates that happen to share a prefix don't
     // collapse to ambiguous (preserves the original int/long contract).
-    if (argCount === undefined && p.length !== first.length) return false;
+    if (effectiveArgCount === undefined && p.length !== first.length) return false;
   }
   return true;
 }

@@ -191,7 +191,7 @@ const GO_SINK_FUNCTIONS = new Set([
 
 function goTaintSource(node: SyntaxNode): TaintPattern | undefined {
   // Go: r.FormValue, r.PostForm, r.FormFile, os.Getenv
-  const sel = node.childForFieldName('selector');
+  const sel = node.childForFieldName('field');
   if (!sel) return undefined;
   const selName = sel.text;
   if (selName === 'FormValue' || selName === 'PostForm' || selName === 'FormFile') {
@@ -204,7 +204,7 @@ function goTaintSource(node: SyntaxNode): TaintPattern | undefined {
 }
 
 function goTaintSink(node: SyntaxNode): TaintPattern | undefined {
-  const sel = node.childForFieldName('selector');
+  const sel = node.childForFieldName('field');
   if (!sel) return undefined;
   const fnName = sel.text;
   if (GO_SINK_FUNCTIONS.has(fnName)) {
@@ -231,11 +231,21 @@ export const goTaintConfig: TaintConfig = {
 
 const DART_SINK_METHODS = new Set(['execute', 'run', 'eval', 'forName']);
 
+function dartSelectorText(node: SyntaxNode): string | undefined {
+  const selector =
+    node.type === 'selector' ? node : node.children.find((child) => child.type === 'selector');
+  const inner = selector?.children.find(
+    (child) =>
+      child.type === 'unconditional_assignable_selector' ||
+      child.type === 'conditional_assignable_selector',
+  );
+  return inner?.children.find((child) => child.type === 'identifier')?.text;
+}
+
 function dartTaintSource(node: SyntaxNode): TaintPattern | undefined {
   // Dart: request.body, request.queryParameters, stdin.readLineSync()
-  const sel = node.childForFieldName('selector');
-  if (!sel) return undefined;
-  const methodName = sel.text;
+  const methodName = dartSelectorText(node);
+  if (!methodName) return undefined;
   if (['body', 'queryParameters', 'formFields'].includes(methodName)) {
     return { name: 'dart-request-input', description: `HTTP input via ${methodName}` };
   }
@@ -246,9 +256,8 @@ function dartTaintSource(node: SyntaxNode): TaintPattern | undefined {
 }
 
 function dartTaintSink(node: SyntaxNode): TaintPattern | undefined {
-  const sel = node.childForFieldName('selector');
-  if (!sel) return undefined;
-  const fnName = sel.text;
+  const fnName = dartSelectorText(node);
+  if (!fnName) return undefined;
   if (DART_SINK_METHODS.has(fnName)) {
     return { name: `dart-sink:${fnName}`, description: `Dangerous method: ${fnName}()` };
   }
@@ -260,9 +269,9 @@ function dartTaintSanitizer(_node: SyntaxNode): TaintPattern | undefined {
 }
 
 export const dartTaintConfig: TaintConfig = {
-  sourceNodeTypes: new Set(['method_invocation']),
+  sourceNodeTypes: new Set(['selector']),
   extractSourceDeclaration: () => undefined,
-  sinkNodeTypes: new Set(['method_invocation']),
+  sinkNodeTypes: new Set(['selector']),
   extractSinkCall: dartTaintSink,
   sanitizerNodeTypes: new Set([]),
   extractSanitizerCall: dartTaintSanitizer,
@@ -504,7 +513,7 @@ function tsTaintSource(node: SyntaxNode): TaintPattern | undefined {
     objName = obj?.type === 'identifier' ? obj.text : undefined;
     propName = prop?.type === 'identifier' ? prop.text : undefined;
   } else if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const obj = callee.childForFieldName('object');
       const prop = callee.childForFieldName('property');
@@ -534,7 +543,7 @@ function tsTaintSink(node: SyntaxNode): TaintPattern | undefined {
   let fnName: string | undefined;
 
   if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const prop = callee.childForFieldName('property');
       fnName = prop?.type === 'identifier' ? prop.text : undefined;
@@ -553,7 +562,7 @@ function tsTaintSanitizer(node: SyntaxNode): TaintPattern | undefined {
   let fnName: string | undefined;
 
   if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const prop = callee.childForFieldName('property');
       fnName = prop?.type === 'identifier' ? prop.text : undefined;
@@ -694,7 +703,7 @@ const OBJC_SANITIZER_SELECTORS = new Set([
 
 function objcTaintSource(node: SyntaxNode): TaintPattern | undefined {
   const sel = node.childForFieldName('method');
-  const selText = sel?.text ?? node.childForFieldName('selector')?.text;
+  const selText = sel?.text;
   if (!selText) return undefined;
   if (OBJC_SOURCE_SELECTORS.has(selText)) {
     return {
@@ -707,7 +716,7 @@ function objcTaintSource(node: SyntaxNode): TaintPattern | undefined {
 
 function objcTaintSink(node: SyntaxNode): TaintPattern | undefined {
   const sel = node.childForFieldName('method');
-  const selText = sel?.text ?? node.childForFieldName('selector')?.text;
+  const selText = sel?.text;
   if (!selText) return undefined;
   if (OBJC_SINK_SELECTORS.has(selText)) {
     return { name: `objc-sink:${selText}`, description: `Dangerous ObjC selector: ${selText}` };
@@ -717,7 +726,7 @@ function objcTaintSink(node: SyntaxNode): TaintPattern | undefined {
 
 function objcTaintSanitizer(node: SyntaxNode): TaintPattern | undefined {
   const sel = node.childForFieldName('method');
-  const selText = sel?.text ?? node.childForFieldName('selector')?.text;
+  const selText = sel?.text;
   if (!selText) return undefined;
   if (OBJC_SANITIZER_SELECTORS.has(selText)) {
     return { name: `objc-sanitizer:${selText}`, description: `ObjC sanitizer: ${selText}` };
@@ -951,7 +960,7 @@ function arktsTaintSource(node: SyntaxNode): TaintPattern | undefined {
     objName = obj?.type === 'identifier' ? obj.text : undefined;
     propName = prop?.type === 'identifier' ? prop.text : undefined;
   } else if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee') ?? node.childForFieldName('function');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const obj = callee.childForFieldName('object');
       const prop = callee.childForFieldName('property');
@@ -997,7 +1006,7 @@ function arktsTaintSink(node: SyntaxNode): TaintPattern | undefined {
   let fnName: string | undefined;
 
   if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee') ?? node.childForFieldName('function');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const prop = callee.childForFieldName('property');
       fnName = prop?.type === 'identifier' ? prop.text : undefined;
@@ -1016,7 +1025,7 @@ function arktsTaintSanitizer(node: SyntaxNode): TaintPattern | undefined {
   let fnName: string | undefined;
 
   if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee') ?? node.childForFieldName('function');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const prop = callee.childForFieldName('property');
       fnName = prop?.type === 'identifier' ? prop.text : undefined;
@@ -1085,7 +1094,7 @@ function tsExtractSendCall(node: SyntaxNode): BoundaryPattern | undefined {
     let methodName: string | undefined;
 
     if (node.type === 'call_expression') {
-      const callee = node.childForFieldName('callee');
+      const callee = node.childForFieldName('function');
       if (callee?.type === 'member_expression') {
         const obj = callee.childForFieldName('object');
         const prop = callee.childForFieldName('property');
@@ -1123,7 +1132,7 @@ function tsExtractReceiveCall(node: SyntaxNode): BoundaryPattern | undefined {
     objName = obj?.type === 'identifier' ? obj.text : undefined;
     propName = prop?.type === 'identifier' ? prop.text : undefined;
   } else if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const obj = callee.childForFieldName('object');
       const prop = callee.childForFieldName('property');
@@ -1162,7 +1171,7 @@ const ELECTRON_IPC_SEND_SELECTORS = new Set(['send', 'invoke', 'postMessage', 's
 const ELECTRON_IPC_RECEIVE_SELECTORS = new Set(['handle', 'on', 'once', 'receive']);
 
 function electronExtractSendCall(node: SyntaxNode): BoundaryPattern | undefined {
-  const callee = node.childForFieldName('callee');
+  const callee = node.childForFieldName('function');
   if (!callee || callee.type !== 'member_expression') return undefined;
   const obj = callee.childForFieldName('object');
   const prop = callee.childForFieldName('property');
@@ -1187,7 +1196,7 @@ function electronExtractSendCall(node: SyntaxNode): BoundaryPattern | undefined 
 }
 
 function electronExtractReceiveCall(node: SyntaxNode): BoundaryPattern | undefined {
-  const callee = node.childForFieldName('callee');
+  const callee = node.childForFieldName('function');
   if (!callee || callee.type !== 'member_expression') return undefined;
   const obj = callee.childForFieldName('object');
   const prop = callee.childForFieldName('property');
@@ -1217,7 +1226,7 @@ const GO_CGO_IMPORTS = new Set(['C']);
 const GO_UNSAFE_POINTER = new Set(['unsafe.Pointer']);
 
 function goExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
-  const callee = node.childForFieldName('callee');
+  const callee = node.childForFieldName('function');
   if (!callee) return undefined;
 
   // import "C" — direct cgo call
@@ -1262,7 +1271,7 @@ function pythonExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
   let fnName: string | undefined;
 
   if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const obj = callee.childForFieldName('object');
       const prop = callee.childForFieldName('property');
@@ -1297,15 +1306,17 @@ export const pythonBoundaryConfig: BoundaryConfig = {
 
 // ── Rust FFI patterns ───────────────────────────────────────────────────────
 
-const RUST_EXTERN_BLOCK = new Set(['extern']);
 const RUST_FFI_FUNCTIONS = new Set(['libloading', 'dlsym', 'RawFd']);
 
 function rustExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
   // extern "C" block entry
-  if (node.type === 'declaration' || node.type === 'foreign_block') {
+  if (node.type === 'declaration' || node.type === 'foreign_mod_item') {
     const children = node.children;
     for (const child of children) {
-      if (child.type === 'identifier' && child.text === 'extern') {
+      if (
+        (child.type === 'identifier' && child.text === 'extern') ||
+        child.type === 'extern_modifier'
+      ) {
         return {
           name: 'rust-extern-c',
           boundaryType: 'FFI_CALL',
@@ -1317,7 +1328,7 @@ function rustExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
 
   // #[repr(C)] attribute on structs/enums
   if (node.type === 'attribute_item') {
-    const attr = node.childForFieldName('attribute');
+    const attr = node.firstNamedChild;
     if (attr?.text.includes('repr') && attr.text.includes('C')) {
       return {
         name: 'rust-repr-c',
@@ -1331,7 +1342,7 @@ function rustExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
 }
 
 export const rustBoundaryConfig: BoundaryConfig = {
-  sendNodeTypes: new Set(['declaration', 'attribute_item', 'foreign_block']),
+  sendNodeTypes: new Set(['declaration', 'attribute_item', 'foreign_mod_item']),
   extractSendCall: rustExtractFFICall,
   receiveNodeTypes: new Set([]),
   extractReceiveCall: () => undefined,
@@ -1343,7 +1354,7 @@ const NODE_ADDON_PATTERNS = new Set(['process.dlopen', 'require', 'Dlopen', 'nod
 
 function nodeExtractFFICall(node: SyntaxNode): BoundaryPattern | undefined {
   if (node.type === 'call_expression') {
-    const callee = node.childForFieldName('callee');
+    const callee = node.childForFieldName('function');
     if (callee?.type === 'member_expression') {
       const obj = callee.childForFieldName('object');
       const prop = callee.childForFieldName('property');

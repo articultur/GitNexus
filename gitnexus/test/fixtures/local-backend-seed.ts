@@ -77,5 +77,6 @@ export const LOCAL_BACKEND_FTS_INDEXES: FTSIndexDef[] = [
   { table: 'Function', indexName: 'function_fts', columns: ['name', 'content', 'description'] },
   { table: 'Class', indexName: 'class_fts', columns: ['name', 'content', 'description'] },
   { table: 'Method', indexName: 'method_fts', columns: ['name', 'content', 'description'] },
+  { table: 'Interface', indexName: 'interface_fts', columns: ['name', 'content', 'description'] },
   { table: 'File', indexName: 'file_fts', columns: ['name', 'content'] },
 ];

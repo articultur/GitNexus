@@ -44,8 +44,7 @@ export function extractObjCMethodReturnType(
   node: SyntaxNode,
   context: ObjCMethodContext,
 ): TypeInfo | undefined {
-  // First try field-based lookup (if the grammar supports it)
-  let returnTypeNode = node.childForFieldName('return_type') ?? node.childForFieldName('type');
+  let returnTypeNode = node.childForFieldName('type');
 
   // If field lookup fails, look inside method_type child
   if (!returnTypeNode) {
@@ -69,11 +68,7 @@ export function extractObjCMethodReturnType(
       }
 
       // Also check for direct type nodes (fallback for some grammars)
-      if (
-        child.type === 'type_name' ||
-        child.type === 'type_descriptor' ||
-        child.type === 'return_type'
-      ) {
+      if (child.type === 'type_name' || child.type === 'type_descriptor') {
         returnTypeNode = child;
         break;
       }
@@ -114,19 +109,19 @@ export interface BlockTypeInfo {
 }
 
 /**
- * Extract block type information from block pointer type, declarator, or block literal.
+ * Extract block type information from block pointer declarator, abstract
+ * declarator, or block literal.
  * Block syntax: returnType (^blockName)(paramTypes)
  *
  * Supports:
- * - Block pointer types: void (^)(NSData *data, NSError *error) - type-only context (spec-required)
+ * - Abstract block pointer declarators: void (^)(NSData *data, NSError *error)
  * - Block pointer declarators: void (^completion)(NSData *data, NSError *error)
  * - Block literals: ^(NSString *s){ return s.length; }
  * - Block typedefs: typedef void (^Handler)(NSURL *url)
  */
 export function extractBlockType(node: SyntaxNode): BlockTypeInfo {
-  // Handle block_pointer_type (type-only context, no variable name)
-  // This is the spec-required AST node type for block type extraction
-  if (node.type === 'block_pointer_type') {
+  // Handle abstract_block_pointer_declarator (type-only context, no variable name).
+  if (node.type === 'abstract_block_pointer_declarator') {
     return extractBlockPointerType(node);
   }
 
@@ -136,13 +131,8 @@ export function extractBlockType(node: SyntaxNode): BlockTypeInfo {
   }
 
   // Handle block_literal: ^{ ... } or ^(params){ ... }
-  if (node.type === 'block_literal' || node.type === 'block') {
+  if (node.type === 'block_literal') {
     return extractBlockLiteralType(node);
-  }
-
-  // Handle block_declaration (alternative node type in some grammars)
-  if (node.type === 'block_declaration') {
-    return extractBlockDeclarationType(node);
   }
 
   // Handle type_definition for typedef blocks
@@ -155,12 +145,12 @@ export function extractBlockType(node: SyntaxNode): BlockTypeInfo {
 }
 
 /**
- * Extract type from block_pointer_type node (type-only context, no variable name).
- * This handles the spec-required AST node type.
+ * Extract type from abstract_block_pointer_declarator node (type-only context,
+ * no variable name).
  *
- * Tree-sitter-objc structure for block_pointer_type:
+ * Tree-sitter-objc structure for abstract_block_pointer_declarator:
  *   (type_identifier) "void"
- *   (block_pointer_type)
+ *   (abstract_block_pointer_declarator)
  *     (^)
  *     (parameter_list)
  *       (parameter_declaration) ...
@@ -168,7 +158,7 @@ export function extractBlockType(node: SyntaxNode): BlockTypeInfo {
 function extractBlockPointerType(node: SyntaxNode): BlockTypeInfo {
   let returnType: TypeInfo = { name: 'void' };
 
-  // block_pointer_type typically follows the return type as a sibling
+  // abstract_block_pointer_declarator typically follows the return type as a sibling
   const parent = node.parent;
   if (parent) {
     // Look for return type as a preceding sibling
@@ -185,7 +175,7 @@ function extractBlockPointerType(node: SyntaxNode): BlockTypeInfo {
     }
   }
 
-  // Find parameter list within the block_pointer_type
+  // Find parameter list within the block pointer declarator
   const paramListNode = findParameterList(node);
   const parameters = paramListNode ? extractBlockParameterTypes(paramListNode) : [];
 
@@ -264,11 +254,11 @@ function extractBlockLiteralType(node: SyntaxNode): BlockTypeInfo {
   return { returnType, parameters };
 }
 
-/** Extract type from block declaration node. */
+/** Extract type from block declaration-shaped node. */
 function extractBlockDeclarationType(node: SyntaxNode): BlockTypeInfo {
   // Block declaration might wrap the block pointer declarator
   const blockPointer = node.children.find(
-    (c) => c.type === 'block_pointer_declarator' || c.type === 'block_declarator',
+    (c) => c.type === 'block_pointer_declarator' || c.type === 'abstract_block_pointer_declarator',
   );
 
   if (blockPointer) {
@@ -295,10 +285,7 @@ function extractBlockDeclarationType(node: SyntaxNode): BlockTypeInfo {
 function extractTypedefBlockType(node: SyntaxNode): BlockTypeInfo {
   // Find block declarator within typedef
   const blockDeclarator = node.children.find(
-    (c) =>
-      c.type === 'block_pointer_declarator' ||
-      c.type === 'block_declaration' ||
-      c.type === 'block_declarator',
+    (c) => c.type === 'block_pointer_declarator' || c.type === 'abstract_block_pointer_declarator',
   );
 
   if (blockDeclarator) {
@@ -549,7 +536,7 @@ function parsePropertyAttributesFromAtExpression(
 function parsePropertyAttributesLegacy(node: SyntaxNode, attributes: Map<string, string>): void {
   // Find attribute list
   const attrList = node.children.find(
-    (c) => c.type === 'attribute_specifier' || c.type === 'property_attribute_list',
+    (c) => c.type === 'attribute_specifier' || c.type === 'property_attributes_declaration',
   );
 
   if (!attrList) return;

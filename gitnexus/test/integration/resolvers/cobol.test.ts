@@ -691,10 +691,11 @@ describe('COBOL full system extraction', () => {
   // =====================================================================
 
   describe('grand totals', () => {
-    it('produces exactly 31 total CALLS edges', () => {
+    it('produces exactly 32 total CALLS edges', () => {
       // 15 perform + 2 perform-thru + 3 call + 4 goto + 1 link + 1 xctl
       // + 1 handle-abend + 1 return-transid + 2 jcl-exec-pgm + 1 jcl-dd
-      expect(getRelationships(result, 'CALLS').length).toBe(31);
+      // + 1 if-true-branch
+      expect(getRelationships(result, 'CALLS').length).toBe(32);
     });
 
     it('produces exactly 81 total CONTAINS edges', () => {
@@ -709,14 +710,15 @@ describe('COBOL full system extraction', () => {
       expect(getRelationships(result, 'IMPORTS').length).toBe(2);
     });
 
-    it('produces exactly 28 total ACCESSES edges', () => {
+    it('produces exactly 31 total ACCESSES edges', () => {
       // Original: 4 move-read + 5 move-write + 1 move-corresponding-read + 1 move-corresponding-write
       // + 1 file-read + 1 map + 1 queue-write
       // + 1 receive-into + 2 send-from + 1 search + 1 sort-using + 1 sort-giving
       // + 2 procedure-using + 1 sql-select + 2 call-using
       // plus arithmetic: +1 arithmetic-read (WS-AMOUNT) + 1 arithmetic-write (CUST-BALANCE)
       // plus ADD TO read+write: +1 arithmetic-read for CUST-BALANCE (TO operand is both read+written)
-      expect(getRelationships(result, 'ACCESSES').length).toBe(28);
+      // plus STRING dataflow: +2 string-read + 1 string-write
+      expect(getRelationships(result, 'ACCESSES').length).toBe(31);
     });
   });
 

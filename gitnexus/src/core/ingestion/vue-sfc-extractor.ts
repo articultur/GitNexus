@@ -46,6 +46,8 @@ interface ScriptBlock {
 const SCRIPT_RE = /<script(\s[^>]*)?>([^]*?)<\/script[^>]*>/gi;
 const TEMPLATE_COMPONENT_RE = /<([A-Z][A-Za-z0-9]+)/g;
 const TEMPLATE_KEBAB_COMPONENT_RE = /<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)\b/g;
+const TEMPLATE_DYNAMIC_COMPONENT_RE =
+  /<component\b[^>]*(?:v-bind:|:)is\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/g;
 // Greedy: matches from the first <template> to the *last* </template>.
 // This is intentional — nested <template v-slot:...> tags are valid Vue
 // syntax and we want the entire outermost template body.
@@ -579,6 +581,11 @@ export function extractVueTemplateEdgeData(
     while ((m = TEMPLATE_KEBAB_COMPONENT_RE.exec(tmpl)) !== null) {
       if (!isBuiltinKebabTag(m[1])) componentSet.add(kebabToPascal(m[1]));
     }
+    TEMPLATE_DYNAMIC_COMPONENT_RE.lastIndex = 0;
+    while ((m = TEMPLATE_DYNAMIC_COMPONENT_RE.exec(tmpl)) !== null) {
+      const componentName = normalizeDynamicComponentName(m[1] ?? m[2] ?? m[3] ?? '');
+      if (componentName !== null) componentSet.add(componentName);
+    }
   }
 
   // Native element event handlers.
@@ -642,4 +649,16 @@ export function extractVueTemplateEdgeData(
     scriptEmitCalls,
     templateAttributeBindings: [...attrVars],
   };
+}
+
+function normalizeDynamicComponentName(raw: string): string | null {
+  let name = raw.trim();
+  while (
+    (name.startsWith("'") && name.endsWith("'")) ||
+    (name.startsWith('"') && name.endsWith('"'))
+  ) {
+    name = name.slice(1, -1).trim();
+  }
+  if (!/^[A-Z][A-Za-z0-9]*$/.test(name)) return null;
+  return name;
 }

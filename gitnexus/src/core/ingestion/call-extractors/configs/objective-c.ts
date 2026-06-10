@@ -13,10 +13,9 @@ import type { SyntaxNode } from '../../utils/ast-helpers.js';
 function extractObjCMessageSend(callNode: SyntaxNode): ExtractedCallSite | null {
   if (callNode.type !== 'message_expression') return null;
 
-  // message_expression: [receiver selector] or [receiver keyword:arg ...]
-  // In tree-sitter-objc the selector can be:
-  //   - identifier (unary message): [obj description]
-  //   - keyword_expression / message_keyword for multi-arg: [obj setFoo:bar]
+  // message_expression: [receiver selector] or [receiver keyword:arg ...].
+  // tree-sitter-objc exposes selector pieces through the repeated `method`
+  // field; `childForFieldName('method')` returns the first selector segment.
   let calledName = callNode.childForFieldName('method')?.text;
   const receiver = callNode.childForFieldName('receiver');
   for (let i = 0; i < callNode.namedChildCount; i++) {
@@ -26,16 +25,6 @@ function extractObjCMessageSend(callNode: SyntaxNode): ExtractedCallSite | null 
     if (receiver && child.id === receiver.id) continue;
     if (child.type === 'identifier') {
       calledName = child.text;
-      break;
-    }
-    // keyword_argument_list contains the selector parts
-    if (child.type === 'keyword_argument_list') {
-      const first = child.firstNamedChild;
-      if (first) {
-        const text = first.text;
-        const colonIdx = text.indexOf(':');
-        calledName = colonIdx >= 0 ? text.substring(0, colonIdx) : text;
-      }
       break;
     }
   }

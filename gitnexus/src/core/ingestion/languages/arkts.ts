@@ -12,6 +12,17 @@ import { createFieldExtractor } from '../field-extractors/generic.js';
 import { arktsFieldConfig } from '../field-extractors/configs/arkts.js';
 import { createMethodExtractor } from '../method-extractors/generic.js';
 import { arktsMethodConfig } from '../method-extractors/configs/arkts.js';
+import {
+  emitTsScopeCaptures,
+  interpretTsImport,
+  interpretTsTypeBinding,
+  tsBindingScopeFor,
+  tsImportOwningScope,
+  tsReceiverBinding,
+  typescriptMergeBindings,
+  typescriptArityCompatibility,
+  resolveTsImportTarget,
+} from './typescript/index.js';
 
 const BUILT_INS: ReadonlySet<string> = new Set([
   'console',
@@ -55,4 +66,13 @@ export const arktsProvider = defineLanguage({
   fieldExtractor: createFieldExtractor(arktsFieldConfig),
   methodExtractor: createMethodExtractor(arktsMethodConfig),
   builtInNames: BUILT_INS,
+  emitScopeCaptures: emitTsScopeCaptures,
+  interpretImport: interpretTsImport,
+  interpretTypeBinding: interpretTsTypeBinding,
+  bindingScopeFor: tsBindingScopeFor,
+  importOwningScope: tsImportOwningScope,
+  mergeBindings: (_scope, bindings) => typescriptMergeBindings(bindings),
+  receiverBinding: tsReceiverBinding,
+  arityCompatibility: typescriptArityCompatibility,
+  resolveImportTarget: resolveTsImportTarget,
 });

@@ -334,7 +334,7 @@ export class TemplateInferenceEngine {
 
     const walk = (n: SyntaxNode) => {
       // Check for requires_expression (contains compound requirements)
-      if (n.type === 'requires_expression' || n.type === 'requirement_sequence') {
+      if (n.type === 'requires_expression' || n.type === 'requirement_seq') {
         results.push(n);
       }
       for (const child of n.children ?? []) {
@@ -438,7 +438,7 @@ export class TemplateInferenceEngine {
   private findTemplateDeclaration(node: SyntaxNode): SyntaxNode | null {
     if (
       node.type === 'template_declaration' ||
-      node.type === 'template_specialization' ||
+      node.type === 'template_declaration' ||
       node.type === 'class_specifier'
     ) {
       return node;
@@ -627,7 +627,7 @@ export class TemplateInferenceEngine {
   }
 
   private findDecltypeExpression(node: SyntaxNode): SyntaxNode | null {
-    if (node.type === 'decltype_expression' || node.type === 'decltype') {
+    if (node.type === 'decltype') {
       // Return the expression inside decltype
       for (const child of node.children ?? []) {
         if (child.type !== 'decltype') {

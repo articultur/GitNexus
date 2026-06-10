@@ -32,34 +32,34 @@ Route::match(['get', 'post'], '/orders/search', [OrderController::class, 'search
 
     expect(routes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ httpMethod: 'get', routePath: '/orders', methodName: 'index' }),
-        expect.objectContaining({ httpMethod: 'post', routePath: '/orders', methodName: 'store' }),
+        expect.objectContaining({ httpMethod: 'GET', routePath: '/orders', methodName: 'index' }),
+        expect.objectContaining({ httpMethod: 'POST', routePath: '/orders', methodName: 'store' }),
         expect.objectContaining({
-          httpMethod: 'put',
-          routePath: '/orders/{order}',
+          httpMethod: 'PUT',
+          routePath: '/orders/[order]',
           methodName: 'update',
         }),
         expect.objectContaining({
-          httpMethod: 'patch',
-          routePath: '/orders/{order}',
+          httpMethod: 'PATCH',
+          routePath: '/orders/[order]',
           methodName: 'patch',
         }),
         expect.objectContaining({
-          httpMethod: 'delete',
-          routePath: '/orders/{order}',
+          httpMethod: 'DELETE',
+          routePath: '/orders/[order]',
           methodName: 'destroy',
         }),
         expect.objectContaining({
-          httpMethod: 'options',
+          httpMethod: 'OPTIONS',
           routePath: '/orders/options',
           methodName: 'options',
         }),
         expect.objectContaining({
-          httpMethod: 'any',
+          httpMethod: 'ANY',
           routePath: '/orders/any',
           methodName: 'any',
         }),
-        expect.objectContaining({ httpMethod: 'match', routePath: '/orders/search' }),
+        expect.objectContaining({ httpMethod: 'MATCH', routePath: '/orders/search' }),
       ]),
     );
   });
@@ -135,8 +135,8 @@ Route::middleware(['auth', 'verified'])
 
     expect(routes).toContainEqual(
       expect.objectContaining({
-        httpMethod: 'get',
-        routePath: '/orders',
+        httpMethod: 'GET',
+        routePath: '/admin/orders',
         controllerName: 'OrderController',
         methodName: 'index',
         middleware: ['auth', 'verified'],
@@ -146,8 +146,8 @@ Route::middleware(['auth', 'verified'])
 
     expect(routes).toContainEqual(
       expect.objectContaining({
-        httpMethod: 'post',
-        routePath: '/orders',
+        httpMethod: 'POST',
+        routePath: '/api/orders',
         controllerName: 'ApiOrderController',
         methodName: 'store',
         middleware: ['auth'],
@@ -157,7 +157,7 @@ Route::middleware(['auth', 'verified'])
 
     expect(routes).toContainEqual(
       expect.objectContaining({
-        httpMethod: 'get',
+        httpMethod: 'GET',
         routePath: '/loose',
         controllerName: null,
         methodName: null,
@@ -189,25 +189,25 @@ Route::group([
     expect(routes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          httpMethod: 'get',
+          httpMethod: 'GET',
           routePath: '/login',
           routeName: 'login',
         }),
         expect.objectContaining({
-          httpMethod: 'post',
+          httpMethod: 'POST',
           routePath: '/logout',
           routeName: 'logout',
           middleware: ['auth'],
         }),
         expect.objectContaining({
-          httpMethod: 'post',
-          routePath: '/settings/cache',
+          httpMethod: 'POST',
+          routePath: '/admin/settings/cache',
           routeName: 'admin.settings.refresh-cache',
           prefix: 'admin',
         }),
         expect.objectContaining({
-          httpMethod: 'post',
-          routePath: '/login',
+          httpMethod: 'POST',
+          routePath: '/logs/login',
           routeName: 'log-viewer.login.submit',
           prefix: 'logs',
         }),

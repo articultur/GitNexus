@@ -88,6 +88,7 @@ const DIR_LANG: Record<string, SupportedLanguages> = {
   swift: SupportedLanguages.Swift,
   dart: SupportedLanguages.Dart,
   vue: SupportedLanguages.Vue,
+  'objective-c': SupportedLanguages.ObjectiveC,
 };
 
 /** Basename (no .ts) → language set, for extractor files that name a language. */
@@ -105,6 +106,7 @@ const BASENAME_LANGS: Record<string, SupportedLanguages[]> = {
   swift: [SupportedLanguages.Swift],
   typescript: [SupportedLanguages.TypeScript],
   javascript: [SupportedLanguages.JavaScript],
+  'objective-c': [SupportedLanguages.ObjectiveC],
   java: [SupportedLanguages.Java],
   kotlin: [SupportedLanguages.Kotlin],
   laravel: [SupportedLanguages.PHP],

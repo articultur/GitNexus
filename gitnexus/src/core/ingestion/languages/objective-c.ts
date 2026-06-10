@@ -14,6 +14,13 @@ import { createFieldExtractor } from '../field-extractors/generic.js';
 import { objcFieldConfig } from '../field-extractors/configs/objective-c.js';
 import { createMethodExtractor } from '../method-extractors/generic.js';
 import { objcMethodConfig } from '../method-extractors/configs/objective-c.js';
+import { emitObjectiveCScopeCaptures } from './objective-c/captures.js';
+import {
+  interpretObjectiveCImport,
+  interpretObjectiveCTypeBinding,
+} from './objective-c/interpret.js';
+import { cBindingScopeFor, cImportOwningScope, cReceiverBinding } from './c/simple-hooks.js';
+import { cArityCompatibility } from './c/arity.js';
 
 const OBJC_BUILT_INS: ReadonlySet<string> = new Set([
   'alloc',
@@ -128,4 +135,11 @@ export const objectiveCProvider = defineLanguage({
   labelOverride: objcLabelOverride,
   descriptionExtractor: objcDescriptionExtractor,
   builtInNames: OBJC_BUILT_INS,
+  emitScopeCaptures: emitObjectiveCScopeCaptures,
+  interpretImport: interpretObjectiveCImport,
+  interpretTypeBinding: interpretObjectiveCTypeBinding,
+  bindingScopeFor: cBindingScopeFor,
+  importOwningScope: cImportOwningScope,
+  receiverBinding: cReceiverBinding,
+  arityCompatibility: cArityCompatibility,
 });

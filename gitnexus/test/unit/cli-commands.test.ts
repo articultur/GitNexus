@@ -74,12 +74,12 @@ describe('CLI commands', () => {
   });
 
   describe('optional parser dependencies', () => {
-    it('materializes vendored grammars at postinstall instead of file: optionalDependencies (#1728)', async () => {
+    it('declares vendored grammars as file optionalDependencies and ships vendor sources', async () => {
       const pkg = await import('../../package.json', { with: { type: 'json' } });
       const optional = pkg.default.optionalDependencies ?? {};
-      expect(optional['tree-sitter-dart']).toBeUndefined();
-      expect(optional['tree-sitter-proto']).toBeUndefined();
-      expect(optional['tree-sitter-swift']).toBeUndefined();
+      expect(optional['tree-sitter-dart']).toBe('file:./vendor/tree-sitter-dart');
+      expect(optional['tree-sitter-proto']).toBe('file:./vendor/tree-sitter-proto');
+      expect(optional['tree-sitter-swift']).toBe('file:./vendor/tree-sitter-swift');
       expect(pkg.default.scripts.postinstall).toContain('materialize-vendor-grammars.cjs');
       expect(pkg.default.files).toContain('vendor');
     });

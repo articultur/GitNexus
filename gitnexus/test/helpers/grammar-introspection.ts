@@ -62,6 +62,7 @@ const GRAMMAR_PACKAGES: Partial<Record<SupportedLanguages, { pkg: string; subpat
   [SupportedLanguages.Kotlin]: { pkg: 'tree-sitter-kotlin', subpaths: ['src/node-types.json'] },
   [SupportedLanguages.Swift]: { pkg: 'tree-sitter-swift', subpaths: ['src/node-types.json'] },
   [SupportedLanguages.Dart]: { pkg: 'tree-sitter-dart', subpaths: ['src/node-types.json'] },
+  [SupportedLanguages.ObjectiveC]: { pkg: 'tree-sitter-objc', subpaths: ['src/node-types.json'] },
   [SupportedLanguages.Vue]: {
     pkg: 'tree-sitter-typescript',
     subpaths: ['typescript/src/node-types.json', 'tsx/src/node-types.json'],

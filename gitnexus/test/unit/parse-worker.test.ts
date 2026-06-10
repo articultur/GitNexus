@@ -22,6 +22,8 @@ vi.mock('node:worker_threads', () => ({
     on: vi.fn(),
     postMessage: vi.fn(),
   },
+  threadId: 1,
+  workerData: {},
 }));
 
 // ─── ORM Query Extraction ───────────────────────────────────────────────────

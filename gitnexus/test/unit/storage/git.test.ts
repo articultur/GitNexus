@@ -21,6 +21,7 @@ describe('storage/git', () => {
       expect(mockExecSync).toHaveBeenCalledWith('git rev-parse --is-inside-work-tree', {
         cwd: '/repo',
         stdio: 'ignore',
+        windowsHide: true,
       });
     });
 
@@ -39,6 +40,7 @@ describe('storage/git', () => {
       expect(mockExecSync).toHaveBeenCalledWith('git rev-parse HEAD', {
         cwd: '/repo',
         stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
       });
     });
 

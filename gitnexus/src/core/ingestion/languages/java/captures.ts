@@ -170,6 +170,12 @@ export function emitJavaScopeCaptures(
       ['@reference.call.free', '@reference.call.member', '@reference.call.constructor'] as const
     ).find((t) => grouped[t] !== undefined);
     if (callTag !== undefined && grouped['@reference.arity'] === undefined) {
+      const methodReference = nodeIfType(nodeMap[callTag], 'method_reference');
+      if (methodReference !== null) {
+        grouped['@reference.arity'] = syntheticCapture('@reference.arity', methodReference, '-1');
+        out.push(grouped);
+        continue;
+      }
       // @reference.call.free/.member are captured on the `method_invocation`;
       // @reference.call.constructor on the `object_creation_expression`. The
       // captured node IS the call node the old findNodeAtRange re-derived.
